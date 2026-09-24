@@ -18,7 +18,7 @@ internal sealed class TextPromptWindow : Window
         ResizeMode = ResizeMode.NoResize;
         Background = new SolidColorBrush(Color.FromRgb(232, 237, 242));
         Foreground = new SolidColorBrush(Color.FromRgb(24, 44, 57));
-        FontFamily = new FontFamily("Segoe UI");
+        FontFamily = new FontFamily("Microsoft YaHei UI, Segoe UI");
 
         var layout = new Grid { Margin = new Thickness(22) };
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -34,8 +34,8 @@ internal sealed class TextPromptWindow : Window
         Grid.SetRow(_input, 2);
         layout.Children.Add(_input);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var cancel = new Button { Content = "Cancel", IsCancel = true, Padding = new Thickness(13, 7, 13, 7), Margin = new Thickness(0, 0, 8, 0) };
-        var save = new Button { Content = "Add project", IsDefault = true, Padding = new Thickness(13, 7, 13, 7), Background = new SolidColorBrush(Color.FromRgb(180, 90, 60)), Foreground = Brushes.White, BorderBrush = new SolidColorBrush(Color.FromRgb(180, 90, 60)), FontWeight = FontWeights.SemiBold };
+        var cancel = new Button { Content = "取消", IsCancel = true, Padding = new Thickness(13, 7, 13, 7), Margin = new Thickness(0, 0, 8, 0) };
+        var save = new Button { Content = "添加项目", IsDefault = true, Padding = new Thickness(13, 7, 13, 7), Background = new SolidColorBrush(Color.FromRgb(180, 90, 60)), Foreground = Brushes.White, BorderBrush = new SolidColorBrush(Color.FromRgb(180, 90, 60)), FontWeight = FontWeights.SemiBold };
         save.Click += (_, _) => DialogResult = true;
         buttons.Children.Add(cancel);
         buttons.Children.Add(save);

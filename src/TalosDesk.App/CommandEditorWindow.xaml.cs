@@ -16,7 +16,7 @@ public partial class CommandEditorWindow : Window
         if (existing is null) return;
 
         _commandId = existing.Id;
-        HeadingText.Text = "Edit command";
+        HeadingText.Text = "编辑命令";
         NameBox.Text = existing.Name;
         PurposeBox.Text = existing.Purpose;
         CommandBox.Text = existing.Command;
@@ -27,7 +27,7 @@ public partial class CommandEditorWindow : Window
 
     private void BrowseDirectory_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new OpenFolderDialog { Title = "Choose the command working folder", Multiselect = false };
+        var picker = new OpenFolderDialog { Title = "选择命令运行目录", Multiselect = false };
         if (Directory.Exists(WorkingDirectoryBox.Text)) picker.InitialDirectory = WorkingDirectoryBox.Text;
         if (picker.ShowDialog(this) == true) WorkingDirectoryBox.Text = picker.FolderName;
     }
@@ -36,13 +36,13 @@ public partial class CommandEditorWindow : Window
     {
         if (string.IsNullOrWhiteSpace(NameBox.Text) || string.IsNullOrWhiteSpace(CommandBox.Text) || string.IsNullOrWhiteSpace(WorkingDirectoryBox.Text))
         {
-            MessageBox.Show(this, "Enter a name, command, and working folder.", "Command details are incomplete", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "请填写名称、命令和运行目录。", "命令信息不完整", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         if (!Directory.Exists(WorkingDirectoryBox.Text.Trim()))
         {
-            MessageBox.Show(this, "The working folder does not exist. Choose an existing folder.", "Working folder not found", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "运行目录不存在，请选择已存在的文件夹。", "未找到运行目录", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
