@@ -26,6 +26,7 @@ public sealed class CommandRunSession : IAsyncDisposable
     private readonly SafeJobHandle _job;
     private readonly SafeProcessHandle _process;
     private readonly int _processId;
+    private readonly ICommandStopOperations _stopOperations;
     private readonly ConcurrentQueue<CommandOutput> _output = new();
     private readonly Task<CommandRunResult> _completion;
     private readonly SemaphoreSlim _stopLock = new(1, 1);
@@ -33,11 +34,12 @@ public sealed class CommandRunSession : IAsyncDisposable
     private int _stopRequested;
     private int _forceTerminated;
 
-    internal CommandRunSession(SafeJobHandle job, SafeProcessHandle process, int processId, StreamReader stdout, StreamReader stderr, EventHandler<CommandOutput>? outputReceived)
+    internal CommandRunSession(SafeJobHandle job, SafeProcessHandle process, int processId, StreamReader stdout, StreamReader stderr, EventHandler<CommandOutput>? outputReceived, ICommandStopOperations stopOperations)
     {
         _job = job;
         _process = process;
         _processId = processId;
+        _stopOperations = stopOperations;
         if (outputReceived is not null) OutputReceived += outputReceived;
         _completion = ObserveAsync(stdout, stderr);
     }
@@ -59,7 +61,7 @@ public sealed class CommandRunSession : IAsyncDisposable
             }
 
             Interlocked.Exchange(ref _stopRequested, 1);
-            if (!WindowsConsole.TrySendCtrlC(_processId))
+            if (!_stopOperations.TrySendCtrlC(_processId))
             {
                 if (_completion.IsCompleted)
                 {
@@ -67,15 +69,20 @@ public sealed class CommandRunSession : IAsyncDisposable
                 }
             }
 
-            var gracefulExit = await WindowsNative.WaitForCommandGroupExitAsync(_job, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            var gracefulExit = await _stopOperations.WaitForCommandGroupExitAsync(_job, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
             if (gracefulExit)
             {
                 return CommandStopResult.StoppedAfterCtrlC;
             }
 
-            WindowsNative.TerminateJob(_job);
+            _stopOperations.TerminateJob(_job);
             Interlocked.Exchange(ref _forceTerminated, 1);
-            await WindowsNative.WaitForCommandGroupExitAsync(_job, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            var forcedExit = await _stopOperations.WaitForCommandGroupExitAsync(_job, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            if (!forcedExit)
+            {
+                throw new TimeoutException("TalosDesk could not confirm that every process in this command group exited after the force-stop request.");
+            }
+
             return CommandStopResult.ForceTerminated;
         }
         finally

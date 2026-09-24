@@ -34,68 +34,112 @@ internal static class WindowsNative
             throw new DirectoryNotFoundException($"Working directory does not exist: {workingDirectory}");
         }
 
-        var shellPath = FindPowerShellPath();
-        var stdoutRead = CreatePipe(out var stdoutWrite);
-        var stderrRead = CreatePipe(out var stderrWrite);
-        using var stdin = CreateInheritableNullInput();
-        var job = CreateJob();
+        return StartPowerShell(command, workingDirectory, FindPowerShellPath());
+    }
 
-        var startup = new StartupInfo
+    internal static (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) StartPowerShell(string command, string workingDirectory, string shellPath)
+    {
+        if (!OperatingSystem.IsWindows())
         {
-            Size = Marshal.SizeOf<StartupInfo>(),
-            Flags = StartfUseShowWindow | StartfUseStdHandles,
-            ShowWindow = SwHide,
-            StdInput = stdin.DangerousGetHandle(),
-            StdOutput = stdoutWrite.DangerousGetHandle(),
-            StdError = stderrWrite.DangerousGetHandle()
-        };
-        var commandLine = new StringBuilder($"\"{shellPath}\" -NoLogo -NoProfile -NonInteractive -Command {QuoteArgument(command)}");
-
-        if (!CreateProcess(shellPath, commandLine, IntPtr.Zero, IntPtr.Zero, inheritHandles: true,
-                CreateSuspended | CreateNewConsole, IntPtr.Zero, workingDirectory,
-                ref startup, out var processInfo))
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not start PowerShell 7.");
+            throw new PlatformNotSupportedException("TalosDesk process management is supported on Windows only.");
         }
 
-        using var thread = new SafeKernelHandle(processInfo.ThreadHandle);
-        var unassignedProcess = new SafeProcessHandle(processInfo.ProcessHandle, ownsHandle: true);
+        if (!Directory.Exists(workingDirectory))
+        {
+            throw new DirectoryNotFoundException($"Working directory does not exist: {workingDirectory}");
+        }
+
+        SafeFileHandle? stdoutRead = null;
+        SafeFileHandle? stdoutWrite = null;
+        SafeFileHandle? stderrRead = null;
+        SafeFileHandle? stderrWrite = null;
+        SafeJobHandle? job = null;
+        SafeProcessHandle? process = null;
+        SafeKernelHandle? thread = null;
+        StreamReader? stdout = null;
+        StreamReader? stderr = null;
+        var processCreated = false;
+        var processAssigned = false;
+
         try
         {
-            if (!AssignProcessToJobObject(job, unassignedProcess))
+            stdoutRead = CreatePipe(out stdoutWrite);
+            stderrRead = CreatePipe(out stderrWrite);
+            using var stdin = CreateInheritableNullInput();
+            job = CreateJob();
+
+            var startup = new StartupInfo
+            {
+                Size = Marshal.SizeOf<StartupInfo>(),
+                Flags = StartfUseShowWindow | StartfUseStdHandles,
+                ShowWindow = SwHide,
+                StdInput = stdin.DangerousGetHandle(),
+                StdOutput = stdoutWrite.DangerousGetHandle(),
+                StdError = stderrWrite.DangerousGetHandle()
+            };
+            var commandLine = new StringBuilder($"\"{shellPath}\" -NoLogo -NoProfile -NonInteractive -Command {QuoteArgument(command)}");
+
+            if (!CreateProcess(shellPath, commandLine, IntPtr.Zero, IntPtr.Zero, inheritHandles: true,
+                    CreateSuspended | CreateNewConsole, IntPtr.Zero, workingDirectory,
+                    ref startup, out var processInfo))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not start PowerShell 7.");
+            }
+
+            processCreated = true;
+            thread = new SafeKernelHandle(processInfo.ThreadHandle);
+            process = new SafeProcessHandle(processInfo.ProcessHandle, ownsHandle: true);
+            if (!AssignProcessToJobObject(job, process))
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not assign the command to its process job.");
             }
 
+            processAssigned = true;
             if (ResumeThread(thread) == uint.MaxValue)
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not start the PowerShell process.");
             }
-        }
-        catch
-        {
-            TerminateJob(job, 1);
-            throw;
-        }
-        finally
-        {
-            stdoutWrite.Dispose();
-            stderrWrite.Dispose();
-        }
 
-        try
-        {
-            var stdout = new StreamReader(new FileStream(stdoutRead, FileAccess.Read, 4096, isAsync: false), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            var stderr = new StreamReader(new FileStream(stderrRead, FileAccess.Read, 4096, isAsync: false), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            return (job, unassignedProcess, checked((int)processInfo.ProcessId), stdout, stderr);
+            thread.Dispose();
+            thread = null;
+            stdoutWrite.Dispose();
+            stdoutWrite = null;
+            stderrWrite.Dispose();
+            stderrWrite = null;
+
+            stdout = CreateReader(ref stdoutRead);
+            stderr = CreateReader(ref stderrRead);
+            var result = (job!, process!, checked((int)processInfo.ProcessId), stdout!, stderr!);
+            job = null;
+            process = null;
+            stdout = null;
+            stderr = null;
+            return result;
         }
         catch
         {
-            TerminateJob(job, 1);
-            unassignedProcess.Dispose();
-            job.Dispose();
-            stdoutRead.Dispose();
-            stderrRead.Dispose();
+            if (processCreated)
+            {
+                try
+                {
+                    if (processAssigned && job is not null) TerminateJob(job, 1);
+                    else if (process is not null) TerminateProcess(process, 1);
+                }
+                catch
+                {
+                    // Keep the original startup error. Closing the kill-on-close job below remains a final cleanup attempt.
+                }
+            }
+
+            DisposeQuietly(stdout);
+            DisposeQuietly(stderr);
+            DisposeQuietly(stdoutRead);
+            DisposeQuietly(stdoutWrite);
+            DisposeQuietly(stderrRead);
+            DisposeQuietly(stderrWrite);
+            DisposeQuietly(thread);
+            DisposeQuietly(process);
+            DisposeQuietly(job);
             throw;
         }
     }
@@ -251,6 +295,14 @@ internal static class WindowsNative
         }
     }
 
+    private static void TerminateProcess(SafeProcessHandle process, uint exitCode)
+    {
+        if (!TerminateProcessNative(process, exitCode))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not stop the PowerShell process after startup failed.");
+        }
+    }
+
     private static SafeFileHandle CreatePipe(out SafeFileHandle writeHandle)
     {
         var security = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), InheritHandle = true };
@@ -283,6 +335,27 @@ internal static class WindowsNative
         }
 
         return input;
+    }
+
+    private static StreamReader CreateReader(ref SafeFileHandle? handle)
+    {
+        var stream = new FileStream(handle!, FileAccess.Read, 4096, isAsync: false);
+        handle = null;
+        try
+        {
+            return new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
+    }
+
+    private static void DisposeQuietly(IDisposable? disposable)
+    {
+        try { disposable?.Dispose(); }
+        catch { /* Preserve the original startup failure. */ }
     }
 
     private static string FindPowerShellPath()
@@ -332,6 +405,7 @@ internal static class WindowsNative
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetInformationJobObject(SafeJobHandle job, int informationClass, ref JobObjectExtendedLimitInformation information, uint informationLength);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool AssignProcessToJobObject(SafeJobHandle job, SafeProcessHandle process);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool TerminateJobObject(SafeJobHandle job, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "TerminateProcess")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool TerminateProcessNative(SafeProcessHandle process, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(SafeJobHandle handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "WaitForSingleObject")] private static extern uint WaitForSingleObjectProcess(SafeProcessHandle handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool QueryInformationJobObject(SafeJobHandle job, int informationClass, out JobObjectBasicAccountingInformation information, uint informationLength, out uint returnLength);

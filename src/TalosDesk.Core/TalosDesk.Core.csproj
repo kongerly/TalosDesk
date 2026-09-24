@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="TalosDesk.Core.Tests" />
+  </ItemGroup>
+
 </Project>
