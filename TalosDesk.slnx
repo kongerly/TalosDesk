@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TalosDesk.App/TalosDesk.App.csproj" />
+    <Project Path="src/TalosDesk.Core/TalosDesk.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TalosDesk.Core.Tests/TalosDesk.Core.Tests.csproj" />
+  </Folder>
+</Solution>
