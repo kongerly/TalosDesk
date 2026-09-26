@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using TalosDesk.Core.Configuration;
@@ -18,6 +19,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<Guid, DateTimeOffset> _runStartedAt = [];
     private readonly Dictionary<Guid, long> _runVersions = [];
     private readonly HashSet<Guid> _restartsInProgress = [];
+    private readonly HashSet<Guid> _checkedCommandIds = [];
     private readonly Dictionary<Guid, ObservableCollection<CommandOutput>> _logs = [];
     private readonly BoundedOutputInbox _pendingOutput = new(10_000);
     private int _outputFlushScheduled;
@@ -28,6 +30,7 @@ public partial class MainWindow : Window
     private bool _isStoppingForClose;
     private ProjectDefinition? _selectedProject;
     private CommandDefinition? _selectedCommand;
+    private Guid? _batchProjectId;
 
     public MainWindow()
     {
@@ -64,6 +67,11 @@ public partial class MainWindow : Window
     private void ProjectList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         _selectedProject = ProjectList.SelectedItem as ProjectDefinition;
+        if (_selectedProject is not null && _batchProjectId != _selectedProject.Id)
+        {
+            _checkedCommandIds.Clear();
+            _batchProjectId = _selectedProject.Id;
+        }
         _selectedCommand = null;
         CommandList.ItemsSource = _selectedProject?.Commands;
         CommandList.SelectedIndex = -1;
@@ -76,6 +84,23 @@ public partial class MainWindow : Window
     private void CommandList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         _selectedCommand = CommandList.SelectedItem as CommandDefinition;
+        RefreshCommandSelection();
+    }
+
+    private void BatchCheckBox_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox { DataContext: CommandDefinition command } checkBox)
+        {
+            checkBox.IsChecked = _selectedProject?.Commands.Contains(command) == true && _checkedCommandIds.Contains(command.Id);
+        }
+    }
+
+    private void BatchCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { DataContext: CommandDefinition command } checkBox ||
+            _selectedProject?.Commands.Contains(command) != true) return;
+        if (checkBox.IsChecked == true) _checkedCommandIds.Add(command.Id);
+        else _checkedCommandIds.Remove(command.Id);
         RefreshCommandSelection();
     }
 
@@ -103,6 +128,17 @@ public partial class MainWindow : Window
         RestartButton.IsEnabled = command is not null && !restarting && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
         EditButton.IsEnabled = command is not null && !running && canChangeWorkspace;
         CopyButton.IsEnabled = command is not null;
+        var selectedIndex = command is null ? -1 : _selectedProject?.Commands.IndexOf(command) ?? -1;
+        MoveCommandUpButton.IsEnabled = selectedIndex > 0 && canChangeWorkspace;
+        MoveCommandDownButton.IsEnabled = _selectedProject is not null && selectedIndex >= 0 && selectedIndex < _selectedProject.Commands.Count - 1 && canChangeWorkspace;
+        DeleteCommandButton.IsEnabled = command is not null && !running && !restarting && canChangeWorkspace;
+        var checkedCount = _selectedProject?.Commands.Count(item => _checkedCommandIds.Contains(item.Id)) ?? 0;
+        var readyCount = _selectedProject?.Commands.Count(item => _checkedCommandIds.Contains(item.Id) &&
+            !_restartsInProgress.Contains(item.Id) &&
+            (!_sessions.TryGetValue(item.Id, out var activeSession) || activeSession.Completion.IsCompleted)) ?? 0;
+        BatchSelectionHint.Text = checkedCount == 0 ? "勾选可同时运行 · 点选可排序或删除" : $"已勾选 {checkedCount} 条 · 可启动 {readyCount} 条";
+        BatchRunButton.Content = $"同时运行 ({readyCount})";
+        BatchRunButton.IsEnabled = readyCount > 0 && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
         SaveStatusText.Text = !_canSave ? "配置错误" : _workspaceChangeInProgress ? "正在处理…" : _saveFailed ? "保存失败" : "本机配置";
 
         if (command is null)
@@ -452,6 +488,84 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RefreshCommandList(CommandDefinition? selectedCommand)
+    {
+        CommandList.ItemsSource = null;
+        CommandList.ItemsSource = _selectedProject?.Commands;
+        CommandList.SelectedItem = selectedCommand;
+        RefreshCommandSelection();
+        UpdateEmptyStates();
+    }
+
+    private async void MoveCommandUp_Click(object sender, RoutedEventArgs e) => await MoveSelectedCommandAsync(-1);
+
+    private async void MoveCommandDown_Click(object sender, RoutedEventArgs e) => await MoveSelectedCommandAsync(1);
+
+    private async Task MoveSelectedCommandAsync(int offset)
+    {
+        if (_selectedProject is null || _selectedCommand is null) return;
+        var project = _selectedProject;
+        var command = _selectedCommand;
+        var index = project.Commands.IndexOf(command);
+        var destination = index + offset;
+        if (index < 0 || destination < 0 || destination >= project.Commands.Count || !BeginWorkspaceChange()) return;
+
+        try
+        {
+            project.Commands.RemoveAt(index);
+            project.Commands.Insert(destination, command);
+            RefreshCommandList(command);
+            if (!await SaveWorkspaceAsync())
+            {
+                project.Commands.RemoveAt(destination);
+                project.Commands.Insert(index, command);
+                RefreshCommandList(command);
+            }
+        }
+        finally { EndWorkspaceChange(); }
+    }
+
+    private async void DeleteCommand_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedProject is null || _selectedCommand is null) return;
+        var project = _selectedProject;
+        var command = _selectedCommand;
+        if (_restartsInProgress.Contains(command.Id) ||
+            (_sessions.TryGetValue(command.Id, out var activeSession) && !activeSession.Completion.IsCompleted))
+        {
+            MessageBox.Show(this, "请先停止这条命令，再删除保存的配置。", "命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (MessageBox.Show(this, $"从项目“{project.Name}”删除命令“{command.Name}”吗？\n\n删除后无法从工作区恢复这条命令。",
+                "删除命令", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (!BeginWorkspaceChange()) return;
+
+        try
+        {
+            var index = project.Commands.IndexOf(command);
+            if (index < 0) return;
+            project.Commands.RemoveAt(index);
+            var nextSelection = project.Commands.Count == 0 ? null : project.Commands[Math.Min(index, project.Commands.Count - 1)];
+            RefreshCommandList(nextSelection);
+            if (!await SaveWorkspaceAsync())
+            {
+                project.Commands.Insert(index, command);
+                RefreshCommandList(command);
+                return;
+            }
+
+            _checkedCommandIds.Remove(command.Id);
+            _logs.Remove(command.Id);
+            _pendingOutput.Clear(command.Id);
+            _lastResults.Remove(command.Id);
+            _runStartedAt.Remove(command.Id);
+            _runVersions.Remove(command.Id);
+            _sessions.Remove(command.Id);
+            RefreshCommandSelection();
+        }
+        finally { EndWorkspaceChange(); }
+    }
+
     private async void AddCommand_Click(object sender, RoutedEventArgs e)
     {
         if (_workspaceChangeInProgress || !_canSave || _selectedProject is null) return;
@@ -519,6 +633,17 @@ public partial class MainWindow : Window
     }
 
     private void RunCommand_Click(object sender, RoutedEventArgs e) => StartSelectedCommand();
+
+    private void RunCheckedCommands_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedProject is null || !_canSave || _workspaceChangeInProgress || _isStoppingForClose) return;
+        var project = _selectedProject;
+        var commands = project.Commands.Where(command => _checkedCommandIds.Contains(command.Id) &&
+            !_restartsInProgress.Contains(command.Id) &&
+            (!_sessions.TryGetValue(command.Id, out var session) || session.Completion.IsCompleted)).ToArray();
+        foreach (var command in commands) StartCommand(project, command);
+        RefreshCommandSelection();
+    }
 
     private async void RestartCommand_Click(object sender, RoutedEventArgs e)
     {
@@ -592,9 +717,9 @@ public partial class MainWindow : Window
             var result = await session.Completion;
             await Dispatcher.InvokeAsync(() =>
             {
-                _lastResults[commandId] = result;
                 if (_sessions.TryGetValue(commandId, out var current) && ReferenceEquals(current, session)) _sessions.Remove(commandId);
-                if (_selectedCommand?.Id == commandId) RefreshCommandSelection();
+                if (Projects.Any(project => project.Commands.Any(command => command.Id == commandId))) _lastResults[commandId] = result;
+                RefreshCommandSelection();
             });
         }
         catch (Exception exception)

@@ -81,6 +81,26 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="BatchCheckBox" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Border x:Name="CheckSurface" Width="23" Height="23" Background="#FFFFFF" BorderBrush="#9FC7D7" BorderThickness="1.5" CornerRadius="6">
+                            <Path x:Name="CheckMark" Data="M 5,11 L 9,15 L 18,6" Stroke="White" StrokeThickness="2.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Visibility="Collapsed" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="CheckSurface" Property="Background" Value="{StaticResource JadeBrush}" /><Setter TargetName="CheckSurface" Property="BorderBrush" Value="{StaticResource JadeBrush}" /><Setter TargetName="CheckMark" Property="Visibility" Value="Visible" /></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CheckSurface" Property="BorderBrush" Value="{StaticResource GoldBrush}" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="CheckSurface" Property="BorderBrush" Value="{StaticResource GoldBrush}" /><Setter TargetName="CheckSurface" Property="BorderThickness" Value="2" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="CheckSurface" Property="Opacity" Value="0.45" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -168,37 +188,48 @@
             </Border>
 
             <Grid Grid.Row="1" Margin="0,0,0,8">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="已保存的命令" FontFamily="{StaticResource DisplayFont}" FontSize="18" FontWeight="Bold" />
                     <Border Background="#DDF1F7" BorderBrush="#A8CFDD" BorderThickness="1" CornerRadius="9" Padding="7,1" Margin="10,1,0,0">
                         <TextBlock x:Name="CommandCountText" Text="0" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource CodeFont}" FontSize="11" FontWeight="Bold" />
                     </Border>
                 </StackPanel>
-                <Button x:Name="AddCommandButton" Grid.Column="1" Content="＋  添加命令" Style="{StaticResource ActionButton}" Click="AddCommand_Click" IsEnabled="False" />
+                <Button x:Name="BatchRunButton" Grid.Column="1" Content="同时运行 (0)" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" Click="RunCheckedCommands_Click" IsEnabled="False" ToolTip="同时启动当前项目中勾选且尚未运行的命令" />
+                <Button x:Name="AddCommandButton" Grid.Column="2" Content="＋  添加命令" Style="{StaticResource ActionButton}" Click="AddCommand_Click" IsEnabled="False" />
             </Grid>
 
             <Border Grid.Row="2" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="14" ClipToBounds="True">
                 <Grid>
-                    <ListBox x:Name="CommandList" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}" SelectionChanged="CommandList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid Background="#F0F8FC" MinHeight="44">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock x:Name="BatchSelectionHint" Text="勾选可同时运行 · 点选可排序或删除" Margin="17,0,8,0" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
+                        <Button x:Name="MoveCommandUpButton" Grid.Column="1" Content="↑ 上移" Style="{StaticResource SidebarButton}" Padding="10,5" Margin="0,5,6,5" Click="MoveCommandUp_Click" IsEnabled="False" />
+                        <Button x:Name="MoveCommandDownButton" Grid.Column="2" Content="↓ 下移" Style="{StaticResource SidebarButton}" Padding="10,5" Margin="0,5,6,5" Click="MoveCommandDown_Click" IsEnabled="False" />
+                        <Button x:Name="DeleteCommandButton" Grid.Column="3" Content="删除" Style="{StaticResource SidebarButton}" Foreground="#9B4E42" Padding="11,5" Margin="0,5,12,5" Click="DeleteCommand_Click" IsEnabled="False" ToolTip="先选中一条已停止的命令" />
+                    </Grid>
+                    <Border Height="1" Background="#D1E6EE" VerticalAlignment="Top" Grid.Row="1" />
+                    <ListBox x:Name="CommandList" Grid.Row="1" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}" SelectionChanged="CommandList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid MinHeight="76">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="4" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" Background="{StaticResource GoldBrush}" CornerRadius="3" Margin="0,11" />
-                                    <StackPanel Grid.Column="1" Margin="17,11,12,10" VerticalAlignment="Center">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="4" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <CheckBox x:Name="BatchCheckBox" Grid.Column="0" Style="{StaticResource BatchCheckBox}" AutomationProperties.Name="{Binding Name, StringFormat=勾选 {0}}" ToolTip="勾选后可与其他命令同时运行" Loaded="BatchCheckBox_Loaded" Checked="BatchCheckBox_Changed" Unchecked="BatchCheckBox_Changed" />
+                                    <Border Grid.Column="1" Background="{StaticResource GoldBrush}" CornerRadius="3" Margin="0,11" />
+                                    <StackPanel Grid.Column="2" Margin="15,11,12,10" VerticalAlignment="Center">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="{Binding Name}" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="Bold" Foreground="{StaticResource InkBrush}" />
                                             <Border Background="#DFEFF5" CornerRadius="8" Padding="7,2" Margin="10,1,0,0"><TextBlock Text="{Binding Kind, Converter={StaticResource CommandKindConverter}}" FontSize="9" FontWeight="Bold" Foreground="{StaticResource JadeBrush}" /></Border>
                                         </StackPanel>
                                         <TextBlock Text="{Binding Command}" FontFamily="{StaticResource CodeFont}" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
-                                    <TextBlock Grid.Column="2" Text="{Binding Purpose}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,16,0" MaxWidth="180" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="3" Text="{Binding Purpose}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,16,0" MaxWidth="180" TextTrimming="CharacterEllipsis" />
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <TextBlock x:Name="EmptyCommandsHint" Text="为此项目添加命令，运行输出会显示在下方。" Foreground="{StaticResource MutedBrush}" FontSize="13" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="330" TextAlignment="Center" Visibility="Collapsed" />
+                    <TextBlock x:Name="EmptyCommandsHint" Grid.Row="1" Text="为此项目添加命令，运行输出会显示在下方。" Foreground="{StaticResource MutedBrush}" FontSize="13" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="330" TextAlignment="Center" Visibility="Collapsed" />
                 </Grid>
             </Border>
 

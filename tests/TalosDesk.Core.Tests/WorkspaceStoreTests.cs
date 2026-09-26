@@ -30,6 +30,34 @@ public sealed class WorkspaceStoreTests
     }
 
     [TestMethod]
+    public async Task SavesCommandOrderAndRemovalAcrossReload()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var first = new CommandDefinition { Name = "First", Command = "echo first", WorkingDirectory = directory };
+            var second = new CommandDefinition { Name = "Second", Command = "echo second", WorkingDirectory = directory };
+            var third = new CommandDefinition { Name = "Third", Command = "echo third", WorkingDirectory = directory };
+            var project = new ProjectDefinition { Name = "Sample", Directory = directory, Commands = [first, second, third] };
+            var store = new WorkspaceStore(Path.Combine(directory, "workspace.json"));
+            await store.SaveAsync(new WorkspaceConfiguration { Projects = [project] });
+
+            project.Commands.Remove(third);
+            project.Commands.Insert(0, third);
+            project.Commands.Remove(second);
+            await store.SaveAsync(new WorkspaceConfiguration { Projects = [project] });
+
+            var reloaded = await store.LoadAsync();
+            CollectionAssert.AreEqual(new[] { third.Id, first.Id }, reloaded.Projects[0].Commands.Select(command => command.Id).ToArray());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task RejectsUnsupportedSchemaAndDuplicateCommandNames()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
