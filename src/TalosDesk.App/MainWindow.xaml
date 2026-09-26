@@ -210,7 +210,7 @@
                         <Button x:Name="DeleteCommandButton" Grid.Column="3" Content="删除" Style="{StaticResource SidebarButton}" Foreground="#9B4E42" Padding="11,5" Margin="0,5,12,5" Click="DeleteCommand_Click" IsEnabled="False" ToolTip="先选中一条已停止的命令" />
                     </Grid>
                     <Border Height="1" Background="#D1E6EE" VerticalAlignment="Top" Grid.Row="1" />
-                    <ListBox x:Name="CommandList" Grid.Row="1" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}" SelectionChanged="CommandList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox x:Name="CommandList" Grid.Row="1" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}" SelectionChanged="CommandList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.ScrollUnit="Pixel">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid MinHeight="76">
