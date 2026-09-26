@@ -47,7 +47,7 @@ public sealed class WorkspaceStore
         Validate(configuration);
         var directory = Path.GetDirectoryName(FilePath) ?? throw new InvalidOperationException("The workspace path has no parent directory.");
         Directory.CreateDirectory(directory);
-        var temporaryPath = FilePath + ".tmp";
+        var temporaryPath = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             await using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 16_384, useAsync: true))

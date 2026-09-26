@@ -4,7 +4,7 @@
 
 中文全称：TalosDesk 本地项目运行管理软件。
 
-> 当前状态：已补充项目编辑入口，并在隔离临时工作区完成一轮桌面验收；真实项目试用和发布包验证仍未完成，尚未发布安装包。
+> 当前状态：已完成 试用项目 A、试用项目 B 测试命令与本机健康检查试用，补齐中文路径与输出编码处理，并生成、启动验证 Windows x64 自包含发布包。2026-09-26 完成一轮输出缓冲与配置保存重构，并将桌面界面、字体和图标统一为 TalosDesk 自有的明亮二次元机巧指挥台风格。真实业务配置试用、最低支持 Windows 版本确认和用户最终验收仍未完成；尚未发布安装包。
 > 本地 Git 和 [GitHub 私有仓库](https://github.com/kongerly/TalosDesk) 已准备。开发机已在仓库内和系统 SDK 目录安装并验证 .NET SDK 10.0.401。
 
 ## 用途
@@ -37,6 +37,14 @@ C# / .NET 10 / WPF / 本地 JSON 配置。仓库以 `global.json` 锁定 .NET SD
 
 目标交付方式为包含 .NET 运行时的 Windows x64 发布包。目标项目所需的 Go、Python、uv 等工具仍需在本机准备。
 核心功能本地运行，不依赖模型 API。进程由 PowerShell 7 执行，并通过 Windows Job Object 管理归属进程；自动化测试使用合成命令，真实项目兼容性仍需试用。
+
+## 运行与发布包
+
+最新本地预览包位于 `artifacts/TalosDesk-win-x64-review.zip`；此前验证包保留在 `artifacts/TalosDesk-win-x64.zip`。解压预览包后运行 `TalosDesk.App.exe`；包内包含 .NET 和 Windows Desktop 运行时，不需要另装 .NET SDK 或运行时。程序与窗口均使用原创的二次元游戏风格抽象图标。该包是便携发布目录，不是安装程序，也不是正式发布版本。
+
+运行已配置命令需要在启动 TalosDesk 前安装 PowerShell 7，并确保 `pwsh.exe` 位于应用可见的 `PATH` 中。Go、Python、uv 等项目工具不包含在 TalosDesk 包内，也需自行准备并放入应用启动时继承的环境。工作区配置保存在 `%LOCALAPPDATA%\TalosDesk\workspace.json`；应用不会因启动而自动运行已保存命令。
+
+当前只在本机 Windows x64 环境验证过预览包启动；最低支持 Windows 版本尚未确认。重构后的界面交互仍需隔离窗口回归，该包尚未作为正式版本发布。
 
 ## 文档入口
 

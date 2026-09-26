@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TalosDesk.Core\TalosDesk.Core.csproj" />
+    <Resource Include="Assets\TalosDeskMark.png" />
+    <Resource Include="Assets\TalosDeskMark.ico" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -10,6 +12,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\TalosDeskMark.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>

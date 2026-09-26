@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
@@ -17,11 +16,14 @@ public partial class MainWindow : Window
     private readonly Dictionary<Guid, CommandRunSession> _sessions = [];
     private readonly Dictionary<Guid, CommandRunResult> _lastResults = [];
     private readonly Dictionary<Guid, DateTimeOffset> _runStartedAt = [];
+    private readonly Dictionary<Guid, long> _runVersions = [];
+    private readonly HashSet<Guid> _restartsInProgress = [];
     private readonly Dictionary<Guid, ObservableCollection<CommandOutput>> _logs = [];
-    private readonly ConcurrentQueue<(Guid CommandId, CommandOutput Output)> _pendingOutput = new();
+    private readonly BoundedOutputInbox _pendingOutput = new(10_000);
     private int _outputFlushScheduled;
     private bool _canSave = true;
     private bool _saveFailed;
+    private bool _workspaceChangeInProgress;
     private bool _allowClose;
     private bool _isStoppingForClose;
     private ProjectDefinition? _selectedProject;
@@ -52,7 +54,7 @@ public partial class MainWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
         {
             _canSave = false;
-            SaveStatusText.Text = "配置错误";
+            RefreshCommandSelection();
             MessageBox.Show(this,
                 $"TalosDesk 无法读取本机工作区配置，原文件未作修改。\n\n{exception.Message}",
                 "无法加载工作区", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -81,8 +83,13 @@ public partial class MainWindow : Window
     {
         var command = _selectedCommand;
         var running = command is not null && _sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted;
-        AddCommandButton.IsEnabled = _selectedProject is not null && !_isStoppingForClose && _canSave;
-        EditProjectButton.IsEnabled = _selectedProject is not null && !_isStoppingForClose && _canSave;
+        var restarting = command is not null && _restartsInProgress.Contains(command.Id);
+        var canChangeWorkspace = !_workspaceChangeInProgress && _restartsInProgress.Count == 0 && !_isStoppingForClose && _canSave;
+        AddProjectButton.IsEnabled = canChangeWorkspace;
+        ImportButton.IsEnabled = canChangeWorkspace;
+        ExportButton.IsEnabled = canChangeWorkspace;
+        AddCommandButton.IsEnabled = _selectedProject is not null && canChangeWorkspace;
+        EditProjectButton.IsEnabled = _selectedProject is not null && canChangeWorkspace;
         ProjectNameText.Text = _selectedProject?.Name ?? "请选择项目";
         ProjectPathText.Text = _selectedProject?.Directory ?? "添加本地文件夹以开始使用";
         CommandCountText.Text = _selectedProject?.Commands.Count.ToString() ?? "0";
@@ -91,12 +98,12 @@ public partial class MainWindow : Window
             ? $"开始时间：{startedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
             : string.Empty;
         LogCommandName.Text = command is null ? "选择命令以查看输出" : $"  {command.Name}";
-        RunButton.IsEnabled = command is not null && !running && !_isStoppingForClose && _canSave;
-        StopButton.IsEnabled = command is not null && running && !_isStoppingForClose;
-        RestartButton.IsEnabled = command is not null && !_isStoppingForClose && _canSave;
-        EditButton.IsEnabled = command is not null && !running && !_isStoppingForClose && _canSave;
+        RunButton.IsEnabled = command is not null && !running && !restarting && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
+        StopButton.IsEnabled = command is not null && running && !restarting && !_isStoppingForClose;
+        RestartButton.IsEnabled = command is not null && !restarting && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
+        EditButton.IsEnabled = command is not null && !running && canChangeWorkspace;
         CopyButton.IsEnabled = command is not null;
-        SaveStatusText.Text = !_canSave ? "配置错误" : _saveFailed ? "保存失败" : "本机配置";
+        SaveStatusText.Text = !_canSave ? "配置错误" : _workspaceChangeInProgress ? "正在处理…" : _saveFailed ? "保存失败" : "本机配置";
 
         if (command is null)
         {
@@ -134,7 +141,7 @@ public partial class MainWindow : Window
 
     private async void AddProject_Click(object sender, RoutedEventArgs e)
     {
-        if (!_canSave) return;
+        if (_workspaceChangeInProgress || !_canSave) return;
         var editor = new ProjectEditorWindow { Owner = this };
         if (editor.ShowDialog() != true || editor.Result is null) return;
         var project = editor.Result;
@@ -144,19 +151,24 @@ public partial class MainWindow : Window
             return;
         }
 
-        Projects.Add(project);
-        ProjectList.SelectedItem = project;
-        if (!await SaveWorkspaceAsync())
+        if (!BeginWorkspaceChange()) return;
+        try
         {
-            Projects.Remove(project);
-            RefreshProjectList();
-            UpdateEmptyStates();
+            Projects.Add(project);
+            ProjectList.SelectedItem = project;
+            if (!await SaveWorkspaceAsync())
+            {
+                Projects.Remove(project);
+                RefreshProjectList();
+                UpdateEmptyStates();
+            }
         }
+        finally { EndWorkspaceChange(); }
     }
 
     private async void EditProject_Click(object sender, RoutedEventArgs e)
     {
-        if (!_canSave || _selectedProject is null) return;
+        if (_workspaceChangeInProgress || !_canSave || _selectedProject is null) return;
         var project = _selectedProject;
         if (HasRunningCommands(project))
         {
@@ -172,27 +184,32 @@ public partial class MainWindow : Window
             return;
         }
 
-        var previousName = project.Name;
-        var previousDirectory = project.Directory;
-        var previousWorkingDirectories = project.Commands.ToDictionary(command => command.Id, command => command.WorkingDirectory);
-        project.Name = editor.Result.Name;
-        project.Directory = editor.Result.Directory;
-        if (!SameDirectory(previousDirectory, project.Directory))
+        if (!BeginWorkspaceChange()) return;
+        try
         {
-            foreach (var command in project.Commands)
+            var previousName = project.Name;
+            var previousDirectory = project.Directory;
+            var previousWorkingDirectories = project.Commands.ToDictionary(command => command.Id, command => command.WorkingDirectory);
+            project.Name = editor.Result.Name;
+            project.Directory = editor.Result.Directory;
+            if (!SameDirectory(previousDirectory, project.Directory))
             {
-                command.WorkingDirectory = RelocateWorkingDirectory(previousDirectory, project.Directory, command.WorkingDirectory);
+                foreach (var command in project.Commands)
+                {
+                    command.WorkingDirectory = RelocateWorkingDirectory(previousDirectory, project.Directory, command.WorkingDirectory);
+                }
+            }
+
+            RefreshProjectList();
+            if (!await SaveWorkspaceAsync())
+            {
+                project.Name = previousName;
+                project.Directory = previousDirectory;
+                foreach (var command in project.Commands) command.WorkingDirectory = previousWorkingDirectories[command.Id];
+                RefreshProjectList();
             }
         }
-
-        RefreshProjectList();
-        if (!await SaveWorkspaceAsync())
-        {
-            project.Name = previousName;
-            project.Directory = previousDirectory;
-            foreach (var command in project.Commands) command.WorkingDirectory = previousWorkingDirectories[command.Id];
-            RefreshProjectList();
-        }
+        finally { EndWorkspaceChange(); }
     }
 
     private static string RelocateWorkingDirectory(string previousProjectDirectory, string newProjectDirectory, string workingDirectory)
@@ -208,6 +225,7 @@ public partial class MainWindow : Window
 
     private async void ExportWorkspace_Click(object sender, RoutedEventArgs e)
     {
+        if (_workspaceChangeInProgress || !_canSave) return;
         var picker = new SaveFileDialog
         {
             Title = "导出 TalosDesk 工作区",
@@ -218,6 +236,7 @@ public partial class MainWindow : Window
         };
         if (picker.ShowDialog(this) != true) return;
 
+        if (!BeginWorkspaceChange()) return;
         try
         {
             await WorkspaceStore.WriteFileAsync(picker.FileName, new WorkspaceConfiguration { Projects = Projects.ToList() });
@@ -227,12 +246,13 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, $"TalosDesk 无法导出此工作区。\n\n{exception.Message}", "导出失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+        finally { EndWorkspaceChange(); }
     }
 
     private async void ImportWorkspace_Click(object sender, RoutedEventArgs e)
     {
-        if (!_canSave) return;
-        if (_sessions.Values.Any(session => !session.Completion.IsCompleted))
+        if (_workspaceChangeInProgress || !_canSave) return;
+        if (_restartsInProgress.Count > 0 || _sessions.Values.Any(session => !session.Completion.IsCompleted))
         {
             MessageBox.Show(this, "导入工作区前请先停止所有正在运行的命令，以免运行中的命令与保存的配置不一致。", "命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -247,43 +267,54 @@ public partial class MainWindow : Window
         };
         if (picker.ShowDialog(this) != true) return;
 
-        WorkspaceConfiguration imported;
+        if (!BeginWorkspaceChange()) return;
         try
         {
-            imported = await WorkspaceStore.ReadFileAsync(picker.FileName);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
-        {
-            MessageBox.Show(this, $"TalosDesk 无法读取此工作区文件，未作任何更改。\n\n{exception.Message}", "导入失败", MessageBoxButton.OK, MessageBoxImage.Error);
-            return;
-        }
-
-        var preview = BuildImportPreview(imported);
-        if (MessageBox.Show(this, preview, "确认导入工作区", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
-
-        try
-        {
-            var mergedProjects = Projects.Select(CloneProject).ToList();
-            if (!MergeImportedWorkspace(imported, mergedProjects)) return;
-            var previousProjects = Projects.ToList();
-            Projects.Clear();
-            foreach (var project in mergedProjects) Projects.Add(project);
-            RefreshProjectList();
-            UpdateEmptyStates();
-            if (!await SaveWorkspaceAsync())
+            WorkspaceConfiguration imported;
+            try
             {
-                Projects.Clear();
-                foreach (var project in previousProjects) Projects.Add(project);
-                RefreshProjectList();
-                UpdateEmptyStates();
+                imported = await WorkspaceStore.ReadFileAsync(picker.FileName);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+            {
+                MessageBox.Show(this, $"TalosDesk 无法读取此工作区文件，未作任何更改。\n\n{exception.Message}", "导入失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
-            SaveStatusText.Text = "工作区已导入";
+
+            var preview = BuildImportPreview(imported);
+            if (MessageBox.Show(this, preview, "确认导入工作区", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
+
+            var previousProjects = Projects.ToList();
+            var applied = false;
+            try
+            {
+                var mergedProjects = Projects.Select(CloneProject).ToList();
+                if (!MergeImportedWorkspace(imported, mergedProjects)) return;
+                applied = true;
+                ReplaceProjects(mergedProjects);
+                if (!await SaveWorkspaceAsync())
+                {
+                    ReplaceProjects(previousProjects);
+                    return;
+                }
+
+                SaveStatusText.Text = "工作区已导入";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                if (applied) ReplaceProjects(previousProjects);
+                MessageBox.Show(this, $"TalosDesk 无法保存导入的工作区。\n\n{exception.Message}", "未能保存导入内容", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            MessageBox.Show(this, $"TalosDesk 无法保存导入的工作区。\n\n{exception.Message}", "未能保存导入内容", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        finally { EndWorkspaceChange(); }
+    }
+
+    private void ReplaceProjects(IEnumerable<ProjectDefinition> projects)
+    {
+        Projects.Clear();
+        foreach (var project in projects) Projects.Add(project);
+        RefreshProjectList();
+        UpdateEmptyStates();
     }
 
     private string BuildImportPreview(WorkspaceConfiguration imported)
@@ -384,6 +415,7 @@ public partial class MainWindow : Window
     }
 
     private bool HasRunningCommands(ProjectDefinition project) => project.Commands.Any(command =>
+        _restartsInProgress.Contains(command.Id) ||
         _sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted);
 
     private static bool SameCommandName(string left, string right) => string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
@@ -422,97 +454,132 @@ public partial class MainWindow : Window
 
     private async void AddCommand_Click(object sender, RoutedEventArgs e)
     {
-        if (!_canSave || _selectedProject is null) return;
+        if (_workspaceChangeInProgress || !_canSave || _selectedProject is null) return;
         var editor = new CommandEditorWindow(_selectedProject.Directory) { Owner = this };
         if (editor.ShowDialog() != true || editor.Result is null) return;
-        _selectedProject.Commands.Add(editor.Result);
-        CommandList.ItemsSource = null;
-        CommandList.ItemsSource = _selectedProject.Commands;
-        CommandList.SelectedItem = editor.Result;
-        UpdateEmptyStates();
-        if (!await SaveWorkspaceAsync())
+        if (_selectedProject.Commands.Any(command => SameCommandName(command.Name, editor.Result.Name)))
         {
-            _selectedProject.Commands.Remove(editor.Result);
-            RefreshProjectList();
-            UpdateEmptyStates();
+            MessageBox.Show(this, "此项目已有同名命令，请使用其他名称。", "命令名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
+        if (!BeginWorkspaceChange()) return;
+        try
+        {
+            var project = _selectedProject;
+            project.Commands.Add(editor.Result);
+            CommandList.ItemsSource = null;
+            CommandList.ItemsSource = project.Commands;
+            CommandList.SelectedItem = editor.Result;
+            UpdateEmptyStates();
+            if (!await SaveWorkspaceAsync())
+            {
+                project.Commands.Remove(editor.Result);
+                RefreshProjectList();
+                UpdateEmptyStates();
+            }
+        }
+        finally { EndWorkspaceChange(); }
     }
 
     private async void EditCommand_Click(object sender, RoutedEventArgs e)
     {
-        if (!_canSave || _selectedProject is null || _selectedCommand is null) return;
+        if (_workspaceChangeInProgress || !_canSave || _selectedProject is null || _selectedCommand is null) return;
         var editor = new CommandEditorWindow(_selectedProject.Directory, _selectedCommand) { Owner = this };
         if (editor.ShowDialog() != true || editor.Result is null) return;
-        var index = _selectedProject.Commands.IndexOf(_selectedCommand);
-        var previousCommand = _selectedProject.Commands[index];
-        _selectedProject.Commands[index] = editor.Result;
-        CommandList.ItemsSource = null;
-        CommandList.ItemsSource = _selectedProject.Commands;
-        CommandList.SelectedItem = editor.Result;
-        if (!await SaveWorkspaceAsync())
+        if (_selectedProject.Commands.Any(command => command.Id != editor.Result.Id && SameCommandName(command.Name, editor.Result.Name)))
         {
-            _selectedProject.Commands[index] = previousCommand;
-            RefreshProjectList();
-            UpdateEmptyStates();
+            MessageBox.Show(this, "此项目已有同名命令，请使用其他名称。", "命令名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
+        if (!BeginWorkspaceChange()) return;
+        try
+        {
+            var project = _selectedProject;
+            var index = project.Commands.IndexOf(_selectedCommand);
+            var previousCommand = project.Commands[index];
+            project.Commands[index] = editor.Result;
+            CommandList.ItemsSource = null;
+            CommandList.ItemsSource = project.Commands;
+            CommandList.SelectedItem = editor.Result;
+            if (!await SaveWorkspaceAsync())
+            {
+                project.Commands[index] = previousCommand;
+                RefreshProjectList();
+                UpdateEmptyStates();
+                return;
+            }
 
-        _logs.Remove(editor.Result.Id);
-        _lastResults.Remove(editor.Result.Id);
-        _runStartedAt.Remove(editor.Result.Id);
-        RefreshCommandSelection();
-        SaveStatusText.Text = "已保存到本机";
+            _logs.Remove(editor.Result.Id);
+            _lastResults.Remove(editor.Result.Id);
+            _runStartedAt.Remove(editor.Result.Id);
+            RefreshCommandSelection();
+            SaveStatusText.Text = "已保存到本机";
+        }
+        finally { EndWorkspaceChange(); }
     }
 
     private void RunCommand_Click(object sender, RoutedEventArgs e) => StartSelectedCommand();
 
     private async void RestartCommand_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedCommand is null) return;
+        if (_selectedProject is null || _selectedCommand is null) return;
+        var projectId = _selectedProject.Id;
         var commandId = _selectedCommand.Id;
-        if (_sessions.TryGetValue(commandId, out var session) && !session.Completion.IsCompleted)
+        if (!_restartsInProgress.Add(commandId)) return;
+        RefreshCommandSelection();
+        try
         {
-            RunStateText.Text = "正在重启 · 停止中";
-            RunButton.IsEnabled = false;
-            StopButton.IsEnabled = false;
-            try
+            if (_sessions.TryGetValue(commandId, out var session) && !session.Completion.IsCompleted)
             {
-                var stopResult = await session.StopAsync();
-                await session.Completion;
-                if (stopResult == CommandStopResult.AlreadyExited && !session.Completion.IsCompleted) return;
-                _sessions.Remove(commandId);
+                RunStateText.Text = "正在重启 · 停止中";
+                try
+                {
+                    await session.StopAsync();
+                    await session.Completion;
+                    if (_sessions.TryGetValue(commandId, out var current) && ReferenceEquals(current, session)) _sessions.Remove(commandId);
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, $"TalosDesk 无法停止此命令，因此未执行重启。\n\n{exception.Message}", "重启已取消", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
             }
-            catch (Exception exception)
-            {
-                MessageBox.Show(this, $"TalosDesk 无法停止此命令，因此未执行重启。\n\n{exception.Message}", "重启已取消", MessageBoxButton.OK, MessageBoxImage.Error);
-                RefreshCommandSelection();
-                return;
-            }
-        }
 
-        StartSelectedCommand();
+            var project = Projects.FirstOrDefault(candidate => candidate.Id == projectId);
+            var command = project?.Commands.FirstOrDefault(candidate => candidate.Id == commandId);
+            if (project is not null && command is not null) StartCommand(project, command);
+        }
+        finally
+        {
+            _restartsInProgress.Remove(commandId);
+            RefreshCommandSelection();
+        }
     }
 
     private void StartSelectedCommand()
     {
-        if (_selectedProject is null || _selectedCommand is null || !_canSave) return;
-        var command = _selectedCommand;
-        var workingDirectory = string.IsNullOrWhiteSpace(command.WorkingDirectory) ? _selectedProject.Directory : command.WorkingDirectory;
+        if (_selectedProject is not null && _selectedCommand is not null) StartCommand(_selectedProject, _selectedCommand);
+    }
+
+    private void StartCommand(ProjectDefinition project, CommandDefinition command)
+    {
+        if (!_canSave || _workspaceChangeInProgress || _isStoppingForClose) return;
+        var workingDirectory = string.IsNullOrWhiteSpace(command.WorkingDirectory) ? project.Directory : command.WorkingDirectory;
         try
         {
+            var nextVersion = _runVersions.GetValueOrDefault(command.Id) + 1;
+            var started = _runner.Start(command.Id, command.Command, workingDirectory,
+                (_, output) => QueueOutput(command.Id, nextVersion, output));
+            _runVersions[command.Id] = nextVersion;
             _lastResults.Remove(command.Id);
             _runStartedAt[command.Id] = DateTimeOffset.Now;
-            var logs = GetLogs(command.Id);
-            logs.Clear();
-            var started = _runner.Start(command.Id, command.Command, workingDirectory,
-                (_, output) => QueueOutput(command.Id, output));
+            GetLogs(command.Id).Clear();
             _sessions[command.Id] = started;
             RefreshCommandSelection();
             _ = CompleteRunAsync(command.Id, started);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
         {
-            _runStartedAt.Remove(command.Id);
             RefreshCommandSelection();
             MessageBox.Show(this, exception.Message, "命令启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -573,12 +640,25 @@ public partial class MainWindow : Window
     {
         if (_selectedCommand is null) return;
         GetLogs(_selectedCommand.Id).Clear();
+        _pendingOutput.Clear(_selectedCommand.Id);
         EmptyOutputHint.Visibility = Visibility.Visible;
     }
 
     private async void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         if (_allowClose) return;
+        if (_workspaceChangeInProgress)
+        {
+            e.Cancel = true;
+            MessageBox.Show(this, "工作区正在保存或导入，请等待操作完成后再退出。", "工作区正在处理", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (_restartsInProgress.Count > 0)
+        {
+            e.Cancel = true;
+            MessageBox.Show(this, "命令正在重启，请等待停止与重新启动完成后再退出。", "命令正在重启", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         var active = _sessions.Values.Where(session => !session.Completion.IsCompleted).ToArray();
         if (active.Length == 0) return;
 
@@ -617,12 +697,31 @@ public partial class MainWindow : Window
             SaveStatusText.Text = "已保存到本机";
             return true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             _saveFailed = true;
             SaveStatusText.Text = "保存失败";
             MessageBox.Show(this, $"TalosDesk 无法保存项目配置。\n\n{exception.Message}", "配置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
+        }
+    }
+
+    private bool BeginWorkspaceChange()
+    {
+        if (!_canSave || _workspaceChangeInProgress || _restartsInProgress.Count > 0 || _isStoppingForClose) return false;
+        _workspaceChangeInProgress = true;
+        RefreshCommandSelection();
+        return true;
+    }
+
+    private void EndWorkspaceChange()
+    {
+        var completedStatus = SaveStatusText.Text;
+        _workspaceChangeInProgress = false;
+        RefreshCommandSelection();
+        if (!_saveFailed && (completedStatus is "已保存到本机" or "工作区已导入" or "工作区已导出"))
+        {
+            SaveStatusText.Text = completedStatus;
         }
     }
 
@@ -632,9 +731,9 @@ public partial class MainWindow : Window
         return logs;
     }
 
-    private void QueueOutput(Guid commandId, CommandOutput output)
+    private void QueueOutput(Guid commandId, long runVersion, CommandOutput output)
     {
-        _pendingOutput.Enqueue((commandId, output));
+        _pendingOutput.Enqueue(commandId, runVersion, output);
         if (Interlocked.Exchange(ref _outputFlushScheduled, 1) == 0)
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(FlushPendingOutput));
@@ -644,23 +743,22 @@ public partial class MainWindow : Window
     private void FlushPendingOutput()
     {
         CommandOutput? latestSelectedOutput = null;
-        var count = 0;
-        while (count < 500 && _pendingOutput.TryDequeue(out var entry))
+        foreach (var entry in _pendingOutput.Take(500))
         {
+            if (!_runVersions.TryGetValue(entry.CommandId, out var currentVersion) || currentVersion != entry.RunVersion) continue;
             AppendOutput(entry.CommandId, entry.Output);
             if (_selectedCommand?.Id == entry.CommandId) latestSelectedOutput = entry.Output;
-            count++;
         }
 
         if (latestSelectedOutput is not null) OutputList.ScrollIntoView(latestSelectedOutput);
-        if (!_pendingOutput.IsEmpty)
+        if (_pendingOutput.HasPending)
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(FlushPendingOutput));
             return;
         }
 
         Interlocked.Exchange(ref _outputFlushScheduled, 0);
-        if (!_pendingOutput.IsEmpty && Interlocked.Exchange(ref _outputFlushScheduled, 1) == 0)
+        if (_pendingOutput.HasPending && Interlocked.Exchange(ref _outputFlushScheduled, 1) == 0)
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(FlushPendingOutput));
         }

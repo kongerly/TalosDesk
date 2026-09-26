@@ -77,7 +77,11 @@ internal static class WindowsNative
                 StdOutput = stdoutWrite.DangerousGetHandle(),
                 StdError = stderrWrite.DangerousGetHandle()
             };
-            var commandLine = new StringBuilder($"\"{shellPath}\" -NoLogo -NoProfile -NonInteractive -Command {QuoteArgument(command)}");
+            // Captured stdout and stderr are decoded as UTF-8 by the readers below.
+            // Set PowerShell's console output encoding explicitly so Windows' active
+            // legacy code page cannot corrupt non-ASCII paths or command output.
+            var encodedCommand = $"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); {command}";
+            var commandLine = new StringBuilder($"\"{shellPath}\" -NoLogo -NoProfile -NonInteractive -Command {QuoteArgument(encodedCommand)}");
 
             if (!CreateProcess(shellPath, commandLine, IntPtr.Zero, IntPtr.Zero, inheritHandles: true,
                     CreateSuspended | CreateNewConsole, IntPtr.Zero, workingDirectory,

@@ -26,6 +26,44 @@ public sealed class CommandRunnerTests
     }
 
     [TestMethod]
+    public async Task PreservesUnicodeWorkingDirectoryAndOutputAcrossCapturedStreams()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var workingDirectory = Path.Combine(sandbox.Path, "中文 工作目录");
+        Directory.CreateDirectory(workingDirectory);
+
+        await using var session = _runner.Start(Guid.NewGuid(),
+            "Write-Output (Get-Location).Path; Write-Output '中文 stdout marker'; [Console]::Error.WriteLine('中文 stderr marker'); exit 0",
+            workingDirectory);
+        var result = await session.Completion.WaitAsync(TimeSpan.FromSeconds(20));
+        var output = session.GetRecentOutput();
+
+        Assert.AreEqual(CommandRunState.Succeeded, result.State);
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.IsTrue(output.Any(line => line.Stream == "stdout" && line.Text.Equals(workingDirectory, StringComparison.OrdinalIgnoreCase)),
+            $"Expected working directory '{workingDirectory}', received: {string.Join(" | ", output.Select(line => $"{line.Stream}:{line.Text}"))}");
+        Assert.IsTrue(output.Any(line => line.Stream == "stdout" && line.Text == "中文 stdout marker"));
+        Assert.IsTrue(output.Any(line => line.Stream == "stderr" && line.Text == "中文 stderr marker"));
+    }
+
+    [TestMethod]
+    public async Task MissingCommandAndUnhandledExceptionAreReportedAsFailures()
+    {
+        using var sandbox = new TemporaryDirectory();
+        await using var missing = _runner.Start(Guid.NewGuid(), "TalosDesk_MissingSyntheticCommand_9F28", sandbox.Path);
+        var missingResult = await missing.Completion.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.AreEqual(CommandRunState.Failed, missingResult.State);
+        Assert.AreNotEqual(0, missingResult.ExitCode);
+        Assert.IsTrue(missing.GetRecentOutput().Any(line => line.Stream == "stderr" && line.Text.Contains("TalosDesk_MissingSyntheticCommand_9F28", StringComparison.Ordinal)));
+
+        await using var exception = _runner.Start(Guid.NewGuid(), "throw 'TalosDesk synthetic exception marker';", sandbox.Path);
+        var exceptionResult = await exception.Completion.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.AreEqual(CommandRunState.Failed, exceptionResult.State);
+        Assert.AreNotEqual(0, exceptionResult.ExitCode);
+        Assert.IsTrue(exception.GetRecentOutput().Any(line => line.Stream == "stderr" && line.Text.Contains("synthetic exception marker", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public async Task FailedStartDoesNotReserveCommandIdAndCanBeRetried()
     {
         using var sandbox = new TemporaryDirectory();

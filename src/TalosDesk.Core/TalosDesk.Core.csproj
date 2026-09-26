@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="TalosDesk.Core.Tests" />
+    <InternalsVisibleTo Include="TalosDesk.App" />
   </ItemGroup>
 
 </Project>
