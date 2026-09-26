@@ -2,6 +2,17 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class HoverTestWindow {
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+}
+'@
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $reviewRoot = Join-Path $repoRoot '.tools/command-scroll-review'
@@ -10,6 +21,7 @@ $workspacePath = Join-Path $reviewRoot 'workspace.json'
 $realWorkspace = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'TalosDesk/workspace.json'
 $realHashBefore = if (Test-Path -LiteralPath $realWorkspace) { (Get-FileHash -LiteralPath $realWorkspace -Algorithm SHA256).Hash } else { $null }
 $process = $null
+$originalCursor = [System.Windows.Forms.Cursor]::Position
 
 function Wait-For([scriptblock]$probe, [string]$description) {
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -26,6 +38,25 @@ function Find-ById($parent, [string]$automationId) {
     return $parent.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
+function Find-ButtonByName($parent, [string]$name) {
+    $buttons = $parent.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button))
+    foreach ($button in $buttons) {
+        if ($button.Current.Name -eq $name) { return $button }
+    }
+    throw "Could not find button $name."
+}
+
+function Activate-Window($window, [string]$description) {
+    $handle = [IntPtr]$window.Current.NativeWindowHandle
+    [HoverTestWindow]::SetForegroundWindow($handle) | Out-Null
+    Start-Sleep -Milliseconds 150
+    if ([HoverTestWindow]::GetForegroundWindow() -ne $handle) {
+        throw "Could not bring $description to foreground for hover verification."
+    }
+}
+
 function Select-ListItem($list, [string]$name) {
     $items = $list.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($item in $items) {
@@ -38,6 +69,31 @@ function Select-ListItem($list, [string]$name) {
         }
     }
     throw "Could not select $name."
+}
+
+function Assert-HoverStable($button, $neighbor, [string]$description) {
+    if ($button.Current.IsOffscreen -or $neighbor.Current.IsOffscreen) {
+        throw "$description is not visible for hover verification."
+    }
+    [System.Windows.Forms.Cursor]::Position = [System.Drawing.Point]::new(0, 0)
+    Start-Sleep -Milliseconds 150
+    $buttonBefore = $button.Current.BoundingRectangle.ToString()
+    $neighborBefore = $neighbor.Current.BoundingRectangle.ToString()
+    $bounds = $button.Current.BoundingRectangle
+    [System.Windows.Forms.Cursor]::Position = [System.Drawing.Point]::new(
+        [int][Math]::Round($bounds.X + $bounds.Width / 2),
+        [int][Math]::Round($bounds.Y + $bounds.Height / 2))
+    Start-Sleep -Milliseconds 200
+    $buttonDuring = $button.Current.BoundingRectangle.ToString()
+    $neighborDuring = $neighbor.Current.BoundingRectangle.ToString()
+    [System.Windows.Forms.Cursor]::Position = [System.Drawing.Point]::new(0, 0)
+    Start-Sleep -Milliseconds 150
+    $buttonAfter = $button.Current.BoundingRectangle.ToString()
+    $neighborAfter = $neighbor.Current.BoundingRectangle.ToString()
+    if ($buttonBefore -ne $buttonDuring -or $buttonBefore -ne $buttonAfter -or
+        $neighborBefore -ne $neighborDuring -or $neighborBefore -ne $neighborAfter) {
+        throw "$description moved during hover: button $buttonBefore -> $buttonDuring -> $buttonAfter; neighbor $neighborBefore -> $neighborDuring -> $neighborAfter."
+    }
 }
 
 try {
@@ -116,6 +172,21 @@ try {
         $null -ne $projectName -and $projectName.Current.Name -eq '滚动测试项目'
     } 'synthetic workspace' | Out-Null
     if ((Find-ById $main 'ProjectNameText').Current.IsOffscreen) { throw 'Project overview is not the startup page.' }
+    Activate-Window $main 'main window'
+    Assert-HoverStable (Find-ById $main 'OverviewPageButton') (Find-ById $main 'CommandsPageButton') 'Overview navigation button at default size'
+    Assert-HoverStable (Find-ById $main 'OverviewCommandsButton') (Find-ById $main 'OverviewOutputButton') 'Overview action button at default size'
+    (Find-ById $main 'AddProjectButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $projectEditorCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'TalosDesk · 项目')
+    $projectEditor = Wait-For {
+        $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $projectEditorCondition)
+    } 'project editor window'
+    Activate-Window $projectEditor 'project editor'
+    $projectCancel = Find-ButtonByName $projectEditor '取消'
+    Assert-HoverStable $projectCancel (Find-ById $projectEditor 'SaveButton') 'Project editor button'
+    $projectCancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Wait-For { $null -eq $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $projectEditorCondition) } 'project editor to close' | Out-Null
+    Write-Output 'PASS: default-size navigation and action buttons keep their bounds and neighboring controls stable on hover.'
+    Write-Output 'PASS: project editor buttons keep their bounds stable on hover.'
     $navigationCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'CommandsPageButton')
     $navigation = Wait-For { $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $navigationCondition) } 'command page navigation'
     $navigation.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
@@ -139,6 +210,20 @@ try {
     $transform = $main.GetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern)
     $transform.Resize(1050, 650)
     Start-Sleep -Milliseconds 350
+    Activate-Window $main 'main window at minimum size'
+    Assert-HoverStable (Find-ById $main 'OverviewPageButton') (Find-ById $main 'CommandsPageButton') 'Overview navigation button at minimum size'
+    (Find-ById $main 'AddCommandButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $commandEditorCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'TalosDesk · 命令')
+    $commandEditor = Wait-For {
+        $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $commandEditorCondition)
+    } 'command editor window'
+    Activate-Window $commandEditor 'command editor'
+    $commandCancel = Find-ButtonByName $commandEditor '取消'
+    Assert-HoverStable $commandCancel (Find-ButtonByName $commandEditor '保存命令') 'Command editor button'
+    $commandCancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Wait-For { $null -eq $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $commandEditorCondition) } 'command editor to close' | Out-Null
+    Write-Output 'PASS: minimum-size navigation buttons keep their bounds and neighboring controls stable on hover.'
+    Write-Output 'PASS: command editor buttons keep their bounds stable on hover.'
     $minimumVisible = Count-FullyVisibleCommands
     if ($minimumVisible -lt 4) { throw "Minimum window shows only $minimumVisible complete command cards; expected at least 4." }
     $scroll = $list.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
@@ -229,6 +314,7 @@ try {
     Write-Output 'PASS: batch and single runs open the output page; selection, logs, and project switching remain consistent.'
 }
 finally {
+    [System.Windows.Forms.Cursor]::Position = $originalCursor
     if ($null -ne $process) {
         $process.Refresh()
         if (-not $process.HasExited) {
