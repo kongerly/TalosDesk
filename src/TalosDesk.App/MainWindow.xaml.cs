@@ -12,6 +12,8 @@ namespace TalosDesk.App;
 
 public partial class MainWindow : Window
 {
+    private enum MainPage { Overview, Commands, Output }
+
     private readonly WorkspaceStore _store = new();
     private readonly CommandRunner _runner = new();
     private readonly Dictionary<Guid, CommandRunSession> _sessions = [];
@@ -21,6 +23,7 @@ public partial class MainWindow : Window
     private readonly HashSet<Guid> _restartsInProgress = [];
     private readonly HashSet<Guid> _checkedCommandIds = [];
     private readonly Dictionary<Guid, ObservableCollection<CommandOutput>> _logs = [];
+    private readonly ObservableCollection<OutputCommandItem> _outputCommands = [];
     private readonly BoundedOutputInbox _pendingOutput = new(10_000);
     private int _outputFlushScheduled;
     private bool _canSave = true;
@@ -31,11 +34,14 @@ public partial class MainWindow : Window
     private ProjectDefinition? _selectedProject;
     private CommandDefinition? _selectedCommand;
     private Guid? _batchProjectId;
+    private bool _syncingCommandSelection;
 
     public MainWindow()
     {
         InitializeComponent();
+        OutputCommandList.ItemsSource = _outputCommands;
         DataContext = this;
+        SetPage(MainPage.Overview);
     }
 
     public ObservableCollection<ProjectDefinition> Projects { get; } = [];
@@ -58,6 +64,7 @@ public partial class MainWindow : Window
         {
             _canSave = false;
             RefreshCommandSelection();
+            UpdateEmptyStates();
             MessageBox.Show(this,
                 $"TalosDesk 无法读取本机工作区配置，原文件未作修改。\n\n{exception.Message}",
                 "无法加载工作区", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -73,18 +80,73 @@ public partial class MainWindow : Window
             _batchProjectId = _selectedProject.Id;
         }
         _selectedCommand = null;
-        CommandList.ItemsSource = _selectedProject?.Commands;
-        CommandList.SelectedIndex = -1;
-        ProjectNameText.Text = _selectedProject?.Name ?? "请选择项目";
-        ProjectPathText.Text = _selectedProject?.Directory ?? "添加本地文件夹以开始使用";
+        _syncingCommandSelection = true;
+        try
+        {
+            CommandList.ItemsSource = _selectedProject?.Commands;
+            CommandList.SelectedItem = null;
+            RebuildOutputCommands();
+            OutputCommandList.SelectedItem = null;
+        }
+        finally { _syncingCommandSelection = false; }
         RefreshCommandSelection();
         UpdateEmptyStates();
     }
 
     private void CommandList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        _selectedCommand = CommandList.SelectedItem as CommandDefinition;
+        if (!_syncingCommandSelection) SelectCommand(CommandList.SelectedItem as CommandDefinition);
+    }
+
+    private void OutputCommandList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (!_syncingCommandSelection) SelectCommand((OutputCommandList.SelectedItem as OutputCommandItem)?.Command);
+    }
+
+    private void SelectCommand(CommandDefinition? command)
+    {
+        _selectedCommand = command is not null && _selectedProject?.Commands.Contains(command) == true ? command : null;
+        _syncingCommandSelection = true;
+        try
+        {
+            if (!ReferenceEquals(CommandList.SelectedItem, _selectedCommand)) CommandList.SelectedItem = _selectedCommand;
+            var outputItem = _outputCommands.FirstOrDefault(item => item.Command.Id == _selectedCommand?.Id);
+            if (!ReferenceEquals(OutputCommandList.SelectedItem, outputItem)) OutputCommandList.SelectedItem = outputItem;
+        }
+        finally { _syncingCommandSelection = false; }
         RefreshCommandSelection();
+    }
+
+    private void RebuildOutputCommands()
+    {
+        _outputCommands.Clear();
+        if (_selectedProject is null) return;
+        foreach (var command in _selectedProject.Commands) _outputCommands.Add(new OutputCommandItem(command));
+    }
+
+    private void OverviewPage_Click(object sender, RoutedEventArgs e) => SetPage(MainPage.Overview);
+    private void CommandsPage_Click(object sender, RoutedEventArgs e) => SetPage(MainPage.Commands);
+    private void OutputPage_Click(object sender, RoutedEventArgs e) => SetPage(MainPage.Output);
+
+    private void SetPage(MainPage page)
+    {
+        OverviewPage.Visibility = page == MainPage.Overview ? Visibility.Visible : Visibility.Collapsed;
+        CommandsPage.Visibility = page == MainPage.Commands ? Visibility.Visible : Visibility.Collapsed;
+        OutputPage.Visibility = page == MainPage.Output ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var (button, buttonPage) in new[]
+                 {
+                     (OverviewPageButton, MainPage.Overview),
+                     (CommandsPageButton, MainPage.Commands),
+                     (OutputPageButton, MainPage.Output)
+                 })
+        {
+            button.Background = buttonPage == page
+                ? (System.Windows.Media.Brush)FindResource("HeroBrush")
+                : (System.Windows.Media.Brush)FindResource("SidebarRaisedBrush");
+            button.BorderBrush = buttonPage == page
+                ? (System.Windows.Media.Brush)FindResource("GoldBrush")
+                : (System.Windows.Media.Brush)FindResource("SidebarRaisedBrush");
+        }
     }
 
     private void BatchCheckBox_Loaded(object sender, RoutedEventArgs e)
@@ -115,17 +177,29 @@ public partial class MainWindow : Window
         ExportButton.IsEnabled = canChangeWorkspace;
         AddCommandButton.IsEnabled = _selectedProject is not null && canChangeWorkspace;
         EditProjectButton.IsEnabled = _selectedProject is not null && canChangeWorkspace;
+        OverviewCommandsButton.IsEnabled = _selectedProject is not null;
+        OverviewOutputButton.IsEnabled = _selectedProject is not null;
         ProjectNameText.Text = _selectedProject?.Name ?? "请选择项目";
         ProjectPathText.Text = _selectedProject?.Directory ?? "添加本地文件夹以开始使用";
+        CommandsProjectText.Text = _selectedProject?.Name ?? "选择项目以查看命令";
+        OutputProjectText.Text = _selectedProject?.Name ?? "选择项目以查看输出";
         CommandCountText.Text = _selectedProject?.Commands.Count.ToString() ?? "0";
+        OverviewRunningCountText.Text = (_selectedProject?.Commands.Count(item =>
+            _sessions.TryGetValue(item.Id, out var active) && !active.Completion.IsCompleted) ?? 0).ToString();
+        OverviewFinishedCountText.Text = (_selectedProject?.Commands.Count(item => _lastResults.ContainsKey(item.Id)) ?? 0).ToString();
+        foreach (var item in _outputCommands) item.StatusText = GetCommandStatusText(item.Command);
         SelectedCommandName.Text = command?.Name ?? "请选择命令";
         RunStartedText.Text = command is not null && _runStartedAt.TryGetValue(command.Id, out var startedAt)
             ? $"开始时间：{startedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
             : string.Empty;
-        LogCommandName.Text = command is null ? "选择命令以查看输出" : $"  {command.Name}";
+        LogCommandName.Text = command?.Name ?? "选择命令以查看输出";
         RunButton.IsEnabled = command is not null && !running && !restarting && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
         StopButton.IsEnabled = command is not null && running && !restarting && !_isStoppingForClose;
         RestartButton.IsEnabled = command is not null && !restarting && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
+        OutputRunButton.IsEnabled = RunButton.IsEnabled;
+        OutputStopButton.IsEnabled = StopButton.IsEnabled;
+        OutputRestartButton.IsEnabled = RestartButton.IsEnabled;
+        ClearOutputButton.IsEnabled = command is not null;
         EditButton.IsEnabled = command is not null && !running && canChangeWorkspace;
         CopyButton.IsEnabled = command is not null;
         var selectedIndex = command is null ? -1 : _selectedProject?.Commands.IndexOf(command) ?? -1;
@@ -143,36 +217,42 @@ public partial class MainWindow : Window
 
         if (command is null)
         {
+            EmptyOutputHint.Text = "选择左侧命令以查看输出。";
             RunStateText.Text = "空闲";
             RunStateText.Foreground = (System.Windows.Media.Brush)FindResource("MutedBrush");
+            OutputRunStateText.Text = RunStateText.Text;
+            OutputRunStateText.Foreground = RunStateText.Foreground;
             OutputList.ItemsSource = null;
             EmptyOutputHint.Visibility = Visibility.Visible;
             return;
         }
 
         OutputList.ItemsSource = GetLogs(command.Id);
+        EmptyOutputHint.Text = "这条命令尚无输出。";
         EmptyOutputHint.Visibility = GetLogs(command.Id).Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (running)
-        {
-            RunStateText.Text = "运行中";
-            RunStateText.Foreground = (System.Windows.Media.Brush)FindResource("AccentBrush");
-        }
+        RunStateText.Text = GetCommandStatusText(command);
+        if (running || restarting) RunStateText.Foreground = (System.Windows.Media.Brush)FindResource("AccentBrush");
         else if (_lastResults.TryGetValue(command.Id, out var result))
-        {
-            RunStateText.Text = result.State == CommandRunState.Succeeded
-                ? $"已成功 · 退出码 {result.ExitCode}"
-                : result.State == CommandRunState.Stopped
-                    ? $"{(result.WasForceTerminated ? "已强制停止" : "已停止")} · 退出码 {result.ExitCode}"
-                    : $"失败 · 退出码 {result.ExitCode}";
-            RunStateText.Foreground = result.State == CommandRunState.Succeeded ? System.Windows.Media.Brushes.SeaGreen : (System.Windows.Media.Brush)FindResource("AccentBrush");
-        }
-        else
-        {
-            RunStateText.Text = "空闲";
-            RunStateText.Foreground = (System.Windows.Media.Brush)FindResource("MutedBrush");
-        }
+            RunStateText.Foreground = result.State == CommandRunState.Succeeded
+                ? System.Windows.Media.Brushes.SeaGreen
+                : (System.Windows.Media.Brush)FindResource("AccentBrush");
+        else RunStateText.Foreground = (System.Windows.Media.Brush)FindResource("MutedBrush");
+        OutputRunStateText.Text = RunStateText.Text;
+        OutputRunStateText.Foreground = RunStateText.Foreground;
 
         if (GetLogs(command.Id).Count > 0) OutputList.ScrollIntoView(GetLogs(command.Id)[^1]);
+    }
+
+    private string GetCommandStatusText(CommandDefinition command)
+    {
+        if (_restartsInProgress.Contains(command.Id)) return "正在重启";
+        if (_sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted) return "运行中";
+        if (!_lastResults.TryGetValue(command.Id, out var result)) return "空闲";
+        return result.State == CommandRunState.Succeeded
+            ? $"已成功 · 退出码 {result.ExitCode}"
+            : result.State == CommandRunState.Stopped
+                ? $"{(result.WasForceTerminated ? "已强制停止" : "已停止")} · 退出码 {result.ExitCode}"
+                : $"失败 · 退出码 {result.ExitCode}";
     }
 
     private async void AddProject_Click(object sender, RoutedEventArgs e)
@@ -484,16 +564,21 @@ public partial class MainWindow : Window
         if (ProjectList.SelectedItem is null && Projects.Count > 0) ProjectList.SelectedIndex = 0;
         if (selectedCommandId is { } commandId)
         {
-            CommandList.SelectedItem = _selectedProject?.Commands.FirstOrDefault(command => command.Id == commandId);
+            SelectCommand(_selectedProject?.Commands.FirstOrDefault(command => command.Id == commandId));
         }
     }
 
     private void RefreshCommandList(CommandDefinition? selectedCommand)
     {
-        CommandList.ItemsSource = null;
-        CommandList.ItemsSource = _selectedProject?.Commands;
-        CommandList.SelectedItem = selectedCommand;
-        RefreshCommandSelection();
+        _syncingCommandSelection = true;
+        try
+        {
+            CommandList.ItemsSource = null;
+            CommandList.ItemsSource = _selectedProject?.Commands;
+            RebuildOutputCommands();
+        }
+        finally { _syncingCommandSelection = false; }
+        SelectCommand(selectedCommand);
         UpdateEmptyStates();
     }
 
@@ -581,15 +666,11 @@ public partial class MainWindow : Window
         {
             var project = _selectedProject;
             project.Commands.Add(editor.Result);
-            CommandList.ItemsSource = null;
-            CommandList.ItemsSource = project.Commands;
-            CommandList.SelectedItem = editor.Result;
-            UpdateEmptyStates();
+            RefreshCommandList(editor.Result);
             if (!await SaveWorkspaceAsync())
             {
                 project.Commands.Remove(editor.Result);
-                RefreshProjectList();
-                UpdateEmptyStates();
+                RefreshCommandList(null);
             }
         }
         finally { EndWorkspaceChange(); }
@@ -612,14 +693,11 @@ public partial class MainWindow : Window
             var index = project.Commands.IndexOf(_selectedCommand);
             var previousCommand = project.Commands[index];
             project.Commands[index] = editor.Result;
-            CommandList.ItemsSource = null;
-            CommandList.ItemsSource = project.Commands;
-            CommandList.SelectedItem = editor.Result;
+            RefreshCommandList(editor.Result);
             if (!await SaveWorkspaceAsync())
             {
                 project.Commands[index] = previousCommand;
-                RefreshProjectList();
-                UpdateEmptyStates();
+                RefreshCommandList(previousCommand);
                 return;
             }
 
@@ -632,7 +710,11 @@ public partial class MainWindow : Window
         finally { EndWorkspaceChange(); }
     }
 
-    private void RunCommand_Click(object sender, RoutedEventArgs e) => StartSelectedCommand();
+    private void RunCommand_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedProject is null || _selectedCommand is null) return;
+        if (StartCommand(_selectedProject, _selectedCommand)) SetPage(MainPage.Output);
+    }
 
     private void RunCheckedCommands_Click(object sender, RoutedEventArgs e)
     {
@@ -641,7 +723,16 @@ public partial class MainWindow : Window
         var commands = project.Commands.Where(command => _checkedCommandIds.Contains(command.Id) &&
             !_restartsInProgress.Contains(command.Id) &&
             (!_sessions.TryGetValue(command.Id, out var session) || session.Completion.IsCompleted)).ToArray();
-        foreach (var command in commands) StartCommand(project, command);
+        CommandDefinition? firstStarted = null;
+        foreach (var command in commands)
+        {
+            if (StartCommand(project, command)) firstStarted ??= command;
+        }
+        if (firstStarted is not null)
+        {
+            SelectCommand(firstStarted);
+            SetPage(MainPage.Output);
+        }
         RefreshCommandSelection();
     }
 
@@ -657,6 +748,7 @@ public partial class MainWindow : Window
             if (_sessions.TryGetValue(commandId, out var session) && !session.Completion.IsCompleted)
             {
                 RunStateText.Text = "正在重启 · 停止中";
+                OutputRunStateText.Text = RunStateText.Text;
                 try
                 {
                     await session.StopAsync();
@@ -681,14 +773,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void StartSelectedCommand()
+    private bool StartCommand(ProjectDefinition project, CommandDefinition command)
     {
-        if (_selectedProject is not null && _selectedCommand is not null) StartCommand(_selectedProject, _selectedCommand);
-    }
-
-    private void StartCommand(ProjectDefinition project, CommandDefinition command)
-    {
-        if (!_canSave || _workspaceChangeInProgress || _isStoppingForClose) return;
+        if (!_canSave || _workspaceChangeInProgress || _isStoppingForClose) return false;
         var workingDirectory = string.IsNullOrWhiteSpace(command.WorkingDirectory) ? project.Directory : command.WorkingDirectory;
         try
         {
@@ -702,11 +789,13 @@ public partial class MainWindow : Window
             _sessions[command.Id] = started;
             RefreshCommandSelection();
             _ = CompleteRunAsync(command.Id, started);
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
         {
             RefreshCommandSelection();
             MessageBox.Show(this, exception.Message, "命令启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
         }
     }
 
@@ -737,7 +826,11 @@ public partial class MainWindow : Window
         if (_selectedCommand is null || !_sessions.TryGetValue(_selectedCommand.Id, out var session)) return;
         var stoppedCommandId = _selectedCommand.Id;
         RunStateText.Text = "正在停止 · Ctrl+C";
+        OutputRunStateText.Text = RunStateText.Text;
+        var outputItem = _outputCommands.FirstOrDefault(item => item.Command.Id == stoppedCommandId);
+        if (outputItem is not null) outputItem.StatusText = RunStateText.Text;
         StopButton.IsEnabled = false;
+        OutputStopButton.IsEnabled = false;
         try
         {
             var stopResult = await session.StopAsync();
@@ -745,7 +838,9 @@ public partial class MainWindow : Window
             if (_selectedCommand?.Id == stoppedCommandId)
             {
                 RunStateText.Text = stopResult == CommandStopResult.ForceTerminated ? "已强制停止" : "已停止";
+                OutputRunStateText.Text = RunStateText.Text;
                 StopButton.IsEnabled = false;
+                OutputStopButton.IsEnabled = false;
             }
         }
         catch (Exception exception)
@@ -904,7 +999,30 @@ public partial class MainWindow : Window
     {
         EmptyProjectsHint.Visibility = Projects.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyCommandsHint.Visibility = _selectedProject is not null && _selectedProject.Commands.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyOutputCommandsHint.Visibility = _selectedProject is not null && _selectedProject.Commands.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        OverviewDetails.Visibility = _selectedProject is null ? Visibility.Collapsed : Visibility.Visible;
+        OverviewEmptyHint.Visibility = _selectedProject is null ? Visibility.Visible : Visibility.Collapsed;
         if (_selectedCommand is null) EmptyOutputHint.Visibility = Visibility.Visible;
     }
 
+}
+
+public sealed class OutputCommandItem(CommandDefinition command) : INotifyPropertyChanged
+{
+    private string _statusText = "空闲";
+
+    public CommandDefinition Command { get; } = command;
+    public string Name => Command.Name;
+    public string StatusText
+    {
+        get => _statusText;
+        set
+        {
+            if (_statusText == value) return;
+            _statusText = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StatusText)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }

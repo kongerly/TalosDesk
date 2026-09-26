@@ -21,6 +21,25 @@ function Wait-For([scriptblock]$probe, [string]$description) {
     throw "Timed out waiting for $description"
 }
 
+function Find-ById($parent, [string]$automationId) {
+    $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
+    return $parent.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+function Select-ListItem($list, [string]$name) {
+    $items = $list.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($item in $items) {
+        $texts = $item.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+        foreach ($text in $texts) {
+            if ($text.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and $text.Current.Name -eq $name) {
+                $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                return
+            }
+        }
+    }
+    throw "Could not select $name."
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $reviewRoot, $sourceRoot | Out-Null
     foreach ($projectName in @('TalosDesk.Core', 'TalosDesk.App')) {
@@ -37,25 +56,41 @@ try {
     }
 
     $sampleDirectory = Join-Path $reviewRoot 'sample-project'
-    New-Item -ItemType Directory -Force -Path $sampleDirectory | Out-Null
+    $secondDirectory = Join-Path $reviewRoot 'second-project'
+    New-Item -ItemType Directory -Force -Path $sampleDirectory, $secondDirectory | Out-Null
     $commands = @(1..12 | ForEach-Object {
         [ordered]@{
             Id = [guid]::NewGuid().ToString()
             Name = ('测试命令 {0:D2}' -f $_)
             Purpose = '滚动定位检查'
-            Command = "Write-Output 'SCROLL_TEST'"
+            Command = ("Write-Output 'SCROLL_TEST_{0:D2}'" -f $_)
             WorkingDirectory = $sampleDirectory
             Kind = 0
         }
     })
     $workspace = [ordered]@{
         SchemaVersion = 1
-        Projects = @([ordered]@{
-            Id = [guid]::NewGuid().ToString()
-            Name = '滚动测试项目'
-            Directory = $sampleDirectory
-            Commands = $commands
-        })
+        Projects = @(
+            [ordered]@{
+                Id = [guid]::NewGuid().ToString()
+                Name = '滚动测试项目'
+                Directory = $sampleDirectory
+                Commands = $commands
+            },
+            [ordered]@{
+                Id = [guid]::NewGuid().ToString()
+                Name = '第二个测试项目'
+                Directory = $secondDirectory
+                Commands = @([ordered]@{
+                    Id = [guid]::NewGuid().ToString()
+                    Name = '第二项目命令'
+                    Purpose = '切换项目检查'
+                    Command = "Write-Output 'SECOND_PROJECT_OUTPUT'"
+                    WorkingDirectory = $secondDirectory
+                    Kind = 0
+                })
+            }
+        )
     }
     $workspace | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $workspacePath -Encoding utf8
 
@@ -80,8 +115,32 @@ try {
         $projectName = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $projectNameCondition)
         $null -ne $projectName -and $projectName.Current.Name -eq '滚动测试项目'
     } 'synthetic workspace' | Out-Null
+    if ((Find-ById $main 'ProjectNameText').Current.IsOffscreen) { throw 'Project overview is not the startup page.' }
+    $navigationCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'CommandsPageButton')
+    $navigation = Wait-For { $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $navigationCondition) } 'command page navigation'
+    $navigation.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     $listCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'CommandList')
-    $list = Wait-For { $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $listCondition) } 'command list'
+    $list = Wait-For {
+        $candidate = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $listCondition)
+        if ($null -ne $candidate -and -not $candidate.Current.IsOffscreen) { $candidate }
+    } 'visible command list'
+    function Count-FullyVisibleCommands {
+        $bounds = $list.Current.BoundingRectangle
+        $items = $list.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+        $visible = @($items | Where-Object {
+            $itemBounds = $_.Current.BoundingRectangle
+            -not $_.Current.IsOffscreen -and $itemBounds.Height -gt 0 -and
+            $itemBounds.Top -ge $bounds.Top -and $itemBounds.Bottom -le $bounds.Bottom
+        })
+        return $visible.Count
+    }
+    $defaultVisible = Count-FullyVisibleCommands
+    if ($defaultVisible -lt 6) { throw "Default window shows only $defaultVisible complete command cards; expected at least 6." }
+    $transform = $main.GetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern)
+    $transform.Resize(1050, 650)
+    Start-Sleep -Milliseconds 350
+    $minimumVisible = Count-FullyVisibleCommands
+    if ($minimumVisible -lt 4) { throw "Minimum window shows only $minimumVisible complete command cards; expected at least 4." }
     $scroll = $list.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
     if (-not $scroll.Current.VerticallyScrollable) { throw 'The command list is not scrollable.' }
     $before = $scroll.Current.VerticalScrollPercent
@@ -115,7 +174,59 @@ try {
     $selectedNameCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'SelectedCommandName')
     $selectedName = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $selectedNameCondition)
     if ($selectedName.Current.Name -ne $middleName) { throw "Selected command was $($selectedName.Current.Name), expected $middleName." }
-    Write-Output ('PASS: three small scroll steps moved command list {0:N1}%; selected {1} near the middle.' -f $after, $middleName)
+    Write-Output ('PASS: {0} cards at default size, {1} at minimum; three small scroll steps moved {2:N1}%; selected {3} near the middle.' -f $defaultVisible, $minimumVisible, $after, $middleName)
+
+    $scroll.SetScrollPercent([System.Windows.Automation.ScrollPattern]::NoScroll, 0)
+    Start-Sleep -Milliseconds 250
+    foreach ($number in 1..2) {
+        $checkName = ('勾选 测试命令 {0:D2}' -f $number)
+        $checkCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $checkName)
+        $check = Wait-For { $list.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $checkCondition) } $checkName
+        $check.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    }
+    (Find-ById $main 'BatchRunButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $outputSelector = Wait-For {
+        $candidate = Find-ById $main 'OutputCommandList'
+        if ($null -ne $candidate -and -not $candidate.Current.IsOffscreen) { $candidate }
+    } 'output page after batch run'
+    $logName = Find-ById $main 'LogCommandName'
+    if ($logName.Current.Name -ne '测试命令 01') { throw "Batch run selected $($logName.Current.Name) instead of its first started command." }
+    Wait-For {
+        $log = Find-ById $main 'OutputList'
+        $nodes = $log.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+        @($nodes | Where-Object { $_.Current.Name -eq 'SCROLL_TEST_01' }).Count -gt 0
+    } 'first batch command output' | Out-Null
+    Select-ListItem $outputSelector '测试命令 02'
+    if ($logName.Current.Name -ne '测试命令 02') { throw 'Output selector did not change the selected command.' }
+    Wait-For {
+        $log = Find-ById $main 'OutputList'
+        $nodes = $log.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+        @($nodes | Where-Object { $_.Current.Name -eq 'SCROLL_TEST_02' }).Count -gt 0
+    } 'second batch command output' | Out-Null
+    $navigation.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    if ($selectedName.Current.Name -ne '测试命令 02') { throw 'Command management did not retain the output page selection.' }
+    (Find-ById $main 'OutputPageButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    (Find-ById $main 'OverviewPageButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Wait-For { (Find-ById $main 'OverviewFinishedCountText').Current.Name -eq '2' } 'session overview result count' | Out-Null
+    (Find-ById $main 'OutputPageButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+
+    $projects = Find-ById $main 'ProjectList'
+    Select-ListItem $projects '第二个测试项目'
+    if ($outputSelector.Current.IsOffscreen) { throw 'Switching projects left the output page.' }
+    if ($logName.Current.Name -ne '选择命令以查看输出') { throw 'Switching projects kept a command from the previous project selected.' }
+    Select-ListItem $projects '滚动测试项目'
+    Select-ListItem $outputSelector '测试命令 01'
+    Wait-For {
+        $log = Find-ById $main 'OutputList'
+        $nodes = $log.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+        @($nodes | Where-Object { $_.Current.Name -eq 'SCROLL_TEST_01' }).Count -gt 0
+    } 'preserved output after project switch' | Out-Null
+
+    $navigation.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Select-ListItem $list '测试命令 03'
+    (Find-ById $main 'RunButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Wait-For { -not $outputSelector.Current.IsOffscreen -and $logName.Current.Name -eq '测试命令 03' } 'output page after single run' | Out-Null
+    Write-Output 'PASS: batch and single runs open the output page; selection, logs, and project switching remain consistent.'
 }
 finally {
     if ($null -ne $process) {

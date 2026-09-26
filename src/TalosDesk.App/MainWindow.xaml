@@ -39,6 +39,11 @@
             <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
             <Setter Property="BorderBrush" Value="#B6D1DC" />
         </Style>
+        <Style x:Key="PageNavigationButton" TargetType="Button" BasedOn="{StaticResource SidebarButton}">
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Padding" Value="13,6" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
         <Style x:Key="BaseListItem" TargetType="ListBoxItem">
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="0" />
@@ -111,43 +116,46 @@
 
         <Border Grid.Column="0" Background="{StaticResource SidebarBrush}" BorderBrush="#B8D5E2" BorderThickness="0,0,1,0">
             <DockPanel LastChildFill="True">
-                <StackPanel DockPanel.Dock="Top" Margin="22,24,22,28">
-                    <Grid Height="74">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="64" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <Image Width="56" Height="56" HorizontalAlignment="Left" VerticalAlignment="Center" Source="Assets/TalosDeskMark.png" RenderOptions.BitmapScalingMode="HighQuality" />
+                <StackPanel DockPanel.Dock="Top" Margin="18,11,18,12">
+                    <Grid Height="56">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="52" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Image Width="46" Height="46" HorizontalAlignment="Left" VerticalAlignment="Center" Source="Assets/TalosDeskMark.png" RenderOptions.BitmapScalingMode="HighQuality" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="7,0,0,0">
-                            <TextBlock Text="TALOSDESK" Foreground="{StaticResource InkBrush}" FontFamily="{StaticResource BrandFont}" FontSize="19" FontWeight="Bold" />
-                            <TextBlock Text="机巧指挥台" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource DisplayFont}" FontSize="14" FontWeight="Bold" Margin="0,2,0,0" />
+                            <TextBlock Text="TALOSDESK" Foreground="{StaticResource InkBrush}" FontFamily="{StaticResource BrandFont}" FontSize="17" FontWeight="Bold" />
+                            <TextBlock Text="机巧指挥台" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource DisplayFont}" FontSize="12" FontWeight="Bold" Margin="0,1,0,0" />
                         </StackPanel>
                     </Grid>
-                    <Grid Height="7" Margin="0,10,0,0">
+                    <Grid Height="7" Margin="0,5,0,0">
                         <Border Height="1" Background="#A9CEDB" VerticalAlignment="Center" />
                         <Path Data="M 0,3.5 L 3.5,0 L 7,3.5 L 3.5,7 Z" Fill="{StaticResource GoldBrush}" Width="7" Height="7" HorizontalAlignment="Left" />
                         <Border Width="76" Height="2" Background="{StaticResource GoldBrush}" HorizontalAlignment="Left" Margin="13,0,0,0" VerticalAlignment="Center" />
                     </Grid>
-                    <TextBlock Text="本地项目  /  运行  /  验证" Foreground="{StaticResource MutedBrush}" FontFamily="{StaticResource CodeFont}" FontSize="10" Margin="2,14,0,0" />
                 </StackPanel>
-                <StackPanel DockPanel.Dock="Bottom" Margin="18,16,18,20">
+                <StackPanel DockPanel.Dock="Top" Margin="18,0,18,8">
+                    <TextBlock Text="工作区域" Foreground="#935B42" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" Margin="6,0,0,5" />
+                    <Button x:Name="OverviewPageButton" Content="项目概览" Style="{StaticResource PageNavigationButton}" Click="OverviewPage_Click" />
+                    <Button x:Name="CommandsPageButton" Content="命令管理" Style="{StaticResource PageNavigationButton}" Click="CommandsPage_Click" />
+                    <Button x:Name="OutputPageButton" Content="运行输出" Style="{StaticResource PageNavigationButton}" Click="OutputPage_Click" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom" Margin="18,8,18,10">
                     <Button x:Name="AddProjectButton" Content="＋   添加项目" Style="{StaticResource SidebarButton}" HorizontalAlignment="Stretch" Click="AddProject_Click" />
                     <Grid Margin="0,8,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <Button x:Name="ImportButton" Content="导入" Style="{StaticResource SidebarButton}" Click="ImportWorkspace_Click" />
                         <Button x:Name="ExportButton" Grid.Column="2" Content="导出" Style="{StaticResource SidebarButton}" Click="ExportWorkspace_Click" />
                     </Grid>
-                    <TextBlock Text="配置仅保存在此电脑" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="3,14,3,0" />
+                    <TextBlock x:Name="SaveStatusText" Text="本机配置" Foreground="{StaticResource JadeBrush}" FontSize="11" FontWeight="SemiBold" Margin="3,8,3,0" />
+                    <TextBlock Text="配置仅保存在此电脑" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="3,4,3,0" />
                 </StackPanel>
                 <StackPanel>
-                    <TextBlock Text="PROJECT ARCHIVE   /   项目" Foreground="#935B42" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" Margin="24,0,18,10" />
-                    <ListBox x:Name="ProjectList" ItemsSource="{Binding Projects}" Background="Transparent" BorderThickness="0" Foreground="{StaticResource InkBrush}" ItemContainerStyle="{StaticResource SidebarItem}" SelectionChanged="ProjectList_SelectionChanged">
+                    <TextBlock Text="PROJECT ARCHIVE   /   项目" Foreground="#935B42" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" Margin="24,0,18,5" />
+                    <ListBox x:Name="ProjectList" ItemsSource="{Binding Projects}" Background="Transparent" BorderThickness="0" Foreground="{StaticResource InkBrush}" ItemContainerStyle="{StaticResource SidebarItem}" SelectionChanged="ProjectList_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="13,11,13,11">
+                                <Grid Margin="13,8,13,8" ToolTip="{Binding Directory}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <Path Data="M 7,0 L 14,7 L 7,14 L 0,7 Z" Stroke="{StaticResource GoldBrush}" StrokeThickness="1.5" Fill="#FFF7ED" Width="12" Height="12" Stretch="Fill" VerticalAlignment="Center" HorizontalAlignment="Left" />
-                                    <StackPanel Grid.Column="1">
-                                        <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding Directory}" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
@@ -157,123 +165,194 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Column="1" Margin="26,21,30,24">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="3*" MinHeight="115" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="4*" MinHeight="140" />
-            </Grid.RowDefinitions>
-
-            <Border Grid.Row="0" Background="{StaticResource HeroBrush}" BorderBrush="#B6D8E5" BorderThickness="1" CornerRadius="15" Margin="0,0,0,18" ClipToBounds="True">
-                <Grid MinHeight="126">
-                    <Image Source="Assets/TalosDeskMark.png" Width="160" Height="160" Opacity="0.11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,125,0" IsHitTestVisible="False" />
-                    <Path Data="M 0,0 L 95,0 L 0,95 Z" Fill="#D2EEF6" Opacity="0.7" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" />
-                    <Border Width="5" Background="{StaticResource GoldBrush}" HorizontalAlignment="Left" Margin="0,23,0,23" CornerRadius="3" />
-                    <Grid Margin="25,17,20,16">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="TALOS  /  当前项目" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" Margin="1,0,0,5" />
-                            <TextBlock x:Name="ProjectNameText" Text="选择一个项目" FontFamily="{StaticResource DisplayFont}" FontSize="29" FontWeight="Bold" />
-                            <TextBlock x:Name="ProjectPathText" Text="添加本地文件夹以开始使用" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="1,4,0,0" />
-                        </StackPanel>
-                        <Button x:Name="EditProjectButton" Grid.Column="1" Content="编辑项目" Style="{StaticResource ActionButton}" Margin="14,0,18,0" VerticalAlignment="Center" Click="EditProject_Click" IsEnabled="False" />
-                        <Border Grid.Column="2" Background="#F7FCFF" BorderBrush="#AACFDB" BorderThickness="1" CornerRadius="12" Padding="11,6" VerticalAlignment="Center">
-                            <TextBlock x:Name="SaveStatusText" Foreground="{StaticResource JadeBrush}" FontSize="11" FontWeight="SemiBold" Text="本机配置" />
+        <Grid Grid.Column="1" Margin="22,19,25,22">
+            <Grid x:Name="OverviewPage">
+                <Grid x:Name="OverviewDetails">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Background="{StaticResource HeroBrush}" BorderBrush="#B6D8E5" BorderThickness="1" CornerRadius="15" ClipToBounds="True">
+                        <Grid MinHeight="165">
+                            <Image Source="Assets/TalosDeskMark.png" Width="180" Height="180" Opacity="0.11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,105,0" IsHitTestVisible="False" />
+                            <Border Width="5" Background="{StaticResource GoldBrush}" HorizontalAlignment="Left" Margin="0,24" CornerRadius="3" />
+                            <Grid Margin="28,23">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="TALOS  /  项目概览" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource CodeFont}" FontSize="11" FontWeight="Bold" Margin="1,0,0,7" />
+                                    <TextBlock x:Name="ProjectNameText" Text="选择一个项目" FontFamily="{StaticResource DisplayFont}" FontSize="30" FontWeight="Bold" />
+                                    <TextBlock x:Name="ProjectPathText" Text="添加本地文件夹以开始使用" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="1,7,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button x:Name="EditProjectButton" Grid.Column="1" Content="编辑项目" Style="{StaticResource ActionButton}" VerticalAlignment="Center" Margin="18,0,0,0" Click="EditProject_Click" IsEnabled="False" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                    <Grid Grid.Row="1" Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="13" Padding="20,16">
+                            <StackPanel>
+                                <TextBlock Text="已保存的命令" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                                <TextBlock x:Name="CommandCountText" Text="0" FontFamily="{StaticResource CodeFont}" FontSize="27" FontWeight="Bold" Foreground="{StaticResource JadeBrush}" Margin="0,7,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="2" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="13" Padding="20,16">
+                            <StackPanel>
+                                <TextBlock Text="正在运行" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                                <TextBlock x:Name="OverviewRunningCountText" Text="0" FontFamily="{StaticResource CodeFont}" FontSize="27" FontWeight="Bold" Foreground="{StaticResource JadeBrush}" Margin="0,7,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="4" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="13" Padding="20,16">
+                            <StackPanel>
+                                <TextBlock Text="本次会话有结果的命令" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                                <TextBlock x:Name="OverviewFinishedCountText" Text="0" FontFamily="{StaticResource CodeFont}" FontSize="27" FontWeight="Bold" Foreground="{StaticResource JadeBrush}" Margin="0,7,0,0" />
+                            </StackPanel>
                         </Border>
                     </Grid>
-                    <Path Data="M 0,9 L 9,0 L 18,9 L 9,18 Z" Fill="{StaticResource GoldBrush}" Width="9" Height="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,17,12" IsHitTestVisible="False" />
-                </Grid>
-            </Border>
-
-            <Grid Grid.Row="1" Margin="0,0,0,8">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="已保存的命令" FontFamily="{StaticResource DisplayFont}" FontSize="18" FontWeight="Bold" />
-                    <Border Background="#DDF1F7" BorderBrush="#A8CFDD" BorderThickness="1" CornerRadius="9" Padding="7,1" Margin="10,1,0,0">
-                        <TextBlock x:Name="CommandCountText" Text="0" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource CodeFont}" FontSize="11" FontWeight="Bold" />
+                    <Border Grid.Row="2" Background="{StaticResource HeroBrush}" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="13" Margin="0,18,0,0" Padding="23,20" VerticalAlignment="Top">
+                        <StackPanel>
+                            <TextBlock Text="下一步" FontFamily="{StaticResource DisplayFont}" FontSize="18" FontWeight="Bold" />
+                            <TextBlock Text="管理此项目的命令，或查看本次会话的运行输出。" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,7,0,17" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="OverviewCommandsButton" Content="查看命令" Style="{StaticResource PrimaryButton}" Click="CommandsPage_Click" />
+                                <Button x:Name="OverviewOutputButton" Content="查看运行输出" Style="{StaticResource ActionButton}" Margin="10,0,0,0" Click="OutputPage_Click" />
+                            </StackPanel>
+                        </StackPanel>
                     </Border>
-                </StackPanel>
-                <Button x:Name="BatchRunButton" Grid.Column="1" Content="同时运行 (0)" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" Click="RunCheckedCommands_Click" IsEnabled="False" ToolTip="同时启动当前项目中勾选且尚未运行的命令" />
-                <Button x:Name="AddCommandButton" Grid.Column="2" Content="＋  添加命令" Style="{StaticResource ActionButton}" Click="AddCommand_Click" IsEnabled="False" />
+                </Grid>
+                <TextBlock x:Name="OverviewEmptyHint" Text="还没有项目。请使用左侧的“添加项目”开始。" Foreground="{StaticResource MutedBrush}" FontSize="16" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
             </Grid>
 
-            <Border Grid.Row="2" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="14" ClipToBounds="True">
-                <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                    <Grid Background="#F0F8FC" MinHeight="44">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <TextBlock x:Name="BatchSelectionHint" Text="勾选可同时运行 · 点选可排序或删除" Margin="17,0,8,0" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
-                        <Button x:Name="MoveCommandUpButton" Grid.Column="1" Content="↑ 上移" Style="{StaticResource SidebarButton}" Padding="10,5" Margin="0,5,6,5" Click="MoveCommandUp_Click" IsEnabled="False" />
-                        <Button x:Name="MoveCommandDownButton" Grid.Column="2" Content="↓ 下移" Style="{StaticResource SidebarButton}" Padding="10,5" Margin="0,5,6,5" Click="MoveCommandDown_Click" IsEnabled="False" />
-                        <Button x:Name="DeleteCommandButton" Grid.Column="3" Content="删除" Style="{StaticResource SidebarButton}" Foreground="#9B4E42" Padding="11,5" Margin="0,5,12,5" Click="DeleteCommand_Click" IsEnabled="False" ToolTip="先选中一条已停止的命令" />
-                    </Grid>
-                    <Border Height="1" Background="#D1E6EE" VerticalAlignment="Top" Grid.Row="1" />
-                    <ListBox x:Name="CommandList" Grid.Row="1" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}" SelectionChanged="CommandList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.ScrollUnit="Pixel">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <Grid MinHeight="76">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="4" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <CheckBox x:Name="BatchCheckBox" Grid.Column="0" Style="{StaticResource BatchCheckBox}" AutomationProperties.Name="{Binding Name, StringFormat=勾选 {0}}" ToolTip="勾选后可与其他命令同时运行" Loaded="BatchCheckBox_Loaded" Checked="BatchCheckBox_Changed" Unchecked="BatchCheckBox_Changed" />
-                                    <Border Grid.Column="1" Background="{StaticResource GoldBrush}" CornerRadius="3" Margin="0,11" />
-                                    <StackPanel Grid.Column="2" Margin="15,11,12,10" VerticalAlignment="Center">
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="{Binding Name}" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="Bold" Foreground="{StaticResource InkBrush}" />
-                                            <Border Background="#DFEFF5" CornerRadius="8" Padding="7,2" Margin="10,1,0,0"><TextBlock Text="{Binding Kind, Converter={StaticResource CommandKindConverter}}" FontSize="9" FontWeight="Bold" Foreground="{StaticResource JadeBrush}" /></Border>
-                                        </StackPanel>
-                                        <TextBlock Text="{Binding Command}" FontFamily="{StaticResource CodeFont}" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                    <TextBlock Grid.Column="3" Text="{Binding Purpose}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,16,0" MaxWidth="180" TextTrimming="CharacterEllipsis" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <TextBlock x:Name="EmptyCommandsHint" Grid.Row="1" Text="为此项目添加命令，运行输出会显示在下方。" Foreground="{StaticResource MutedBrush}" FontSize="13" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="330" TextAlignment="Center" Visibility="Collapsed" />
+            <Grid x:Name="CommandsPage" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" MinHeight="0" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0" Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="命令管理" FontFamily="{StaticResource DisplayFont}" FontSize="22" FontWeight="Bold" />
+                        <TextBlock x:Name="CommandsProjectText" Text="选择项目以查看命令" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,0,0" />
+                    </StackPanel>
+                    <Button x:Name="BatchRunButton" Grid.Column="1" Content="同时运行 (0)" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0" Click="RunCheckedCommands_Click" IsEnabled="False" ToolTip="同时启动当前项目中勾选且尚未运行的命令" />
+                    <Button x:Name="AddCommandButton" Grid.Column="2" Content="＋  添加命令" Style="{StaticResource ActionButton}" Click="AddCommand_Click" IsEnabled="False" />
                 </Grid>
-            </Border>
-
-            <Border Grid.Row="3" Background="{StaticResource HeroBrush}" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="12" Margin="0,13,0,13" Padding="14,10">
-              <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <StackPanel Margin="2,0,12,0" VerticalAlignment="Center">
-                    <TextBlock x:Name="SelectedCommandName" Text="选择一条命令" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="Bold" />
-                    <TextBlock x:Name="RunStartedText" Text="" FontSize="9" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" />
-                </StackPanel>
-                <TextBlock x:Name="RunStateText" Grid.Column="1" Text="空闲" FontSize="10" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
-                <Button x:Name="RunButton" Grid.Column="2" Content="运行" Style="{StaticResource PrimaryButton}" Margin="5,0,0,0" Click="RunCommand_Click" IsEnabled="False" />
-                <Button x:Name="StopButton" Grid.Column="3" Content="停止" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="StopCommand_Click" IsEnabled="False" />
-                <Button x:Name="RestartButton" Grid.Column="4" Content="重启" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="RestartCommand_Click" IsEnabled="False" />
-                <Button x:Name="EditButton" Grid.Column="5" Content="编辑" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="EditCommand_Click" IsEnabled="False" />
-                <Button x:Name="CopyButton" Grid.Column="6" Content="复制命令" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="CopyCommand_Click" IsEnabled="False" />
-              </Grid>
-            </Border>
-
-            <Grid Grid.Row="4">
-                <Border Background="{StaticResource LogBrush}" BorderBrush="#B9D6E6" BorderThickness="1" CornerRadius="14" />
-                <Border Background="{StaticResource BlueprintGridBrush}" CornerRadius="14" Opacity="0.25" IsHitTestVisible="False" />
-                <Border Width="4" Height="43" Background="{StaticResource GoldBrush}" CornerRadius="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,18,0,0" IsHitTestVisible="False" />
-                <Grid Margin="18,14,18,15">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="9" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Border Grid.Row="1" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="14" ClipToBounds="True">
                     <Grid>
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock Text="OUTPUT  /  执行记录" Foreground="#935B42" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" />
-                            <TextBlock x:Name="LogCommandName" Text="  选择命令以查看输出" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="9,0,0,0" />
-                        </StackPanel>
-                        <Button Grid.Column="1" Content="清空显示" Style="{StaticResource SidebarButton}" Padding="10,5" Click="ClearOutput_Click" />
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <Grid Background="#F0F8FC" MinHeight="44">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="BatchSelectionHint" Text="勾选可同时运行 · 点选可排序或删除" Margin="17,0,8,0" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
+                            <Button x:Name="MoveCommandUpButton" Grid.Column="1" Content="↑ 上移" Style="{StaticResource SidebarButton}" Padding="10,5" Margin="0,5,6,5" Click="MoveCommandUp_Click" IsEnabled="False" />
+                            <Button x:Name="MoveCommandDownButton" Grid.Column="2" Content="↓ 下移" Style="{StaticResource SidebarButton}" Padding="10,5" Margin="0,5,6,5" Click="MoveCommandDown_Click" IsEnabled="False" />
+                            <Button x:Name="DeleteCommandButton" Grid.Column="3" Content="删除" Style="{StaticResource SidebarButton}" Foreground="#9B4E42" Padding="11,5" Margin="0,5,12,5" Click="DeleteCommand_Click" IsEnabled="False" ToolTip="先选中一条已停止的命令" />
+                        </Grid>
+                        <ListBox x:Name="CommandList" Grid.Row="1" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}" SelectionChanged="CommandList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.ScrollUnit="Pixel">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid MinHeight="76">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="4" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <CheckBox x:Name="BatchCheckBox" Grid.Column="0" Style="{StaticResource BatchCheckBox}" AutomationProperties.Name="{Binding Name, StringFormat=勾选 {0}}" ToolTip="勾选后可与其他命令同时运行" Loaded="BatchCheckBox_Loaded" Checked="BatchCheckBox_Changed" Unchecked="BatchCheckBox_Changed" />
+                                        <Border Grid.Column="1" Background="{StaticResource GoldBrush}" CornerRadius="3" Margin="0,11" />
+                                        <StackPanel Grid.Column="2" Margin="15,11,12,10" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Name}" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="Bold" Foreground="{StaticResource InkBrush}" />
+                                                <Border Background="#DFEFF5" CornerRadius="8" Padding="7,2" Margin="10,1,0,0"><TextBlock Text="{Binding Kind, Converter={StaticResource CommandKindConverter}}" FontSize="9" FontWeight="Bold" Foreground="{StaticResource JadeBrush}" /></Border>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Command}" FontFamily="{StaticResource CodeFont}" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="3" Text="{Binding Purpose}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,16,0" MaxWidth="180" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="EmptyCommandsHint" Grid.Row="1" Text="为此项目添加命令，运行输出可在“运行输出”页查看。" Foreground="{StaticResource MutedBrush}" FontSize="13" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="330" TextAlignment="Center" Visibility="Collapsed" />
                     </Grid>
-                    <ListBox x:Name="OutputList" Grid.Row="2" Background="Transparent" BorderThickness="0" Foreground="{StaticResource LogTextBrush}" FontFamily="{StaticResource CodeFont}" FontSize="11" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <DockPanel LastChildFill="True" Margin="0,2">
-                                    <TextBlock Text="{Binding Stream, Converter={StaticResource OutputStreamConverter}}" Foreground="{StaticResource JadeBrush}" FontSize="9" Width="50" Margin="0,2,9,0" />
-                                    <TextBlock Text="{Binding Text}" Foreground="{StaticResource LogTextBrush}" TextWrapping="NoWrap" />
-                                </DockPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <TextBlock x:Name="EmptyOutputHint" Grid.Row="2" Text="命令输出会显示在这里。" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Visible" />
+                </Border>
+                <Border Grid.Row="2" Background="{StaticResource HeroBrush}" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="12" Margin="0,11,0,0" Padding="14,9">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="SelectedCommandName" Text="请选择命令" FontFamily="{StaticResource DisplayFont}" FontSize="14" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="RunStateText" Grid.Column="1" Text="空闲" FontSize="11" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" Margin="12,0,0,0" />
+                        </Grid>
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,7,0,0">
+                            <Button x:Name="RunButton" Content="运行" Style="{StaticResource PrimaryButton}" Click="RunCommand_Click" IsEnabled="False" />
+                            <Button x:Name="StopButton" Content="停止" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="StopCommand_Click" IsEnabled="False" />
+                            <Button x:Name="RestartButton" Content="重启" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="RestartCommand_Click" IsEnabled="False" />
+                            <Button x:Name="EditButton" Content="编辑" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="EditCommand_Click" IsEnabled="False" />
+                            <Button x:Name="CopyButton" Content="复制命令" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="CopyCommand_Click" IsEnabled="False" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Grid x:Name="OutputPage" Visibility="Collapsed">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                    <TextBlock Text="运行输出" FontFamily="{StaticResource DisplayFont}" FontSize="22" FontWeight="Bold" />
+                    <TextBlock x:Name="OutputProjectText" Text="选择项目以查看输出" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,0,0" />
+                </StackPanel>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="235" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="14" ClipToBounds="True">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <TextBlock Text="当前项目的命令" Background="#F0F8FC" Padding="14,13" FontSize="12" FontWeight="Bold" />
+                            <ListBox x:Name="OutputCommandList" Grid.Row="1" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource SidebarItem}" SelectionChanged="OutputCommandList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="13,9">
+                                            <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock x:Name="EmptyOutputCommandsHint" Grid.Row="1" Text="此项目尚无命令。" Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
+                    <Grid Grid.Column="2">
+                        <Border Background="{StaticResource LogBrush}" BorderBrush="#B9D6E6" BorderThickness="1" CornerRadius="14" />
+                        <Border Background="{StaticResource BlueprintGridBrush}" CornerRadius="14" Opacity="0.25" IsHitTestVisible="False" />
+                        <Grid Margin="18,14,18,15">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="9" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="OUTPUT  /  执行记录" Foreground="#935B42" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" />
+                                    <TextBlock x:Name="LogCommandName" Text="选择命令以查看输出" FontFamily="{StaticResource DisplayFont}" FontSize="16" FontWeight="Bold" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="RunStartedText" Text="" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0" />
+                                </StackPanel>
+                                <TextBlock x:Name="OutputRunStateText" Grid.Column="1" Text="空闲" FontSize="11" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" VerticalAlignment="Center" />
+                            </Grid>
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,0">
+                                <Button x:Name="OutputRunButton" Content="运行" Style="{StaticResource PrimaryButton}" Click="RunCommand_Click" IsEnabled="False" />
+                                <Button x:Name="OutputStopButton" Content="停止" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="StopCommand_Click" IsEnabled="False" />
+                                <Button x:Name="OutputRestartButton" Content="重启" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="RestartCommand_Click" IsEnabled="False" />
+                                <Button x:Name="ClearOutputButton" Content="清空显示" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearOutput_Click" IsEnabled="False" />
+                            </StackPanel>
+                            <ListBox x:Name="OutputList" Grid.Row="3" Background="Transparent" BorderThickness="0" Foreground="{StaticResource LogTextBrush}" FontFamily="{StaticResource CodeFont}" FontSize="11" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <DockPanel LastChildFill="True" Margin="0,2">
+                                            <TextBlock Text="{Binding Stream, Converter={StaticResource OutputStreamConverter}}" Foreground="{StaticResource JadeBrush}" FontSize="9" Width="50" Margin="0,2,9,0" />
+                                            <TextBlock Text="{Binding Text}" Foreground="{StaticResource LogTextBrush}" TextWrapping="NoWrap" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock x:Name="EmptyOutputHint" Grid.Row="3" Text="选择左侧命令以查看输出。" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Visible" />
+                        </Grid>
+                    </Grid>
                 </Grid>
             </Grid>
         </Grid>
