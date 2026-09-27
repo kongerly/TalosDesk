@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace TalosDesk.Core.Configuration;
@@ -10,19 +11,33 @@ public sealed class WorkspaceStore
 
     public WorkspaceStore(string? filePath = null)
     {
-        FilePath = filePath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TalosDesk", "workspace.json");
+        FilePath = Path.GetFullPath(filePath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TalosDesk", "workspace.json"));
     }
 
     public string FilePath { get; }
 
+    public async Task<WorkspaceSnapshot> LoadSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(FilePath)) return new WorkspaceSnapshot(new WorkspaceConfiguration(), WorkspaceRevision.Missing);
+        var bytes = await File.ReadAllBytesAsync(FilePath, cancellationToken).ConfigureAwait(false);
+        var configuration = JsonSerializer.Deserialize<WorkspaceConfiguration>(bytes, JsonOptions);
+        NormalizeAndValidate(configuration);
+        var revision = new WorkspaceRevision(true, Convert.ToHexString(SHA256.HashData(bytes)));
+        return new WorkspaceSnapshot(configuration!, revision);
+    }
+
+    public async Task<WorkspaceRevision> GetRevisionAsync(CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(FilePath)) return WorkspaceRevision.Missing;
+        await using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete, 16_384, useAsync: true);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
+        return new WorkspaceRevision(true, Convert.ToHexString(hash));
+    }
+
     public async Task<WorkspaceConfiguration> LoadAsync(CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(FilePath)) return new WorkspaceConfiguration();
-        await using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 16_384, useAsync: true);
-        var configuration = await JsonSerializer.DeserializeAsync<WorkspaceConfiguration>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-        NormalizeAndValidate(configuration);
-
-        return configuration!;
+        return (await LoadSnapshotAsync(cancellationToken).ConfigureAwait(false)).Configuration;
     }
 
     public static async Task<WorkspaceConfiguration> ReadFileAsync(string filePath, CancellationToken cancellationToken = default)
@@ -176,3 +191,10 @@ public sealed class WorkspaceStore
         }
     }
 }
+
+public readonly record struct WorkspaceRevision(bool Exists, string Sha256)
+{
+    public static WorkspaceRevision Missing { get; } = new(false, string.Empty);
+}
+
+public sealed record WorkspaceSnapshot(WorkspaceConfiguration Configuration, WorkspaceRevision Revision);

@@ -4,7 +4,7 @@
         xmlns:local="clr-namespace:TalosDesk.App"
         Title="TalosDesk · 本地项目指挥台" Height="860" Width="1400" MinHeight="650" MinWidth="1050"
         Background="{StaticResource CanvasBrush}" Foreground="{StaticResource InkBrush}" FontFamily="{StaticResource BodyFont}" WindowStartupLocation="CenterScreen" Icon="Assets/TalosDeskMark.ico"
-        Loaded="MainWindow_Loaded" Closing="MainWindow_Closing" Deactivated="MainWindow_Deactivated">
+        Loaded="MainWindow_Loaded" Activated="MainWindow_Activated" Closing="MainWindow_Closing" Deactivated="MainWindow_Deactivated">
     <Window.Resources>
         <SolidColorBrush x:Key="AccentBrush" Color="#327F9B" />
         <LinearGradientBrush x:Key="HeroBrush" StartPoint="0,0" EndPoint="1,1">
@@ -147,7 +147,8 @@
                         <Button x:Name="ExportButton" Grid.Column="2" Content="导出" Style="{StaticResource SidebarButton}" Click="ExportWorkspace_Click" />
                     </Grid>
                     <TextBlock x:Name="SaveStatusText" Text="本机配置" Foreground="{StaticResource JadeBrush}" FontSize="11" FontWeight="SemiBold" Margin="3,8,3,0" />
-                    <TextBlock Text="配置仅保存在此电脑" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="3,4,3,0" />
+                    <TextBlock x:Name="WorkspaceProfileText" Text="正式工作区" Foreground="{StaticResource MutedBrush}" FontSize="11" FontWeight="SemiBold" Margin="3,4,3,0" />
+                    <TextBlock x:Name="WorkspacePathText" Foreground="{StaticResource MutedBrush}" FontFamily="{StaticResource CodeFont}" FontSize="9" Margin="3,3,3,0" TextTrimming="CharacterEllipsis" />
                 </StackPanel>
                 <StackPanel>
                     <TextBlock Text="PROJECT ARCHIVE   /   项目" Foreground="#935B42" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" Margin="24,0,18,5" />

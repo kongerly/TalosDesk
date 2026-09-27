@@ -37,7 +37,28 @@ $workspacePath = Join-Path $reviewRoot 'workspace.json'
 $realWorkspace = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'TalosDesk/workspace.json'
 $realHashBefore = if (Test-Path -LiteralPath $realWorkspace) { (Get-FileHash -LiteralPath $realWorkspace -Algorithm SHA256).Hash } else { $null }
 $process = $null
+$secondProcess = $null
 $originalCursor = [System.Windows.Forms.Cursor]::Position
+
+function Remove-IsolatedSource {
+    $reviewFull = [System.IO.Path]::GetFullPath($reviewRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $sourceFull = [System.IO.Path]::GetFullPath($sourceRoot)
+    if (-not $sourceFull.StartsWith($reviewFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove an isolated source directory outside the review root: $sourceFull"
+    }
+    if (Test-Path -LiteralPath $sourceFull) {
+        for ($attempt = 1; $attempt -le 8; $attempt++) {
+            try {
+                Remove-Item -LiteralPath $sourceFull -Recurse -Force -ErrorAction Stop
+                break
+            }
+            catch {
+                if ($attempt -eq 8) { throw }
+                Start-Sleep -Milliseconds 250
+            }
+        }
+    }
+}
 
 function Wait-For([scriptblock]$probe, [string]$description) {
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -200,6 +221,7 @@ function Assert-HoverStable($button, $neighbor, [string]$description) {
 }
 
 try {
+    Remove-IsolatedSource
     New-Item -ItemType Directory -Force -Path $reviewRoot, $sourceRoot | Out-Null
     foreach ($projectName in @('TalosDesk.Core', 'TalosDesk.App')) {
         $from = Join-Path $repoRoot "src/$projectName"
@@ -288,22 +310,43 @@ try {
     }
     $workspace | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $workspacePath -Encoding utf8
 
-    $mainSource = Join-Path $sourceRoot 'src/TalosDesk.App/MainWindow.xaml.cs'
-    $sourceText = Get-Content -LiteralPath $mainSource -Raw
-    $old = 'private readonly WorkspaceStore _store = new();'
-    if (-not $sourceText.Contains($old)) { throw 'WorkspaceStore declaration changed; update the isolated test setup.' }
-    $replacement = 'private readonly WorkspaceStore _store = new(@"' + $workspacePath + '");'
-    [System.IO.File]::WriteAllText($mainSource, $sourceText.Replace($old, $replacement))
-
     $appProject = Join-Path $sourceRoot 'src/TalosDesk.App/TalosDesk.App.csproj'
     & dotnet build $appProject -c Release --nologo -v quiet
     if ($LASTEXITCODE -ne 0) { throw 'Isolated WPF build failed.' }
     $exe = Join-Path $sourceRoot 'src/TalosDesk.App/bin/Release/net10.0-windows/TalosDesk.App.exe'
-    $process = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+    $appArguments = @('--workspace', ('"{0}"' -f $workspacePath), '--profile-label', '隔离测试')
+    $process = Start-Process -FilePath $exe -ArgumentList $appArguments -WorkingDirectory (Split-Path -Parent $exe) -PassThru
 
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     $processCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
     $main = Wait-For { $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $processCondition) } 'test window'
+    if ($main.Current.Name -ne 'TalosDesk · 隔离测试') { throw "Unexpected isolated window title: $($main.Current.Name)" }
+    $workspacePathElement = Find-ById $main 'WorkspacePathText'
+    if ($workspacePathElement.Current.Name -ne $workspacePath) { throw 'The isolated window does not display its actual workspace path.' }
+
+    $refreshDirectory = Join-Path $reviewRoot 'refresh-project'
+    New-Item -ItemType Directory -Force -Path $refreshDirectory | Out-Null
+    $workspaceForRefresh = Get-Content -LiteralPath $workspacePath -Raw | ConvertFrom-Json
+    $workspaceForRefresh.Projects += [pscustomobject]@{
+        Id = [guid]::NewGuid().ToString()
+        Name = '二次启动刷新项目'
+        Directory = $refreshDirectory
+        Commands = @()
+        Groups = @()
+    }
+    $workspaceForRefresh | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $workspacePath -Encoding utf8
+
+    $secondProcess = Start-Process -FilePath $exe -ArgumentList $appArguments -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+    Wait-For {
+        $secondProcess.Refresh()
+        $secondProcess.HasExited
+    } 'second instance exit' | Out-Null
+    Wait-For {
+        $allText = $main.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+        @($allText | Where-Object { $_.Current.Name -eq '二次启动刷新项目' }).Count -gt 0
+    } 'workspace reload after second launch' | Out-Null
+    Write-Output 'PASS: the isolated workspace is visibly labeled; a second launch reloads its existing window instead of preserving stale data.'
+
     $projectNameCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'ProjectNameText')
     Wait-For {
         $projectName = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $projectNameCondition)
@@ -569,15 +612,8 @@ try {
         $saveFailureDialog = Wait-For {
             $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $saveFailureCondition)
         } 'save failure prompt after command drag'
-        $saveFailureButton = Wait-For {
-            $buttons = $saveFailureDialog.FindAll(
-                [System.Windows.Automation.TreeScope]::Descendants,
-                [System.Windows.Automation.PropertyCondition]::new(
-                    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-                    [System.Windows.Automation.ControlType]::Button))
-            if ($buttons.Count -gt 0) { $buttons[0] }
-        } 'save failure confirmation button'
-        $saveFailureButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Activate-Window $saveFailureDialog 'save failure prompt'
+        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
         Wait-For {
             $names = Get-CommandListNames $list
             $names.Count -ge 3 -and $names[0] -eq '测试命令 01' -and
@@ -800,6 +836,7 @@ try {
 }
 finally {
     [System.Windows.Forms.Cursor]::Position = $originalCursor
+    if ($null -ne $secondProcess) { $secondProcess.Dispose() }
     if ($null -ne $process) {
         $process.Refresh()
         if (-not $process.HasExited) {
@@ -808,6 +845,7 @@ finally {
         }
         $process.Dispose()
     }
+    Remove-IsolatedSource
     $realHashAfter = if (Test-Path -LiteralPath $realWorkspace) { (Get-FileHash -LiteralPath $realWorkspace -Algorithm SHA256).Hash } else { $null }
     if ($realHashAfter -ne $realHashBefore) { throw 'Real TalosDesk workspace changed during isolated scroll test.' }
 }
