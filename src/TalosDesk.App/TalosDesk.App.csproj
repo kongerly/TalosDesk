@@ -2,8 +2,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TalosDesk.Core\TalosDesk.Core.csproj" />
+    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <Resource Include="Assets\TalosDeskMark.png" />
     <Resource Include="Assets\TalosDeskMark.ico" />
+    <Resource Include="Editing\PowerShellHighlighting.xshd" />
   </ItemGroup>
 
   <PropertyGroup>

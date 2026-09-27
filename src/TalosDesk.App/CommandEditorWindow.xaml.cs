@@ -13,6 +13,7 @@ public partial class CommandEditorWindow : Window
     {
         InitializeComponent();
         WorkingDirectoryBox.Text = existing?.WorkingDirectory ?? projectDirectory;
+        CommandBox.WorkingDirectory = WorkingDirectoryBox.Text;
         if (existing is null) return;
 
         _commandId = existing.Id;
@@ -25,6 +26,13 @@ public partial class CommandEditorWindow : Window
 
     public CommandDefinition? Result { get; private set; }
 
+    private void WorkingDirectoryBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (CommandBox is not null) CommandBox.WorkingDirectory = WorkingDirectoryBox.Text;
+    }
+
+    private void CommandBox_SaveRequested(object? sender, EventArgs e) => SaveCommand();
+
     private void BrowseDirectory_Click(object sender, RoutedEventArgs e)
     {
         var picker = new OpenFolderDialog { Title = "选择命令运行目录", Multiselect = false };
@@ -33,6 +41,11 @@ public partial class CommandEditorWindow : Window
     }
 
     private void SaveCommand_Click(object sender, RoutedEventArgs e)
+    {
+        SaveCommand();
+    }
+
+    private void SaveCommand()
     {
         if (string.IsNullOrWhiteSpace(NameBox.Text) || string.IsNullOrWhiteSpace(CommandBox.Text) || string.IsNullOrWhiteSpace(WorkingDirectoryBox.Text))
         {
