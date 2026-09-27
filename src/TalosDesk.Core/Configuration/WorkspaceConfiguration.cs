@@ -2,7 +2,7 @@ namespace TalosDesk.Core.Configuration;
 
 public sealed class WorkspaceConfiguration
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public List<ProjectDefinition> Projects { get; set; } = [];
 }
 
@@ -12,6 +12,7 @@ public sealed class ProjectDefinition
     public string Name { get; set; } = string.Empty;
     public string Directory { get; set; } = string.Empty;
     public List<CommandDefinition> Commands { get; set; } = [];
+    public List<CommandGroupDefinition> Groups { get; set; } = [];
 }
 
 public sealed class CommandDefinition
@@ -28,4 +29,18 @@ public enum CommandKind
 {
     Task,
     Service
+}
+
+public sealed class CommandGroupDefinition
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = string.Empty;
+    public CommandGroupExecutionMode ExecutionMode { get; set; }
+    public List<Guid> CommandIds { get; set; } = [];
+}
+
+public enum CommandGroupExecutionMode
+{
+    Parallel,
+    Sequential
 }

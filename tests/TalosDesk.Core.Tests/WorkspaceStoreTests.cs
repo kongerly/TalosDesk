@@ -30,6 +30,167 @@ public sealed class WorkspaceStoreTests
     }
 
     [TestMethod]
+    public async Task MigratesSchemaOneWorkspaceToSchemaTwoWithEmptyGroups()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "legacy.json");
+            await File.WriteAllTextAsync(path, $$"""
+                {
+                  "SchemaVersion": 1,
+                  "Projects": [
+                    {
+                      "Id": "{{Guid.NewGuid()}}",
+                      "Name": "Legacy",
+                      "Directory": "{{directory.Replace("\\", "\\\\")}}",
+                      "Commands": []
+                    }
+                  ]
+                }
+                """);
+
+            var loaded = await WorkspaceStore.ReadFileAsync(path);
+
+            Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, loaded.SchemaVersion);
+            Assert.HasCount(0, loaded.Projects[0].Groups);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SavesGroupMembershipAndOrderAcrossReload()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var first = new CommandDefinition { Name = "First", Command = "exit 0", WorkingDirectory = directory };
+            var second = new CommandDefinition { Name = "Second", Command = "exit 0", WorkingDirectory = directory };
+            var shared = new CommandDefinition { Name = "Shared", Command = "exit 0", WorkingDirectory = directory };
+            var parallel = new CommandGroupDefinition
+            {
+                Name = "Parallel",
+                ExecutionMode = CommandGroupExecutionMode.Parallel,
+                CommandIds = [shared.Id, first.Id]
+            };
+            var sequential = new CommandGroupDefinition
+            {
+                Name = "Sequential",
+                ExecutionMode = CommandGroupExecutionMode.Sequential,
+                CommandIds = [second.Id, shared.Id]
+            };
+            var project = new ProjectDefinition
+            {
+                Name = "Sample",
+                Directory = directory,
+                Commands = [first, second, shared],
+                Groups = [parallel, sequential]
+            };
+            var store = new WorkspaceStore(Path.Combine(directory, "workspace.json"));
+
+            await store.SaveAsync(new WorkspaceConfiguration { Projects = [project] });
+            var reloaded = await store.LoadAsync();
+
+            Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, reloaded.SchemaVersion);
+            CollectionAssert.AreEqual(new[] { parallel.Id, sequential.Id }, reloaded.Projects[0].Groups.Select(group => group.Id).ToArray());
+            CollectionAssert.AreEqual(new[] { shared.Id, first.Id }, reloaded.Projects[0].Groups[0].CommandIds);
+            CollectionAssert.AreEqual(new[] { second.Id, shared.Id }, reloaded.Projects[0].Groups[1].CommandIds);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RejectsInvalidGroupDefinitions()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var service = new CommandDefinition { Name = "Server", Command = "exit 0", WorkingDirectory = directory, Kind = CommandKind.Service };
+            var project = new ProjectDefinition { Name = "Sample", Directory = directory, Commands = [service] };
+            var path = Path.Combine(directory, "invalid-group.json");
+
+            project.Groups = [new CommandGroupDefinition { Name = "Broken", CommandIds = [Guid.NewGuid()] }];
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+
+            project.Groups = [new CommandGroupDefinition { Name = "Repeated", CommandIds = [service.Id, service.Id] }];
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+
+            project.Groups = [new CommandGroupDefinition { Name = "Sequence", ExecutionMode = CommandGroupExecutionMode.Sequential, CommandIds = [service.Id] }];
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+
+            var duplicateGroupId = Guid.NewGuid();
+            project.Groups =
+            [
+                new CommandGroupDefinition { Id = duplicateGroupId, Name = "First", CommandIds = [service.Id] },
+                new CommandGroupDefinition { Id = duplicateGroupId, Name = "Second", CommandIds = [] }
+            ];
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+
+            project.Groups =
+            [
+                new CommandGroupDefinition { Name = "Duplicate", CommandIds = [service.Id] },
+                new CommandGroupDefinition { Name = "duplicate", CommandIds = [] }
+            ];
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void RemovingCommandReferencesPreservesEmptyGroupsAndOtherMemberships()
+    {
+        var removed = new CommandDefinition { Name = "Removed" };
+        var kept = new CommandDefinition { Name = "Kept" };
+        var first = new CommandGroupDefinition { Name = "First", CommandIds = [removed.Id, kept.Id] };
+        var second = new CommandGroupDefinition { Name = "Second", CommandIds = [removed.Id] };
+        var project = new ProjectDefinition { Commands = [removed, kept], Groups = [first, second] };
+
+        CommandGroupOperations.RemoveCommandReferences(project, removed.Id);
+
+        CollectionAssert.AreEqual(new[] { kept.Id }, first.CommandIds);
+        Assert.HasCount(0, second.CommandIds);
+        Assert.HasCount(2, project.Groups);
+    }
+
+    [TestMethod]
+    public void FindsSequentialMembershipAndRemapsImportedCommandIdsInOrder()
+    {
+        var first = new CommandDefinition { Name = "First" };
+        var second = new CommandDefinition { Name = "Second" };
+        var parallel = new CommandGroupDefinition { Name = "Parallel", CommandIds = [first.Id] };
+        var sequential = new CommandGroupDefinition
+        {
+            Name = "Sequential",
+            ExecutionMode = CommandGroupExecutionMode.Sequential,
+            CommandIds = [second.Id, first.Id]
+        };
+        var project = new ProjectDefinition { Commands = [first, second], Groups = [parallel, sequential] };
+        var mappedFirst = Guid.NewGuid();
+        var mappedSecond = Guid.NewGuid();
+
+        var memberships = CommandGroupOperations.GetSequentialGroupsContaining(project, first.Id);
+        var remapped = CommandGroupOperations.RemapCommandIds(sequential.CommandIds,
+            new Dictionary<Guid, Guid> { [first.Id] = mappedFirst, [second.Id] = mappedSecond });
+
+        CollectionAssert.AreEqual(new[] { sequential.Id }, memberships.Select(group => group.Id).ToArray());
+        CollectionAssert.AreEqual(new[] { mappedSecond, mappedFirst }, remapped);
+        Assert.ThrowsExactly<InvalidDataException>(() =>
+            CommandGroupOperations.RemapCommandIds([Guid.NewGuid()], new Dictionary<Guid, Guid>()));
+    }
+
+    [TestMethod]
     public async Task SavesCommandOrderAndRemovalAcrossReload()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");

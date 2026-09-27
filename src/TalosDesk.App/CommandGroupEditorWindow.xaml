@@ -1,0 +1,112 @@
+<Window x:Class="TalosDesk.App.CommandGroupEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TalosDesk.App"
+        Title="TalosDesk · 命令分组" Width="790" Height="720" MinWidth="700" MinHeight="620"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        Background="{StaticResource CanvasBrush}" Foreground="{StaticResource InkBrush}" FontFamily="{StaticResource BodyFont}" Icon="Assets/TalosDeskMark.ico">
+    <Window.Resources>
+        <local:CommandKindToChineseConverter x:Key="CommandKindConverter" />
+    </Window.Resources>
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{StaticResource EditorHeaderBrush}" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="13" Margin="0,0,0,17" Padding="18,13" ClipToBounds="True">
+            <Grid>
+                <Image Source="Assets/TalosDeskMark.png" Width="104" Height="104" Opacity="0.13" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,5,0" IsHitTestVisible="False" />
+                <StackPanel>
+                    <TextBlock Text="TALOS  /  COMMAND GROUP" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" />
+                    <TextBlock x:Name="HeadingText" Text="添加分组" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="Bold" Margin="0,4,0,0" />
+                    <TextBlock Text="组合常用命令，并决定它们同时启动还是依次完成。" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,0,0,15">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="190" /></Grid.ColumnDefinitions>
+            <StackPanel Margin="0,0,14,0">
+                <TextBlock Text="分组名称" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="NameBox" Style="{StaticResource EditorTextBox}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+                <TextBlock Text="执行方式" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="ModeBox" Style="{StaticResource EditorComboBox}" SelectedIndex="0" SelectionChanged="ModeBox_SelectionChanged">
+                    <ComboBoxItem Content="同时执行" Tag="Parallel" />
+                    <ComboBoxItem Content="顺序执行" Tag="Sequential" />
+                </ComboBox>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2" MinHeight="300">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Border Background="#FBFEFF" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="12" Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <StackPanel Margin="2,0,2,9">
+                        <TextBlock Text="选择命令" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="Bold" />
+                        <TextBlock Text="同一条命令可以加入多个分组。" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,3,0,0" />
+                    </StackPanel>
+                    <ListBox x:Name="AvailableCommandsList" Grid.Row="1" ItemsSource="{Binding Choices}" BorderThickness="0" Background="Transparent" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MemberSelectionChanged" Unchecked="MemberSelectionChanged" Padding="3,7" Cursor="Hand">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Command.Name}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Command.Command}" Foreground="{StaticResource MutedBrush}" FontFamily="{StaticResource CodeFont}" FontSize="9" TextTrimming="CharacterEllipsis" MaxWidth="265" />
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Background="#E4F2F7" CornerRadius="7" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Command.Kind, Converter={StaticResource CommandKindConverter}}" FontSize="9" Foreground="{StaticResource JadeBrush}" />
+                                        </Border>
+                                    </Grid>
+                                </CheckBox>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Background="#F5FAFD" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="12" Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <StackPanel Margin="2,0,2,9">
+                        <TextBlock Text="执行轨道" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="Bold" />
+                        <TextBlock x:Name="OrderHintText" Text="此顺序用于发起命令。" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,3,0,0" />
+                    </StackPanel>
+                    <ListBox x:Name="SelectedCommandsList" Grid.Row="1" ItemsSource="{Binding SelectedChoices}" BorderThickness="0" Background="Transparent" SelectionChanged="SelectedCommandsList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="2,4">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Grid Width="13" Height="25" VerticalAlignment="Center">
+                                        <Border Width="2" Background="{StaticResource GoldBrush}" HorizontalAlignment="Center" />
+                                        <Path Data="M 0,5 L 5,0 L 10,5 L 5,10 Z" Fill="#FFF7ED" Stroke="{StaticResource GoldBrush}" StrokeThickness="1.4" Width="10" Height="10" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <TextBlock Grid.Column="1" Text="{Binding Command.Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,9,0,0">
+                        <Button x:Name="MoveUpButton" Content="↑ 上移" Style="{StaticResource EditorButton}" Padding="11,6" Click="MoveMemberUp_Click" IsEnabled="False" />
+                        <Button x:Name="MoveDownButton" Content="↓ 下移" Style="{StaticResource EditorButton}" Padding="11,6" Margin="7,0,0,0" Click="MoveMemberDown_Click" IsEnabled="False" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,16,0,0">
+            <TextBlock x:Name="ModeHintText" Text="同时执行会按轨道顺序发起所有空闲命令。" Foreground="{StaticResource GoldBrush}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="490" HorizontalAlignment="Left" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="取消" Style="{StaticResource EditorButton}" IsCancel="True" Margin="0,0,8,0" />
+                <Button Content="保存分组" Style="{StaticResource EditorPrimaryButton}" IsDefault="True" Click="SaveGroup_Click" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
