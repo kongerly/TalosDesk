@@ -2,7 +2,7 @@
 
 TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令，一键运行，并集中查看状态和输出。
 
-当前版本为 `v0.1.0` 公开预览候选版。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包；候选版本已完成本机发布包启动检查和三轮本地工具服务运行验收。
+当前版本为 `v0.1.0` 公开预览版。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包；该版本已完成本机发布包启动检查和三轮本地工具服务运行验收，可从 [GitHub Releases](https://github.com/kongerly/TalosDesk/releases/tag/v0.1.0) 下载。
 
 ## 主要功能
 
