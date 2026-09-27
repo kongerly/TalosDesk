@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="PowerShell" extensions=".ps1;.psm1;.psd1"
+                  xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#748899" fontStyle="italic" />
+  <Color name="String" foreground="#8A5A18" />
+  <Color name="Variable" foreground="#166A78" fontWeight="bold" />
+  <Color name="Keyword" foreground="#6750A4" fontWeight="bold" />
+  <Color name="Number" foreground="#9B4E42" />
+  <Color name="Operator" foreground="#355D78" fontWeight="bold" />
+  <Color name="Command" foreground="#176F5B" />
+
+  <RuleSet ignoreCase="true">
+    <Rule color="Comment">\#.*$</Rule>
+    <Span color="String" begin="&quot;" end="&quot;" multiline="true" />
+    <Span color="String" begin="'" end="'" multiline="true" />
+    <Rule color="Variable">\$(?:env:)?[A-Za-z_][A-Za-z0-9_:]*</Rule>
+    <Rule color="Number">\b(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)\b</Rule>
+    <Rule color="Command">\b[A-Za-z][A-Za-z0-9]*-[A-Za-z][A-Za-z0-9-]*\b</Rule>
+    <Rule color="Operator">(?:\||&amp;&amp;|\|\||-eq\b|-ne\b|-lt\b|-le\b|-gt\b|-ge\b|-like\b|-match\b)</Rule>
+    <Keywords color="Keyword">
+      <Word>begin</Word><Word>break</Word><Word>catch</Word><Word>class</Word>
+      <Word>continue</Word><Word>data</Word><Word>do</Word><Word>dynamicparam</Word>
+      <Word>else</Word><Word>elseif</Word><Word>end</Word><Word>enum</Word>
+      <Word>exit</Word><Word>filter</Word><Word>finally</Word><Word>for</Word>
+      <Word>foreach</Word><Word>from</Word><Word>function</Word><Word>if</Word>
+      <Word>in</Word><Word>param</Word><Word>process</Word><Word>return</Word>
+      <Word>switch</Word><Word>throw</Word><Word>trap</Word><Word>try</Word>
+      <Word>until</Word><Word>using</Word><Word>var</Word><Word>while</Word>
+    </Keywords>
+  </RuleSet>
+</SyntaxDefinition>

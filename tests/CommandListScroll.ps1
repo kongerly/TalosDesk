@@ -217,6 +217,7 @@ try {
     $sampleDirectory = Join-Path $reviewRoot 'sample-project'
     $secondDirectory = Join-Path $reviewRoot 'second-project'
     New-Item -ItemType Directory -Force -Path $sampleDirectory, $secondDirectory | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $sampleDirectory 'Folder With Space') | Out-Null
     $commands = @(1..12 | ForEach-Object {
         $commandText = if ($_ -eq 5) {
             "Write-Output 'GROUP_SERVICE_READY'; while (`$true) { Start-Sleep -Milliseconds 200 }"
@@ -357,8 +358,55 @@ try {
     Activate-Window $commandEditor 'command editor'
     $commandCancel = Find-ButtonByName $commandEditor '取消'
     Assert-HoverStable $commandCancel (Find-ButtonByName $commandEditor '保存命令') 'Command editor button'
-    $commandCancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    (Find-ById $commandEditor 'NameBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('智能编辑器测试')
+    $commandInput = Find-ById $commandEditor 'CommandBox'
+    $commandValue = $commandInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    $commandValue.SetValue('Write-Output .\Fol')
+    Activate-Window $commandEditor 'command editor after setting command text'
+    $commandHostBounds = (Find-ById $commandEditor 'CommandEditorHost').Current.BoundingRectangle
+    [HoverTestWindow]::LeftClick(
+        [int][Math]::Round($commandHostBounds.Left + 180),
+        [int][Math]::Round($commandHostBounds.Top + 30))
+    [System.Windows.Forms.SendKeys]::SendWait('{END}')
+    [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+    Start-Sleep -Milliseconds 550
+    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    Start-Sleep -Milliseconds 150
+    $completedEditorText = (Find-ById $commandEditor 'CommandBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+    if ($completedEditorText -ne 'Write-Output ".\Folder With Space\"') {
+        throw "Smart command editor did not accept the spaced-path completion: '$completedEditorText'"
+    }
+    $expectedEditorCommand = 'Write-Output ".\Folder With Space\"' + "`r`n" + 'Write-Output second'
+    (Find-ById $commandEditor 'CommandBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($expectedEditorCommand)
+    Activate-Window $commandEditor 'command editor before keyboard save'
+    [HoverTestWindow]::LeftClick(
+        [int][Math]::Round($commandHostBounds.Left + 180),
+        [int][Math]::Round($commandHostBounds.Top + 30))
+    [System.Windows.Forms.SendKeys]::SendWait('^{ENTER}')
     Wait-For { $null -eq $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $commandEditorCondition) } 'command editor to close' | Out-Null
+    $savedEditorCommand = @((Get-Content -LiteralPath $workspacePath -Raw | ConvertFrom-Json).Projects[0].Commands | Where-Object Name -eq '智能编辑器测试')
+    if ($savedEditorCommand.Count -ne 1 -or $savedEditorCommand[0].Command -ne $expectedEditorCommand) {
+        throw "Smart command editor saved unexpected text: '$($savedEditorCommand[0].Command)'"
+    }
+    $list = Wait-For {
+        $candidate = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $listCondition)
+        if ($null -ne $candidate -and -not $candidate.Current.IsOffscreen) { $candidate }
+    } 'refreshed command list after smart editor save'
+    Wait-For {
+        $selected = Find-ById $main 'SelectedCommandName'
+        $null -ne $selected -and $selected.Current.Name -eq '智能编辑器测试'
+    } 'saved smart command selection' | Out-Null
+    (Find-ById $main 'EditButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $commandEditor = Wait-For {
+        $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $commandEditorCondition)
+    } 'saved smart command editor'
+    $reopenedValue = (Find-ById $commandEditor 'CommandBox').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+    if ($reopenedValue -ne $savedEditorCommand[0].Command) { throw 'Reopening the smart command changed its multiline text.' }
+    (Find-ButtonByName $commandEditor '取消').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Wait-For { $null -eq $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $commandEditorCondition) } 'saved smart editor to close' | Out-Null
+    $list.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).SetScrollPercent(
+        [System.Windows.Automation.ScrollPattern]::NoScroll, 0)
+    Write-Output 'PASS: command editor completes a spaced path, saves with Ctrl+Enter, and preserves multiline text when reopened.'
     Write-Output 'PASS: minimum-size navigation buttons keep their bounds and neighboring controls stable on hover.'
     Write-Output 'PASS: command editor buttons keep their bounds stable on hover.'
     $minimumVisible = Count-FullyVisibleCommands

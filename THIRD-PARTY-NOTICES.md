@@ -8,3 +8,7 @@ TalosDesk 的 Windows 自包含发布包包含 Microsoft .NET 运行时组件。
 
 测试工程使用 MSTest。测试依赖不会包含在 TalosDesk 便携包中；其许可信息可在
 [MSTest 项目](https://github.com/microsoft/testfx)中查看。
+
+命令编辑器使用 [AvalonEdit 6.3.1.120](https://github.com/icsharpcode/AvalonEdit)。
+AvalonEdit 以 MIT License 发布，版权与完整许可文本以其软件包和上游仓库中的
+`LICENSE` 文件为准。
