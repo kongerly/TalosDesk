@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="TalosDesk geometric emblem">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D9F0F7"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A8E3F4"/>
+      <stop offset="1" stop-color="#4BA8C6"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#72BFD7"/>
+      <stop offset="1" stop-color="#36839E"/>
+    </linearGradient>
+    <linearGradient id="copper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F1B986"/>
+      <stop offset="1" stop-color="#B9704D"/>
+    </linearGradient>
+    <path id="orbit" d="M 237,80 C 315,71 384,113 416,178 L 366,200 C 346,157 306,135 256,137 L 220,137 Z"/>
+  </defs>
+
+  <rect x="11" y="11" width="490" height="490" rx="112" fill="url(#paper)" stroke="#2C627B" stroke-width="15"/>
+  <rect x="27" y="27" width="458" height="458" rx="98" fill="none" stroke="#FFFFFF" stroke-width="6" opacity=".9"/>
+  <circle cx="256" cy="256" r="185" fill="#EFFAFF" stroke="#9CCBD8" stroke-width="5"/>
+  <circle cx="256" cy="256" r="154" fill="none" stroke="#C8E6EF" stroke-width="6"/>
+
+  <g stroke="#28536A" stroke-width="8" stroke-linejoin="round">
+    <use href="#orbit" fill="url(#sky)"/>
+    <use href="#orbit" transform="rotate(90 256 256)" fill="url(#blue)"/>
+    <use href="#orbit" transform="rotate(180 256 256)" fill="url(#sky)"/>
+    <use href="#orbit" transform="rotate(270 256 256)" fill="url(#copper)"/>
+  </g>
+
+  <path d="M 256,157 344,207 344,305 256,355 168,305 168,207 Z" fill="#2B5B73" stroke="#24475B" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M 256,175 327,217 327,295 256,337 185,295 185,217 Z" fill="#F9FCFC" stroke="#91C6D5" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M 205,216 307,216 297,244 273,244 273,314 256,324 239,314 239,244 215,244 Z" fill="url(#copper)" stroke="#865747" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M 214,221 299,221 294,232 218,232 Z" fill="#FFF4D9" opacity=".75"/>
+
+  <path d="M 76,256 95,245 95,267 Z M 436,256 417,245 417,267 Z M 256,76 245,95 267,95 Z M 256,436 245,417 267,417 Z" fill="#D49265"/>
+</svg>

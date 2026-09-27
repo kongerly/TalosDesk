@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\TalosDesk.Core\TalosDesk.Core.csproj" />
+    <Resource Include="Assets\TalosDeskMark.png" />
+    <Resource Include="Assets\TalosDeskMark.ico" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\TalosDeskMark.ico</ApplicationIcon>
+  </PropertyGroup>
+
+</Project>

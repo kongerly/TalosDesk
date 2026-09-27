@@ -1,0 +1,20 @@
+.tools/
+artifacts/
+**/bin/
+**/obj/
+.vs/
+TestResults/
+*.user
+*.suo
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.talosdesk.json
+workspace.json
+*.secrets.json
+*.pfx
+*.p12
+*.pem
+*.key
