@@ -253,6 +253,66 @@ public sealed class WorkspaceStoreTests
     }
 
     [TestMethod]
+    public async Task RevisionChangesWhenWorkspaceContentChangesAndRepresentsMissingFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "workspace.json");
+            var store = new WorkspaceStore(path);
+
+            Assert.AreEqual(WorkspaceRevision.Missing, await store.GetRevisionAsync());
+            await store.SaveAsync(new WorkspaceConfiguration());
+            var first = await store.GetRevisionAsync();
+
+            await store.SaveAsync(new WorkspaceConfiguration
+            {
+                Projects = [new ProjectDefinition { Name = "Changed", Directory = Path.Combine(directory, "project") }]
+            });
+            var second = await store.GetRevisionAsync();
+
+            Assert.IsTrue(first.Exists);
+            Assert.AreNotEqual(first, second);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SnapshotConfigurationAndRevisionComeFromTheSameFileContent()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "workspace.json");
+            var store = new WorkspaceStore(path);
+            await store.SaveAsync(new WorkspaceConfiguration
+            {
+                Projects = [new ProjectDefinition { Name = "First", Directory = Path.Combine(directory, "first") }]
+            });
+
+            var snapshot = await store.LoadSnapshotAsync();
+            Assert.AreEqual("First", snapshot.Configuration.Projects[0].Name);
+            Assert.AreEqual(await store.GetRevisionAsync(), snapshot.Revision);
+
+            await store.SaveAsync(new WorkspaceConfiguration
+            {
+                Projects = [new ProjectDefinition { Name = "Second", Directory = Path.Combine(directory, "second") }]
+            });
+            Assert.AreNotEqual(await store.GetRevisionAsync(), snapshot.Revision);
+            Assert.AreEqual("First", snapshot.Configuration.Projects[0].Name);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task ConcurrentSavesLeaveACompleteWorkspaceAndNoTemporaryFiles()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");

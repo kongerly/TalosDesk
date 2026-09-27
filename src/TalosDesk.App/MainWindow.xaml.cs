@@ -20,7 +20,7 @@ public partial class MainWindow : Window
 
     private enum MainPage { Overview, Commands, Groups, Output }
 
-    private readonly WorkspaceStore _store = new();
+    private readonly WorkspaceStore _store;
     private readonly CommandRunner _runner = new();
     private readonly Dictionary<Guid, CommandRunSession> _sessions = [];
     private readonly Dictionary<Guid, CommandRunResult> _lastResults = [];
@@ -64,10 +64,29 @@ public partial class MainWindow : Window
     private bool _commandDragDropped;
     private bool _commandDragCancelRequested;
     private bool _commandDragWorkspaceChangeActive;
+    private WorkspaceRevision? _workspaceRevision;
+    private readonly string _profileLabel;
+    private bool _workspaceLoaded;
+    private bool _checkingWorkspaceRevision;
+    private bool _externalWorkspaceChangeReported;
 
     public MainWindow()
+        : this(new WorkspaceStore(), null)
     {
+    }
+
+    internal MainWindow(WorkspaceStore store, string? profileLabel)
+    {
+        _store = store;
+        _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
         InitializeComponent();
+        if (!string.IsNullOrWhiteSpace(profileLabel))
+        {
+            Title = $"TalosDesk · {profileLabel}";
+        }
+        WorkspaceProfileText.Text = _profileLabel;
+        WorkspacePathText.Text = _store.FilePath;
+        WorkspacePathText.ToolTip = _store.FilePath;
         _commandDragScrollTimer = new DispatcherTimer(DispatcherPriority.Input)
         {
             Interval = TimeSpan.FromMilliseconds(50)
@@ -86,7 +105,9 @@ public partial class MainWindow : Window
     {
         try
         {
-            var configuration = await _store.LoadAsync();
+            var snapshot = await _store.LoadSnapshotAsync();
+            var configuration = snapshot.Configuration;
+            _workspaceRevision = snapshot.Revision;
             foreach (var project in configuration.Projects)
             {
                 project.Commands ??= [];
@@ -96,6 +117,9 @@ public partial class MainWindow : Window
 
             if (Projects.Count > 0) ProjectList.SelectedIndex = 0;
             UpdateEmptyStates();
+            _workspaceLoaded = true;
+            UpdateWorkspaceIdentity();
+            _ = RefreshWorkspaceAfterStartupAsync();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
         {
@@ -106,6 +130,78 @@ public partial class MainWindow : Window
                 $"TalosDesk 无法读取本机工作区配置，原文件未作修改。\n\n{exception.Message}",
                 "无法加载工作区", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private async Task RefreshWorkspaceAfterStartupAsync()
+    {
+        await Task.Delay(250);
+        if (IsLoaded) await ReloadWorkspaceForSecondaryLaunchAsync();
+    }
+
+    private async void MainWindow_Activated(object? sender, EventArgs e)
+    {
+        if (!_workspaceLoaded || !_canSave || _workspaceChangeInProgress || _checkingWorkspaceRevision) return;
+        _checkingWorkspaceRevision = true;
+        try
+        {
+            await EnsureWorkspaceUnchangedAsync(showDialog: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            SaveStatusText.Text = "暂时无法检查配置";
+        }
+        finally
+        {
+            _checkingWorkspaceRevision = false;
+        }
+    }
+
+    internal async Task ReloadWorkspaceForSecondaryLaunchAsync()
+    {
+        if (!_workspaceLoaded || _workspaceChangeInProgress || _restartsInProgress.Count > 0 ||
+            _sequentialGroupCancellations.Count > 0 || _sessions.Values.Any(session => !session.Completion.IsCompleted))
+        {
+            SaveStatusText.Text = "已有任务运行，未重新加载配置";
+            return;
+        }
+
+        _workspaceChangeInProgress = true;
+        RefreshCommandSelection();
+        try
+        {
+            var snapshot = await _store.LoadSnapshotAsync();
+            var configuration = snapshot.Configuration;
+            foreach (var project in configuration.Projects)
+            {
+                project.Commands ??= [];
+                project.Groups ??= [];
+            }
+
+            ReplaceProjects(configuration.Projects);
+            _workspaceRevision = snapshot.Revision;
+            _canSave = true;
+            _saveFailed = false;
+            _externalWorkspaceChangeReported = false;
+            UpdateWorkspaceIdentity();
+            SaveStatusText.Text = "已从磁盘重新加载";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            SaveStatusText.Text = "重新加载失败";
+            MessageBox.Show(this,
+                $"TalosDesk 无法重新加载工作区，当前窗口内容保持不变。\n\n{exception.Message}",
+                "无法重新加载工作区", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _workspaceChangeInProgress = false;
+            RefreshCommandSelection();
+        }
+    }
+
+    private void UpdateWorkspaceIdentity()
+    {
+        WorkspaceProfileText.Text = $"{_profileLabel} · {Projects.Count} 个项目";
     }
 
     private void ProjectList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -1808,7 +1904,9 @@ public partial class MainWindow : Window
         SaveStatusText.Text = "正在保存…";
         try
         {
+            if (!await EnsureWorkspaceUnchangedAsync(showDialog: true)) return false;
             await _store.SaveAsync(new WorkspaceConfiguration { Projects = Projects.ToList() });
+            _workspaceRevision = await _store.GetRevisionAsync();
             _saveFailed = false;
             SaveStatusText.Text = "已保存到本机";
             return true;
@@ -1820,6 +1918,26 @@ public partial class MainWindow : Window
             MessageBox.Show(this, $"TalosDesk 无法保存项目配置。\n\n{exception.Message}", "配置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
+    }
+
+    private async Task<bool> EnsureWorkspaceUnchangedAsync(bool showDialog)
+    {
+        if (_workspaceRevision is null) return true;
+        var currentRevision = await _store.GetRevisionAsync();
+        if (currentRevision == _workspaceRevision.Value) return true;
+
+        _canSave = false;
+        _saveFailed = true;
+        SaveStatusText.Text = "外部配置已变更";
+        RefreshCommandSelection();
+        if (showDialog && !_externalWorkspaceChangeReported)
+        {
+            _externalWorkspaceChangeReported = true;
+            MessageBox.Show(this,
+                $"工作区文件已被另一个程序修改。为避免覆盖新内容，当前窗口已停止保存。请关闭后重新打开 TalosDesk。\n\n{_store.FilePath}",
+                "检测到外部配置变化", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        return false;
     }
 
     private bool BeginWorkspaceChange()
