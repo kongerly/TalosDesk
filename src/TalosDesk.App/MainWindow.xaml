@@ -4,7 +4,7 @@
         xmlns:local="clr-namespace:TalosDesk.App"
         Title="TalosDesk · 本地项目指挥台" Height="860" Width="1400" MinHeight="650" MinWidth="1050"
         Background="{StaticResource CanvasBrush}" Foreground="{StaticResource InkBrush}" FontFamily="{StaticResource BodyFont}" WindowStartupLocation="CenterScreen" Icon="Assets/TalosDeskMark.ico"
-        Loaded="MainWindow_Loaded" Closing="MainWindow_Closing">
+        Loaded="MainWindow_Loaded" Closing="MainWindow_Closing" Deactivated="MainWindow_Deactivated">
     <Window.Resources>
         <SolidColorBrush x:Key="AccentBrush" Color="#327F9B" />
         <LinearGradientBrush x:Key="HeroBrush" StartPoint="0,0" EndPoint="1,1">
@@ -18,6 +18,7 @@
         </LinearGradientBrush>
         <local:CommandKindToChineseConverter x:Key="CommandKindConverter" />
         <local:OutputStreamToChineseConverter x:Key="OutputStreamConverter" />
+        <local:CommandGroupModeToChineseConverter x:Key="CommandGroupModeConverter" />
         <DrawingBrush x:Key="BlueprintGridBrush" TileMode="Tile" Viewport="0,0,32,32" ViewportUnits="Absolute" Viewbox="0,0,32,32" ViewboxUnits="Absolute">
             <DrawingBrush.Drawing>
                 <GeometryDrawing>
@@ -135,6 +136,7 @@
                     <TextBlock Text="工作区域" Foreground="#935B42" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" Margin="6,0,0,5" />
                     <Button x:Name="OverviewPageButton" Content="项目概览" Style="{StaticResource PageNavigationButton}" Click="OverviewPage_Click" />
                     <Button x:Name="CommandsPageButton" Content="命令管理" Style="{StaticResource PageNavigationButton}" Click="CommandsPage_Click" />
+                    <Button x:Name="GroupsPageButton" Content="分组管理" Style="{StaticResource PageNavigationButton}" Click="GroupsPage_Click" />
                     <Button x:Name="OutputPageButton" Content="运行输出" Style="{StaticResource PageNavigationButton}" Click="OutputPage_Click" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="18,8,18,10">
@@ -249,12 +251,20 @@
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                         <Grid Background="#F0F8FC" MinHeight="44">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock x:Name="BatchSelectionHint" Text="勾选可同时运行 · 点选可排序或删除" Margin="17,0,8,0" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
+                            <TextBlock x:Name="BatchSelectionHint" Text="勾选同时运行 · 双击编辑 · 拖动排序" Margin="17,0,8,0" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" />
                             <Button x:Name="MoveCommandUpButton" Grid.Column="1" Content="↑ 上移" Style="{StaticResource SidebarButton}" Padding="10,5" Margin="0,5,6,5" Click="MoveCommandUp_Click" IsEnabled="False" />
                             <Button x:Name="MoveCommandDownButton" Grid.Column="2" Content="↓ 下移" Style="{StaticResource SidebarButton}" Padding="10,5" Margin="0,5,6,5" Click="MoveCommandDown_Click" IsEnabled="False" />
                             <Button x:Name="DeleteCommandButton" Grid.Column="3" Content="删除" Style="{StaticResource SidebarButton}" Foreground="#9B4E42" Padding="11,5" Margin="0,5,12,5" Click="DeleteCommand_Click" IsEnabled="False" ToolTip="先选中一条已停止的命令" />
                         </Grid>
-                        <ListBox x:Name="CommandList" Grid.Row="1" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}" SelectionChanged="CommandList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.ScrollUnit="Pixel">
+                        <ListBox x:Name="CommandList" Grid.Row="1" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}"
+                                 SelectionChanged="CommandList_SelectionChanged" AllowDrop="True"
+                                 PreviewMouseLeftButtonDown="CommandList_PreviewMouseLeftButtonDown"
+                                 PreviewMouseLeftButtonUp="CommandList_PreviewMouseLeftButtonUp"
+                                 PreviewMouseMove="CommandList_PreviewMouseMove"
+                                 MouseDoubleClick="CommandList_MouseDoubleClick"
+                                 DragOver="CommandList_DragOver" DragLeave="CommandList_DragLeave" Drop="CommandList_Drop"
+                                 QueryContinueDrag="CommandList_QueryContinueDrag"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.ScrollUnit="Pixel">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid MinHeight="76">
@@ -291,6 +301,58 @@
                             <Button x:Name="EditButton" Content="编辑" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="EditCommand_Click" IsEnabled="False" />
                             <Button x:Name="CopyButton" Content="复制命令" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="CopyCommand_Click" IsEnabled="False" />
                         </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Grid x:Name="GroupsPage" Visibility="Collapsed">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Grid Grid.Row="0" Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="分组管理" FontFamily="{StaticResource DisplayFont}" FontSize="22" FontWeight="Bold" />
+                        <TextBlock x:Name="GroupsProjectText" Text="选择项目以查看分组" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,0,0" />
+                    </StackPanel>
+                    <Button x:Name="AddGroupButton" Grid.Column="1" Content="＋  添加分组" Style="{StaticResource PrimaryButton}" Click="AddGroup_Click" IsEnabled="False" />
+                </Grid>
+                <Border Grid.Row="1" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="14" ClipToBounds="True">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <Grid Background="#F0F8FC" MinHeight="48">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Margin="17,0,8,0" VerticalAlignment="Center">
+                                <Path Data="M 0,5 L 5,0 L 10,5 L 5,10 Z" Fill="#FFF7ED" Stroke="{StaticResource GoldBrush}" StrokeThickness="1.4" Width="10" Height="10" />
+                                <TextBlock Text="执行轨道按保存顺序启动；同一命令可以出现在多个分组中" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="9,0,0,0" />
+                            </StackPanel>
+                            <TextBlock x:Name="GroupCountText" Grid.Column="1" Text="0 个分组" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" VerticalAlignment="Center" Margin="8,0,17,0" />
+                        </Grid>
+                        <ListBox x:Name="GroupList" Grid.Row="1" ItemsSource="{Binding GroupItems}" BorderThickness="0" Background="Transparent" ItemContainerStyle="{StaticResource CommandItem}" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.ScrollUnit="Pixel">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid MinHeight="112" Margin="0,2">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="6" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Background="{StaticResource GoldBrush}" CornerRadius="3" Margin="0,12" />
+                                        <StackPanel Grid.Column="1" Margin="17,13,18,12">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Name}" FontFamily="{StaticResource DisplayFont}" FontSize="16" FontWeight="Bold" />
+                                                <Border Background="#DFEFF5" CornerRadius="8" Padding="7,2" Margin="10,1,0,0">
+                                                    <TextBlock Text="{Binding Group.ExecutionMode, Converter={StaticResource CommandGroupModeConverter}}" FontSize="9" FontWeight="Bold" Foreground="{StaticResource JadeBrush}" />
+                                                </Border>
+                                                <TextBlock Text="{Binding MemberCountText}" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="9,3,0,0" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding MemberPath}" FontFamily="{StaticResource CodeFont}" Foreground="{StaticResource MutedBrush}" FontSize="10" TextTrimming="CharacterEllipsis" Margin="0,8,0,0" />
+                                            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource JadeBrush}" FontSize="10" FontWeight="SemiBold" Margin="0,6,0,0" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,15,0">
+                                            <Button Content="运行分组" Style="{StaticResource PrimaryButton}" Padding="14,7" IsEnabled="{Binding CanRun}" Click="RunGroup_Click" />
+                                            <Button Content="编辑" Style="{StaticResource ActionButton}" Padding="12,7" Margin="7,0,0,0" IsEnabled="{Binding CanEdit}" Click="EditGroup_Click" />
+                                            <Button Content="删除" Style="{StaticResource ActionButton}" Padding="12,7" Margin="7,0,0,0" Foreground="#9B4E42" IsEnabled="{Binding CanEdit}" Click="DeleteGroup_Click" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="EmptyGroupsHint" Grid.Row="1" Text="还没有分组。把经常一起使用的命令编成一条执行轨道。" Foreground="{StaticResource MutedBrush}" FontSize="13" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="350" TextAlignment="Center" Visibility="Collapsed" />
                     </Grid>
                 </Border>
             </Grid>
@@ -338,18 +400,28 @@
                                 <Button x:Name="OutputRunButton" Content="运行" Style="{StaticResource PrimaryButton}" Click="RunCommand_Click" IsEnabled="False" />
                                 <Button x:Name="OutputStopButton" Content="停止" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="StopCommand_Click" IsEnabled="False" />
                                 <Button x:Name="OutputRestartButton" Content="重启" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="RestartCommand_Click" IsEnabled="False" />
+                                <Button x:Name="CopySelectedOutputButton" Content="复制所选" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="CopySelectedOutput_Click" IsEnabled="False" ToolTip="先拖选任意文本，再复制；Ctrl+A 可选择全部输出" />
                                 <Button x:Name="ClearOutputButton" Content="清空显示" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearOutput_Click" IsEnabled="False" />
                             </StackPanel>
-                            <ListBox x:Name="OutputList" Grid.Row="3" Background="Transparent" BorderThickness="0" Foreground="{StaticResource LogTextBrush}" FontFamily="{StaticResource CodeFont}" FontSize="11" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <DockPanel LastChildFill="True" Margin="0,2">
-                                            <TextBlock Text="{Binding Stream, Converter={StaticResource OutputStreamConverter}}" Foreground="{StaticResource JadeBrush}" FontSize="9" Width="50" Margin="0,2,9,0" />
-                                            <TextBlock Text="{Binding Text}" Foreground="{StaticResource LogTextBrush}" TextWrapping="NoWrap" />
-                                        </DockPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                            <TextBox x:Name="OutputTextBox" Grid.Row="3" Background="Transparent" BorderThickness="0"
+                                     Foreground="{StaticResource LogTextBrush}" CaretBrush="{StaticResource JadeBrush}"
+                                     FontFamily="{StaticResource CodeFont}" FontSize="11" Padding="0,2,0,0"
+                                     IsReadOnly="True" IsReadOnlyCaretVisible="True" IsUndoEnabled="False"
+                                     AcceptsReturn="True" AcceptsTab="True" TextWrapping="NoWrap"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                     SelectionBrush="#5DB7D0" SelectionOpacity="0.38"
+                                     SelectionChanged="OutputTextBox_SelectionChanged"
+                                     ScrollViewer.ScrollChanged="OutputTextBox_ScrollChanged"
+                                     ToolTip="可拖选任意字符或跨行范围；Ctrl+C 复制，Ctrl+A 全选。stderr 显示为诊断输出，不等于命令失败。">
+                                <TextBox.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="复制所选" Command="{x:Static ApplicationCommands.Copy}"
+                                                  CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" />
+                                        <MenuItem Header="全选" Command="{x:Static ApplicationCommands.SelectAll}"
+                                                  CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" />
+                                    </ContextMenu>
+                                </TextBox.ContextMenu>
+                            </TextBox>
                             <TextBlock x:Name="EmptyOutputHint" Grid.Row="3" Text="选择左侧命令以查看输出。" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Visible" />
                         </Grid>
                     </Grid>

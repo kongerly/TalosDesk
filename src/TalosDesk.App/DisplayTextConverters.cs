@@ -19,9 +19,18 @@ public sealed class OutputStreamToChineseConverter : IValueConverter
         value?.ToString() switch
         {
             "stdout" => "标准输出",
-            "stderr" => "标准错误",
+            "stderr" => "诊断输出",
             _ => value?.ToString() ?? string.Empty
         };
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        Binding.DoNothing;
+}
+
+public sealed class CommandGroupModeToChineseConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is CommandGroupExecutionMode.Sequential ? "顺序执行" : "同时执行";
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         Binding.DoNothing;
