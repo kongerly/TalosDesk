@@ -5,6 +5,7 @@ namespace TalosDesk.Core.Configuration;
 public sealed class WorkspaceStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
 
     public WorkspaceStore(string? filePath = null)
     {
@@ -45,22 +46,30 @@ public sealed class WorkspaceStore
     {
         ArgumentNullException.ThrowIfNull(configuration);
         Validate(configuration);
-        var directory = Path.GetDirectoryName(FilePath) ?? throw new InvalidOperationException("The workspace path has no parent directory.");
-        Directory.CreateDirectory(directory);
-        var temporaryPath = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 16_384, useAsync: true))
+            var directory = Path.GetDirectoryName(FilePath) ?? throw new InvalidOperationException("The workspace path has no parent directory.");
+            Directory.CreateDirectory(directory);
+            var temporaryPath = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
             {
-                await JsonSerializer.SerializeAsync(stream, configuration, JsonOptions, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
+                await using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 16_384, useAsync: true))
+                {
+                    await JsonSerializer.SerializeAsync(stream, configuration, JsonOptions, cancellationToken).ConfigureAwait(false);
+                    await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
 
-            File.Move(temporaryPath, FilePath, overwrite: true);
+                File.Move(temporaryPath, FilePath, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+            }
         }
         finally
         {
-            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+            _saveGate.Release();
         }
     }
 

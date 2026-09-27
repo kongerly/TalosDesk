@@ -365,9 +365,14 @@ internal static class WindowsNative
     private static string FindPowerShellPath()
     {
         var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        return FindPowerShellPath(path, Environment.CurrentDirectory);
+    }
+
+    internal static string FindPowerShellPath(string path, string currentDirectory)
+    {
         foreach (var entry in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var directory = Path.IsPathRooted(entry) ? entry : Path.GetFullPath(entry, Environment.CurrentDirectory);
+            var directory = Path.IsPathRooted(entry) ? entry : Path.GetFullPath(entry, currentDirectory);
             var candidate = Path.Combine(directory, "pwsh.exe");
             if (File.Exists(candidate)) return candidate;
         }

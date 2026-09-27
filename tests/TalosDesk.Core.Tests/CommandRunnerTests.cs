@@ -92,6 +92,18 @@ public sealed class CommandRunnerTests
     }
 
     [TestMethod]
+    public void MissingPowerShellOnApplicationPathIsReportedClearly()
+    {
+        using var sandbox = new TemporaryDirectory();
+
+        var exception = Assert.ThrowsExactly<FileNotFoundException>(() =>
+            WindowsNative.FindPowerShellPath(sandbox.Path, sandbox.Path));
+
+        StringAssert.Contains(exception.Message, "PowerShell 7 (pwsh.exe)");
+        StringAssert.Contains(exception.Message, "application PATH");
+    }
+
+    [TestMethod]
     public async Task CtrlCStopsRunningCommandAndTheSameCommandCanBeRestarted()
     {
         using var sandbox = new TemporaryDirectory();
@@ -111,6 +123,33 @@ public sealed class CommandRunnerTests
         var restartedResult = await restarted.Completion.WaitAsync(TimeSpan.FromSeconds(20));
         Assert.AreEqual(CommandRunState.Succeeded, restartedResult.State);
         Assert.IsTrue(restarted.GetRecentOutput().Any(line => line.Text.Contains("restart marker", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task RunsAndStopsNativeExecutableFromAnArbitraryToolDirectory()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var toolDirectory = Path.Combine(sandbox.Path, "tool files");
+        Directory.CreateDirectory(toolDirectory);
+        var cmdPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        File.Copy(cmdPath, Path.Combine(toolDirectory, "cmd.exe"));
+        const string command = ".\\cmd.exe /d /c 'echo native-ready & ping 127.0.0.1 -n 120 >nul'";
+
+        await using var session = _runner.Start(Guid.NewGuid(), command, toolDirectory);
+        var timeout = Stopwatch.StartNew();
+        while (!session.GetRecentOutput().Any(line => line.Text.Contains("native-ready", StringComparison.Ordinal)) &&
+               !session.Completion.IsCompleted && timeout.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            await Task.Delay(50);
+        }
+
+        Assert.IsFalse(session.Completion.IsCompleted, "The native process exited before it could be stopped.");
+        Assert.IsTrue(session.GetRecentOutput().Any(line => line.Text.Contains("native-ready", StringComparison.Ordinal)),
+            "The native process did not produce its readiness marker.");
+
+        await session.StopAsync().WaitAsync(TimeSpan.FromSeconds(12));
+        var result = await session.Completion.WaitAsync(TimeSpan.FromSeconds(12));
+        Assert.AreEqual(CommandRunState.Stopped, result.State);
     }
 
     [TestMethod]

@@ -48,7 +48,7 @@
         <StackPanel Grid.Row="4" Margin="0,0,0,18">
             <TextBlock Text="命令" Style="{StaticResource FieldLabel}" />
             <TextBox x:Name="CommandBox" Style="{StaticResource EditorTextBox}" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" FontFamily="{StaticResource CodeFont}" FontSize="12" MinHeight="100" />
-            <TextBlock Text="命令通过 PowerShell 7 运行，不加载个人配置文件。TalosDesk 暂不支持交互式输入。" Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+            <TextBlock Text="命令会以明文保存在本机配置和导出文件中。请使用环境变量或外部凭据工具，不要直接填写密钥。命令通过 PowerShell 7 非交互运行，不加载个人配置文件；目录中的程序可用 .\程序名.exe。" Foreground="{StaticResource GoldBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
         </StackPanel>
         <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="取消" Style="{StaticResource EditorButton}" IsCancel="True" Margin="0,0,8,0" />

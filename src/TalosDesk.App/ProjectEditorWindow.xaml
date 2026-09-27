@@ -18,7 +18,7 @@
                 <StackPanel>
                     <TextBlock Text="TALOS  /  PROJECT" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" />
                     <TextBlock x:Name="HeadingText" Text="添加项目" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="Bold" Margin="0,4,0,0" />
-                    <TextBlock Text="选择本地文件夹并为项目命名。" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0" />
+                    <TextBlock Text="选择本地文件夹并命名；工具程序目录也可以，不要求完整源码项目。" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" />
                 </StackPanel>
             </Grid>
         </Border>

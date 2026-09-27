@@ -342,6 +342,11 @@ public partial class MainWindow : Window
     private async void ExportWorkspace_Click(object sender, RoutedEventArgs e)
     {
         if (_workspaceChangeInProgress || !_canSave) return;
+        var confirmation = MessageBox.Show(this,
+            "导出文件会以明文包含项目路径和完整命令；如果命令中写有密钥或其他敏感值，它们也会一并导出。\n\n请在分享文件前检查内容。是否继续导出？",
+            "确认导出明文工作区", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirmation != MessageBoxResult.Yes) return;
+
         var picker = new SaveFileDialog
         {
             Title = "导出 TalosDesk 工作区",
