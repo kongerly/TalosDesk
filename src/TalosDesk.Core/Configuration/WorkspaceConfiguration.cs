@@ -1,8 +1,10 @@
+using System.Text.Json.Serialization;
+
 namespace TalosDesk.Core.Configuration;
 
 public sealed class WorkspaceConfiguration
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
     public List<ProjectDefinition> Projects { get; set; } = [];
 }
 
@@ -23,6 +25,31 @@ public sealed class CommandDefinition
     public string Command { get; set; } = string.Empty;
     public string WorkingDirectory { get; set; } = string.Empty;
     public CommandKind Kind { get; set; }
+    public List<CommandEnvironmentVariable> EnvironmentVariables { get; set; } = [];
+}
+
+public sealed class CommandEnvironmentVariable
+{
+    public string Name { get; set; } = string.Empty;
+    public bool IsSensitive { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Value { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ValueState { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ProtectedValue { get; set; }
+
+    public CommandEnvironmentVariable Clone() => new()
+    {
+        Name = Name,
+        IsSensitive = IsSensitive,
+        Value = Value,
+        ValueState = ValueState,
+        ProtectedValue = ProtectedValue
+    };
 }
 
 public enum CommandKind

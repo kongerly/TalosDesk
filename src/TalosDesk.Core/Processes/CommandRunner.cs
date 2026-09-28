@@ -11,10 +11,14 @@ public sealed class CommandRunner
     internal CommandRunner(ICommandStopOperations stopOperations) =>
         _stopOperations = stopOperations ?? throw new ArgumentNullException(nameof(stopOperations));
 
-    public CommandRunSession Start(Guid commandId, string command, string workingDirectory, EventHandler<CommandOutput>? outputReceived = null)
+    public CommandRunSession Start(Guid commandId, string command, string workingDirectory,
+        EventHandler<CommandOutput>? outputReceived = null, CommandRunEnvironment? runEnvironment = null)
     {
         if (commandId == Guid.Empty) throw new ArgumentException("A command ID is required.", nameof(commandId));
         if (string.IsNullOrWhiteSpace(command)) throw new ArgumentException("A command is required.", nameof(command));
+        if (runEnvironment?.SensitiveValues is { } values &&
+            values.Any(value => value is null || value.Length > 4096))
+            throw new ArgumentException("The command has an invalid sensitive value for output redaction.", nameof(runEnvironment));
 
         lock (_sync)
         {
@@ -23,8 +27,9 @@ public sealed class CommandRunner
                 throw new InvalidOperationException("This command is already running.");
             }
 
-            var started = WindowsNative.StartPowerShell(command, Path.GetFullPath(workingDirectory));
-            var session = new CommandRunSession(started.Job, started.Process, started.ProcessId, started.Stdout, started.Stderr, outputReceived, _stopOperations);
+            var started = WindowsNative.StartPowerShell(command, Path.GetFullPath(workingDirectory), runEnvironment?.Overrides);
+            var session = new CommandRunSession(started.Job, started.Process, started.ProcessId, started.Stdout, started.Stderr,
+                outputReceived, _stopOperations, runEnvironment?.SensitiveValues ?? []);
             _sessions[commandId] = session;
             _ = session.Completion.ContinueWith(_ => RemoveCompleted(commandId, session), CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);

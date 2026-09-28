@@ -11,4 +11,8 @@
     <InternalsVisibleTo Include="TalosDesk.App" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
+  </ItemGroup>
+
 </Project>

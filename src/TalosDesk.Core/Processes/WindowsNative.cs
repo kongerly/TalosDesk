@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Collections;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -10,6 +11,7 @@ internal static class WindowsNative
 {
     private const uint CreateSuspended = 0x00000004;
     private const uint CreateNewConsole = 0x00000010;
+    private const uint CreateUnicodeEnvironment = 0x00000400;
     private const uint StartfUseShowWindow = 0x00000001;
     private const uint StartfUseStdHandles = 0x00000100;
     private const short SwHide = 0;
@@ -22,7 +24,8 @@ internal static class WindowsNative
     private const uint Infinite = 0xFFFFFFFF;
     private const uint WaitObject0 = 0;
 
-    public static (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) StartPowerShell(string command, string workingDirectory)
+    public static (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) StartPowerShell(
+        string command, string workingDirectory, IReadOnlyDictionary<string, string>? environmentOverrides = null)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -34,10 +37,11 @@ internal static class WindowsNative
             throw new DirectoryNotFoundException($"Working directory does not exist: {workingDirectory}");
         }
 
-        return StartPowerShell(command, workingDirectory, FindPowerShellPath());
+        return StartPowerShell(command, workingDirectory, FindPowerShellPath(), environmentOverrides);
     }
 
-    internal static (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) StartPowerShell(string command, string workingDirectory, string shellPath)
+    internal static (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) StartPowerShell(
+        string command, string workingDirectory, string shellPath, IReadOnlyDictionary<string, string>? environmentOverrides = null)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -58,6 +62,8 @@ internal static class WindowsNative
         SafeKernelHandle? thread = null;
         StreamReader? stdout = null;
         StreamReader? stderr = null;
+        var environmentBlock = IntPtr.Zero;
+        var environmentBlockBytes = 0;
         var processCreated = false;
         var processAssigned = false;
 
@@ -83,8 +89,14 @@ internal static class WindowsNative
             var encodedCommand = $"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); {command}";
             var commandLine = new StringBuilder($"\"{shellPath}\" -NoLogo -NoProfile -NonInteractive -Command {QuoteArgument(encodedCommand)}");
 
+            if (environmentOverrides is { Count: > 0 })
+            {
+                (environmentBlock, environmentBlockBytes) = CreateEnvironmentBlock(environmentOverrides);
+            }
+
             if (!CreateProcess(shellPath, commandLine, IntPtr.Zero, IntPtr.Zero, inheritHandles: true,
-                    CreateSuspended | CreateNewConsole, IntPtr.Zero, workingDirectory,
+                    CreateSuspended | CreateNewConsole | (environmentBlock == IntPtr.Zero ? 0 : CreateUnicodeEnvironment),
+                    environmentBlock, workingDirectory,
                     ref startup, out var processInfo))
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not start PowerShell 7.");
@@ -145,6 +157,51 @@ internal static class WindowsNative
             DisposeQuietly(process);
             DisposeQuietly(job);
             throw;
+        }
+        finally
+        {
+            if (environmentBlock != IntPtr.Zero)
+            {
+                try { Marshal.Copy(new byte[environmentBlockBytes], 0, environmentBlock, environmentBlockBytes); }
+                finally { Marshal.FreeHGlobal(environmentBlock); }
+            }
+        }
+    }
+
+    private static (IntPtr Pointer, int ByteCount) CreateEnvironmentBlock(IReadOnlyDictionary<string, string> overrides)
+    {
+        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string name && entry.Value is string value) environment[name] = value;
+        }
+        foreach (var (name, value) in overrides)
+        {
+            if (string.IsNullOrEmpty(name) || name.Contains('=') || name.Contains('\0') || value.Contains('\0'))
+                throw new ArgumentException("The command environment contains an invalid variable.", nameof(overrides));
+            environment[name] = value;
+        }
+
+        var builder = new StringBuilder();
+        foreach (var pair in environment.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            builder.Append(pair.Key).Append('=').Append(pair.Value).Append('\0');
+        builder.Append('\0');
+        var characters = builder.ToString().ToCharArray();
+        var byteCount = checked(characters.Length * sizeof(char));
+        var pointer = Marshal.AllocHGlobal(byteCount);
+        try
+        {
+            Marshal.Copy(characters, 0, pointer, characters.Length);
+            return (pointer, byteCount);
+        }
+        catch
+        {
+            Marshal.FreeHGlobal(pointer);
+            throw;
+        }
+        finally
+        {
+            Array.Clear(characters);
         }
     }
 
