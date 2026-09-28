@@ -33,6 +33,89 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    public void ChangingLocationMovesHistoryAndSettingsAcrossRestartAndCanRestoreDefault()
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var selectedParent = Path.Combine(sandbox.Path, "selected-logs");
+        var projectId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(2 * 1024 * 1024, 7));
+        var writer = store.Begin(projectId, commandId, DateTimeOffset.Now);
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "moved output"));
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var defaultRoot = store.RootPath;
+
+        Assert.IsNull(store.ChangeLocation(selectedParent));
+        var customRoot = store.RootPath;
+        Assert.IsTrue(customRoot.StartsWith(selectedParent, StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(Directory.Exists(defaultRoot));
+        Assert.IsTrue(File.Exists(workspace + ".log-location.json"));
+        Assert.IsFalse(File.Exists(workspace));
+        var reopened = new RunLogStore(workspace);
+        reopened.Initialize();
+        Assert.AreEqual(customRoot, reopened.RootPath);
+        Assert.AreEqual(7, reopened.Settings.RetentionDays);
+        CollectionAssert.AreEqual(new[] { "moved output" }, reopened.ReadTail(reopened.GetRuns(projectId, commandId).Single(), "stdout").ToArray());
+
+        Assert.IsNull(reopened.ChangeLocation(null));
+        Assert.AreEqual(defaultRoot, reopened.RootPath);
+        Assert.IsFalse(File.Exists(workspace + ".log-location.json"));
+        Assert.IsFalse(Directory.Exists(customRoot));
+        var defaultReopened = new RunLogStore(workspace);
+        defaultReopened.Initialize();
+        CollectionAssert.AreEqual(new[] { "moved output" }, defaultReopened.ReadTail(defaultReopened.GetRuns(projectId, commandId).Single(), "stdout").ToArray());
+    }
+
+    [TestMethod]
+    public void ChangingLocationRejectsActiveRunsAndExistingDestination()
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        var original = store.RootPath;
+        var selectedParent = Path.Combine(sandbox.Path, "selected-logs");
+        Assert.ThrowsExactly<InvalidOperationException>(() => store.ChangeLocation(selectedParent));
+        Assert.AreEqual(original, store.RootPath);
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+
+        store.ChangeLocation(selectedParent);
+        var occupiedTarget = store.RootPath;
+        store.ChangeLocation(null);
+        Directory.CreateDirectory(occupiedTarget);
+        File.WriteAllText(Path.Combine(occupiedTarget, "keep.txt"), "unrelated");
+        Assert.ThrowsExactly<IOException>(() => store.ChangeLocation(selectedParent));
+        Assert.AreEqual(original, store.RootPath);
+        Assert.AreEqual("unrelated", File.ReadAllText(Path.Combine(occupiedTarget, "keep.txt")));
+        Assert.HasCount(1, store.GetRuns(writer.Info.ProjectId, writer.Info.CommandId));
+    }
+
+    [TestMethod]
+    public void TwoWorkspacesUsingOneSelectedFolderKeepSeparateLogs()
+    {
+        using var sandbox = new Sandbox();
+        var selectedParent = Path.Combine(sandbox.Path, "selected-logs");
+        var first = new RunLogStore(Path.Combine(sandbox.Path, "first.json"));
+        var second = new RunLogStore(Path.Combine(sandbox.Path, "second.json"));
+        first.Initialize();
+        second.Initialize();
+        first.ChangeLocation(selectedParent);
+        second.ChangeLocation(selectedParent);
+        Assert.AreNotEqual(first.RootPath, second.RootPath);
+        var projectId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+        var writer = first.Begin(projectId, commandId, DateTimeOffset.Now);
+        first.Append(writer, new CommandOutput(DateTimeOffset.Now, "stderr", "first workspace only"));
+        first.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        Assert.HasCount(1, first.GetRuns(projectId, commandId));
+        Assert.HasCount(0, second.GetRuns(projectId, commandId));
+    }
+
+    [TestMethod]
     public void RotatesOldCompletedRunsBeforeTruncatingAnActiveRun()
     {
         using var sandbox = new Sandbox();

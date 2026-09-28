@@ -14,6 +14,7 @@ TestResults/
 *.talosdesk.json
 workspace.json
 *.logs/
+*.log-location.json
 *.secrets.json
 *.pfx
 *.p12

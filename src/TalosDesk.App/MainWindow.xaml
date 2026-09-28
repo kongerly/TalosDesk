@@ -424,8 +424,12 @@
                                 <Button x:Name="ClearHistoryButton" Content="清理历史日志" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearHistory_Click" />
                             </StackPanel>
                             <StackPanel Grid.Row="4" Margin="0,8,0,8">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                                    <Button x:Name="ChangeLogFolderButton" Content="选择日志位置" Style="{StaticResource SidebarButton}" Click="ChangeLogFolder_Click" />
+                                    <Button x:Name="ResetLogFolderButton" Content="恢复默认位置" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ResetLogFolder_Click" />
+                                </StackPanel>
                                 <TextBlock x:Name="LogPathText" FontSize="10" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="日志以明文保存，可能包含令牌。可在此清理已结束批次，或关闭应用后手工删除该目录。历史输出在此显示最近 10,000 行。" FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                                <TextBlock Text="选择新位置会创建本工作区专属目录、迁移历史并清理旧目录。日志以明文保存，可能包含令牌；可在此清理已结束批次，或关闭应用后手工删除实际目录。历史输出在此显示最近 10,000 行。" FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <TextBox x:Name="OutputTextBox" Grid.Row="5" Background="Transparent" BorderThickness="0"
                                      Foreground="{StaticResource LogTextBrush}" CaretBrush="{StaticResource JadeBrush}"

@@ -105,8 +105,7 @@ public partial class MainWindow : Window
         OutputCommandList.ItemsSource = _outputCommands;
         RunHistoryComboBox.ItemsSource = _runHistory;
         HistoryStreamComboBox.SelectedIndex = 0;
-        LogPathText.Text = $"日志位置：{_runLogStore.RootPath}";
-        LogPathText.ToolTip = _runLogStore.RootPath;
+        UpdateLogPathDisplay();
         GroupList.ItemsSource = GroupItems;
         DataContext = this;
         SetPage(MainPage.Overview);
@@ -120,11 +119,12 @@ public partial class MainWindow : Window
         try
         {
             try { _runLogStore.Initialize(); _logStoreAvailable = true; }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentOutOfRangeException or System.Text.Json.JsonException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or NotSupportedException or System.Text.Json.JsonException)
             {
                 _logInitError = $"日志初始化失败：{exception.Message}";
                 LogStatusText.Text = _logInitError;
             }
+            UpdateLogPathDisplay();
             LogLimitMbTextBox.Text = (_runLogStore.Settings.MaxBytes / (1024 * 1024)).ToString();
             LogRetentionDaysTextBox.Text = _runLogStore.Settings.RetentionDays.ToString();
             var snapshot = await _store.LoadSnapshotAsync();
@@ -2045,6 +2045,59 @@ public partial class MainWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentOutOfRangeException or InvalidDataException or System.Text.Json.JsonException)
         {
             MessageBox.Show(this, $"无法保存日志设置。\n\n{exception.Message}", "日志设置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void UpdateLogPathDisplay()
+    {
+        LogPathText.Text = $"日志位置：{_runLogStore.RootPath}";
+        LogPathText.ToolTip = _runLogStore.RootPath;
+    }
+
+    private bool CanChangeLogLocation()
+    {
+        if (_sessions.Values.Any(session => !session.Completion.IsCompleted) || _runLogWriters.Count > 0 ||
+            _logFinalizations.Values.Any(task => !task.IsCompleted))
+        {
+            MessageBox.Show(this, "请等待所有命令和日志写入结束后再更改日志位置。", "日志正在写入",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return false;
+        }
+        return true;
+    }
+
+    private void ChangeLogFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (!CanChangeLogLocation()) return;
+        var picker = new OpenFolderDialog { Title = "选择日志保存文件夹", Multiselect = false };
+        var currentParent = Path.GetDirectoryName(_runLogStore.RootPath);
+        if (currentParent is not null && Directory.Exists(currentParent)) picker.InitialDirectory = currentParent;
+        if (picker.ShowDialog(this) == true) ApplyLogLocation(picker.FolderName);
+    }
+
+    private void ResetLogFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (CanChangeLogLocation()) ApplyLogLocation(null);
+    }
+
+    private void ApplyLogLocation(string? parentDirectory)
+    {
+        try
+        {
+            var oldFolder = _runLogStore.ChangeLocation(parentDirectory);
+            UpdateLogPathDisplay();
+            if (!_logStoreAvailable) _runLogStore.Initialize();
+            _logStoreAvailable = true;
+            _logInitError = null;
+            RefreshRunHistory(selectCurrent: false);
+            LogStatusText.Text = oldFolder is null ? "日志位置已更新，历史日志已迁移。" :
+                $"日志位置已更新，但旧目录未能删除，请手工清理：{oldFolder}";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+            InvalidDataException or ArgumentException or NotSupportedException or System.Text.Json.JsonException)
+        {
+            UpdateLogPathDisplay();
+            MessageBox.Show(this, $"无法更改日志位置。\n\n{exception.Message}", "日志位置未更改", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
