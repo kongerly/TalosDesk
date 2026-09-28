@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -40,21 +41,38 @@ public sealed class RunLogWriter
 public sealed class RunLogStore
 {
     private const string MetadataFile = "run.json";
+    private sealed record LogLocation(string ParentDirectory);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static readonly UTF8Encoding Utf8 = new(false);
     private readonly object _sync = new();
     private readonly HashSet<Guid> _active = [];
+    private readonly string _workspacePath;
+    private readonly string _defaultRootPath;
+    private readonly string _locationFilePath;
     private long _storedBytes;
 
-    public RunLogStore(string workspacePath) => RootPath = Path.GetFullPath(workspacePath) + ".logs";
+    public RunLogStore(string workspacePath)
+    {
+        _workspacePath = Path.GetFullPath(workspacePath);
+        _defaultRootPath = _workspacePath + ".logs";
+        _locationFilePath = _workspacePath + ".log-location.json";
+        RootPath = _defaultRootPath;
+    }
 
-    public string RootPath { get; }
+    public string RootPath { get; private set; }
     public RunLogSettings Settings { get; private set; } = new();
 
     public void Initialize()
     {
         lock (_sync)
         {
+            RootPath = _defaultRootPath;
+            if (File.Exists(_locationFilePath))
+            {
+                var location = JsonSerializer.Deserialize<LogLocation>(File.ReadAllText(_locationFilePath))
+                    ?? throw new InvalidDataException("日志位置文件为空。");
+                RootPath = GetCustomRootPath(location.ParentDirectory);
+            }
             System.IO.Directory.CreateDirectory(RootPath);
             var settingsPath = Path.Combine(RootPath, "settings.json");
             if (File.Exists(settingsPath))
@@ -73,6 +91,76 @@ public sealed class RunLogStore
             _storedBytes = CalculateStoredBytes();
             Prune(DateTimeOffset.Now);
         }
+    }
+
+    /// <summary>Moves this workspace's logs to a selected parent folder. Returns an old folder left behind if it could not be removed.</summary>
+    public string? ChangeLocation(string? parentDirectory)
+    {
+        lock (_sync)
+        {
+            if (_active.Count != 0) throw new InvalidOperationException("有运行中的日志批次，不能更改保存位置。");
+            var target = parentDirectory is null ? _defaultRootPath : GetCustomRootPath(parentDirectory);
+            if (Path.TrimEndingDirectorySeparator(target).Equals(Path.TrimEndingDirectorySeparator(RootPath), StringComparison.OrdinalIgnoreCase))
+                return null;
+            var source = RootPath;
+            if (IsWithin(target, source) || IsWithin(source, target))
+                throw new IOException("新旧日志目录不能互相包含。请选择其他文件夹。");
+            if (System.IO.Directory.Exists(target) || File.Exists(target))
+                throw new IOException("目标日志目录已存在。请选择其他文件夹，避免覆盖已有日志。");
+
+            var parent = Path.GetDirectoryName(target)!;
+            System.IO.Directory.CreateDirectory(parent);
+            var staging = target + ".moving-" + Guid.NewGuid().ToString("N");
+            var targetCreated = false;
+            try
+            {
+                if (System.IO.Directory.Exists(source)) CopyDirectory(source, staging);
+                else System.IO.Directory.CreateDirectory(staging);
+                System.IO.Directory.Move(staging, target);
+                targetCreated = true;
+                if (parentDirectory is null) File.Delete(_locationFilePath);
+                else WriteJsonAtomically(_locationFilePath, new LogLocation(Path.GetFullPath(parentDirectory)));
+            }
+            catch
+            {
+                if (System.IO.Directory.Exists(staging)) System.IO.Directory.Delete(staging, true);
+                if (targetCreated && System.IO.Directory.Exists(target)) System.IO.Directory.Delete(target, true);
+                throw;
+            }
+
+            RootPath = target;
+            if (!System.IO.Directory.Exists(source)) return null;
+            try { System.IO.Directory.Delete(source, true); return null; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return source; }
+        }
+    }
+
+    private static bool IsWithin(string path, string directory) =>
+        Path.GetFullPath(path).StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)) + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+
+    private string GetCustomRootPath(string parentDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(parentDirectory) || !Path.IsPathFullyQualified(parentDirectory))
+            throw new InvalidDataException("日志位置必须是绝对路径。");
+        var parent = Path.GetFullPath(parentDirectory);
+        var workspaceHash = Convert.ToHexString(SHA256.HashData(Utf8.GetBytes(_workspacePath.ToUpperInvariant())))[..16].ToLowerInvariant();
+        return Path.Combine(parent, $"TalosDesk-{workspaceHash}.logs");
+    }
+
+    private static void CopyDirectory(string source, string target)
+    {
+        if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("日志目录包含链接，无法安全迁移。");
+        System.IO.Directory.CreateDirectory(target);
+        foreach (var file in System.IO.Directory.EnumerateFiles(source))
+        {
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("日志目录包含链接，无法安全迁移。");
+            File.Copy(file, Path.Combine(target, Path.GetFileName(file)));
+        }
+        foreach (var directory in System.IO.Directory.EnumerateDirectories(source))
+            CopyDirectory(directory, Path.Combine(target, Path.GetFileName(directory)));
     }
 
     public void UpdateSettings(RunLogSettings settings)
