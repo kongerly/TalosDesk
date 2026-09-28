@@ -415,9 +415,9 @@
                             </StackPanel>
                             <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
                                 <TextBlock Text="日志上限" VerticalAlignment="Center" Margin="0,0,5,0" />
-                                <TextBox x:Name="LogLimitMbTextBox" Width="65" VerticalContentAlignment="Center" />
+                                <TextBox x:Name="LogLimitMbTextBox" Style="{StaticResource EditorTextBox}" Width="65" Height="30" Padding="5,2" FontFamily="{StaticResource CodeFont}" FontSize="12" />
                                 <TextBlock Text="MB · 保留" VerticalAlignment="Center" Margin="5,0" />
-                                <TextBox x:Name="LogRetentionDaysTextBox" Width="48" VerticalContentAlignment="Center" />
+                                <TextBox x:Name="LogRetentionDaysTextBox" Style="{StaticResource EditorTextBox}" Width="48" Height="30" Padding="5,2" FontFamily="{StaticResource CodeFont}" FontSize="12" />
                                 <TextBlock Text="天" VerticalAlignment="Center" Margin="5,0,8,0" />
                                 <Button x:Name="SaveLogSettingsButton" Content="保存设置" Style="{StaticResource SidebarButton}" Click="SaveLogSettings_Click" />
                                 <Button x:Name="OpenLogFolderButton" Content="打开目录" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="OpenLogFolder_Click" />
