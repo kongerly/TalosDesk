@@ -94,7 +94,7 @@ pwsh -NoProfile -File .\scripts\Publish.ps1
 ## 文档与许可
 
 - [设计说明](docs/design.md)
-- [发布路线图](docs/roadmap.md)
+- [开发与发布路线图](docs/roadmap.md)：当前分支收口与隐私保护、更新分发、就绪检查，以及后续多 Shell 的范围和验收条件。
 - [v0.1.0 发布说明](docs/release-v0.1.0.md)
 
 TalosDesk 使用 [MIT License](LICENSE)。发布包包含的 .NET 运行时许可信息随包提供。

@@ -192,6 +192,73 @@ public sealed class CommandRunnerTests
     }
 
     [TestMethod]
+    public async Task HostExitClosesItsOwnedCommandJob()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var assemblyPath = typeof(CommandRunner).Assembly.Location.Replace("'", "''", StringComparison.Ordinal);
+        var workingDirectory = sandbox.Path.Replace("'", "''", StringComparison.Ordinal);
+        var scriptPath = Path.Combine(sandbox.Path, "synthetic-host.ps1");
+        var script = $$"""
+            Add-Type -Path '{{assemblyPath}}'
+            $runner = [TalosDesk.Core.Processes.CommandRunner]::new()
+            $session = $runner.Start([guid]::NewGuid(), 'Write-Output "target-pid:$PID"; while ($true) { Start-Sleep -Seconds 1 }', '{{workingDirectory}}')
+            while ($true) {
+                $marker = $session.GetRecentOutput() | Where-Object { $_.Text.StartsWith('target-pid:') } | Select-Object -First 1
+                if ($null -ne $marker) {
+                    [Console]::Out.WriteLine($marker.Text)
+                    [Console]::Out.Flush()
+                    break
+                }
+                Start-Sleep -Milliseconds 20
+            }
+            while ($true) { Start-Sleep -Seconds 1 }
+            """;
+        await File.WriteAllTextAsync(scriptPath, script);
+
+        var start = new ProcessStartInfo
+        {
+            FileName = WindowsNative.FindPowerShellPath(Environment.GetEnvironmentVariable("PATH") ?? string.Empty, sandbox.Path),
+            WorkingDirectory = sandbox.Path,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        start.ArgumentList.Add("-NoLogo");
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-File");
+        start.ArgumentList.Add(scriptPath);
+
+        using var host = Process.Start(start) ?? throw new InvalidOperationException("Could not start the synthetic host.");
+        Process? target = null;
+        try
+        {
+            var marker = await host.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(20));
+            if (marker is null)
+                throw new AssertFailedException($"The synthetic host exited before reporting its command: {await host.StandardError.ReadToEndAsync()}");
+            Assert.IsTrue(marker.StartsWith("target-pid:", StringComparison.Ordinal), $"Unexpected host output: {marker}");
+            Assert.IsTrue(int.TryParse(marker.AsSpan("target-pid:".Length), out var targetPid), $"Invalid target PID: {marker}");
+            target = Process.GetProcessById(targetPid);
+            Assert.IsFalse(target.HasExited, "The command exited before the synthetic host was killed.");
+
+            host.Kill();
+            await host.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await target.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.IsTrue(target.HasExited, "Closing the host must close its command Job and stop the owned process.");
+        }
+        finally
+        {
+            await KillOwnedProcessIfRunningAsync(host);
+            if (target is not null)
+            {
+                await KillOwnedProcessIfRunningAsync(target);
+                target.Dispose();
+            }
+        }
+    }
+
+    [TestMethod]
     public async Task ThrowingOutputSubscriberDoesNotInterruptOutputDraining()
     {
         using var sandbox = new TemporaryDirectory();
@@ -264,6 +331,23 @@ public sealed class CommandRunnerTests
         catch (ArgumentException)
         {
             return false;
+        }
+    }
+
+    private static async Task KillOwnedProcessIfRunningAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (InvalidOperationException)
+        {
+            // 进程可能在清理时自行退出。
+        }
+        catch (Win32Exception) when (process.HasExited)
+        {
+            // 进程可能在结束检查与终止请求之间退出。
         }
     }
 

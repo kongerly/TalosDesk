@@ -1,0 +1,53 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-2022
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Record runner environment
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
+          Write-Host "PowerShell $($PSVersionTable.PSVersion)"
+
+      - name: Install pinned SDK
+        shell: pwsh
+        run: .\scripts\Install-Sdk.ps1
+
+      - name: Check development environment
+        shell: pwsh
+        run: .\scripts\Test-Environment.ps1
+
+      - name: Restore
+        shell: pwsh
+        run: .\scripts\With-Sdk.ps1 restore TalosDesk.slnx
+
+      - name: Build Release
+        shell: pwsh
+        run: .\scripts\With-Sdk.ps1 build TalosDesk.slnx --configuration Release --no-restore
+
+      - name: Run all tests
+        shell: pwsh
+        run: .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration Release --no-build --no-restore --logger trx --results-directory TestResults
+
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore

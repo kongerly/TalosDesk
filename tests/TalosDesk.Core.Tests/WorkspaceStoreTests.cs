@@ -338,4 +338,46 @@ public sealed class WorkspaceStoreTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [TestMethod]
+    public async Task FailedSavePreservesExistingWorkspaceAndRemovesTemporaryFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "workspace.json");
+            var store = new WorkspaceStore(path);
+            await store.SaveAsync(new WorkspaceConfiguration
+            {
+                Projects = [new ProjectDefinition { Name = "Original", Directory = Path.Combine(directory, "original") }]
+            });
+            var originalBytes = await File.ReadAllBytesAsync(path);
+
+            using (var lockedFile = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                Exception? saveError = null;
+                try
+                {
+                    await store.SaveAsync(new WorkspaceConfiguration
+                    {
+                        Projects = [new ProjectDefinition { Name = "Replacement", Directory = Path.Combine(directory, "replacement") }]
+                    });
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    saveError = exception;
+                }
+                Assert.IsNotNull(saveError, "Replacing a locked workspace must fail.");
+            }
+
+            CollectionAssert.AreEqual(originalBytes, await File.ReadAllBytesAsync(path));
+            Assert.AreEqual("Original", (await store.LoadAsync()).Projects.Single().Name);
+            Assert.HasCount(0, Directory.GetFiles(directory, "workspace.json.*.tmp"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }
