@@ -13,6 +13,7 @@ TestResults/
 !.env.example
 *.talosdesk.json
 workspace.json
+*.logs/
 *.secrets.json
 *.pfx
 *.p12

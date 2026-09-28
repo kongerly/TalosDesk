@@ -387,7 +387,7 @@
                         <Border Background="{StaticResource LogBrush}" BorderBrush="#B9D6E6" BorderThickness="1" CornerRadius="14" />
                         <Border Background="{StaticResource BlueprintGridBrush}" CornerRadius="14" Opacity="0.25" IsHitTestVisible="False" />
                         <Grid Margin="18,14,18,15">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="9" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <StackPanel>
@@ -404,7 +404,30 @@
                                 <Button x:Name="CopySelectedOutputButton" Content="复制所选" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="CopySelectedOutput_Click" IsEnabled="False" ToolTip="先拖选任意文本，再复制；Ctrl+A 可选择全部输出" />
                                 <Button x:Name="ClearOutputButton" Content="清空显示" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearOutput_Click" IsEnabled="False" />
                             </StackPanel>
-                            <TextBox x:Name="OutputTextBox" Grid.Row="3" Background="Transparent" BorderThickness="0"
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,10,0,0">
+                                <TextBlock Text="运行批次" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <ComboBox x:Name="RunHistoryComboBox" Width="225" DisplayMemberPath="Label" SelectionChanged="RunHistoryComboBox_SelectionChanged" />
+                                <TextBlock Text="输出通道" VerticalAlignment="Center" Margin="10,0,6,0" />
+                                <ComboBox x:Name="HistoryStreamComboBox" Width="100" SelectionChanged="HistoryStreamComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="标准输出" /><ComboBoxItem Content="诊断输出" />
+                                </ComboBox>
+                                <TextBlock x:Name="LogStatusText" Foreground="#935B42" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+                                <TextBlock Text="日志上限" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBox x:Name="LogLimitMbTextBox" Width="65" VerticalContentAlignment="Center" />
+                                <TextBlock Text="MB · 保留" VerticalAlignment="Center" Margin="5,0" />
+                                <TextBox x:Name="LogRetentionDaysTextBox" Width="48" VerticalContentAlignment="Center" />
+                                <TextBlock Text="天" VerticalAlignment="Center" Margin="5,0,8,0" />
+                                <Button x:Name="SaveLogSettingsButton" Content="保存设置" Style="{StaticResource SidebarButton}" Click="SaveLogSettings_Click" />
+                                <Button x:Name="OpenLogFolderButton" Content="打开目录" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="OpenLogFolder_Click" />
+                                <Button x:Name="ClearHistoryButton" Content="清理历史日志" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearHistory_Click" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="4" Margin="0,8,0,8">
+                                <TextBlock x:Name="LogPathText" FontSize="10" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="日志以明文保存，可能包含令牌。可在此清理已结束批次，或关闭应用后手工删除该目录。历史输出在此显示最近 10,000 行。" FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <TextBox x:Name="OutputTextBox" Grid.Row="5" Background="Transparent" BorderThickness="0"
                                      Foreground="{StaticResource LogTextBrush}" CaretBrush="{StaticResource JadeBrush}"
                                      FontFamily="{StaticResource CodeFont}" FontSize="11" Padding="0,2,0,0"
                                      IsReadOnly="True" IsReadOnlyCaretVisible="True" IsUndoEnabled="False"
@@ -423,7 +446,7 @@
                                     </ContextMenu>
                                 </TextBox.ContextMenu>
                             </TextBox>
-                            <TextBlock x:Name="EmptyOutputHint" Grid.Row="3" Text="选择左侧命令以查看输出。" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Visible" />
+                            <TextBlock x:Name="EmptyOutputHint" Grid.Row="5" Text="选择左侧命令以查看输出。" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Visible" />
                         </Grid>
                     </Grid>
                 </Grid>

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -22,6 +23,14 @@ public partial class MainWindow : Window
 
     private readonly WorkspaceStore _store;
     private readonly CommandRunner _runner = new();
+    private readonly RunLogStore _runLogStore;
+    private bool _logStoreAvailable;
+    private string? _logInitError;
+    private readonly Dictionary<Guid, RunLogWriter> _runLogWriters = [];
+    private readonly Dictionary<Guid, Task> _logFinalizations = [];
+    private readonly Dictionary<Guid, string> _logWarnings = [];
+    private readonly ObservableCollection<RunHistoryItem> _runHistory = [];
+    private bool _syncingRunHistory;
     private readonly Dictionary<Guid, CommandRunSession> _sessions = [];
     private readonly Dictionary<Guid, CommandRunResult> _lastResults = [];
     private readonly Dictionary<Guid, DateTimeOffset> _runStartedAt = [];
@@ -78,6 +87,7 @@ public partial class MainWindow : Window
     internal MainWindow(WorkspaceStore store, string? profileLabel)
     {
         _store = store;
+        _runLogStore = new RunLogStore(store.FilePath);
         _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
         InitializeComponent();
         if (!string.IsNullOrWhiteSpace(profileLabel))
@@ -93,6 +103,10 @@ public partial class MainWindow : Window
         };
         _commandDragScrollTimer.Tick += CommandDragScrollTimer_Tick;
         OutputCommandList.ItemsSource = _outputCommands;
+        RunHistoryComboBox.ItemsSource = _runHistory;
+        HistoryStreamComboBox.SelectedIndex = 0;
+        LogPathText.Text = $"日志位置：{_runLogStore.RootPath}";
+        LogPathText.ToolTip = _runLogStore.RootPath;
         GroupList.ItemsSource = GroupItems;
         DataContext = this;
         SetPage(MainPage.Overview);
@@ -105,6 +119,14 @@ public partial class MainWindow : Window
     {
         try
         {
+            try { _runLogStore.Initialize(); _logStoreAvailable = true; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentOutOfRangeException or System.Text.Json.JsonException)
+            {
+                _logInitError = $"日志初始化失败：{exception.Message}";
+                LogStatusText.Text = _logInitError;
+            }
+            LogLimitMbTextBox.Text = (_runLogStore.Settings.MaxBytes / (1024 * 1024)).ToString();
+            LogRetentionDaysTextBox.Text = _runLogStore.Settings.RetentionDays.ToString();
             var snapshot = await _store.LoadSnapshotAsync();
             var configuration = snapshot.Configuration;
             _workspaceRevision = snapshot.Revision;
@@ -213,6 +235,7 @@ public partial class MainWindow : Window
             _batchProjectId = _selectedProject.Id;
         }
         _selectedCommand = null;
+        RefreshRunHistory(selectCurrent: true);
         _syncingCommandSelection = true;
         try
         {
@@ -566,6 +589,7 @@ public partial class MainWindow : Window
 
     private void SelectCommand(CommandDefinition? command)
     {
+        var previousId = _selectedCommand?.Id;
         _selectedCommand = command is not null && _selectedProject?.Commands.Contains(command) == true ? command : null;
         _syncingCommandSelection = true;
         try
@@ -575,6 +599,7 @@ public partial class MainWindow : Window
             if (!ReferenceEquals(OutputCommandList.SelectedItem, outputItem)) OutputCommandList.SelectedItem = outputItem;
         }
         finally { _syncingCommandSelection = false; }
+        if (previousId != _selectedCommand?.Id) RefreshRunHistory(selectCurrent: false);
         RefreshCommandSelection();
     }
 
@@ -670,7 +695,9 @@ public partial class MainWindow : Window
         OverviewFinishedCountText.Text = (_selectedProject?.Commands.Count(item => _lastResults.ContainsKey(item.Id)) ?? 0).ToString();
         foreach (var item in _outputCommands) item.StatusText = GetCommandStatusText(item.Command);
         SelectedCommandName.Text = command?.Name ?? "请选择命令";
-        RunStartedText.Text = command is not null && _runStartedAt.TryGetValue(command.Id, out var startedAt)
+        RunStartedText.Text = SelectedHistoricalRun is { } selectedRun
+            ? $"开始时间：{selectedRun.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+            : command is not null && _runStartedAt.TryGetValue(command.Id, out var startedAt)
             ? $"开始时间：{startedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
             : string.Empty;
         LogCommandName.Text = command?.Name ?? "选择命令以查看输出";
@@ -681,7 +708,11 @@ public partial class MainWindow : Window
         OutputStopButton.IsEnabled = StopButton.IsEnabled;
         OutputRestartButton.IsEnabled = RestartButton.IsEnabled;
         CopySelectedOutputButton.IsEnabled = command is not null && OutputTextBox.SelectionLength > 0;
-        ClearOutputButton.IsEnabled = command is not null;
+        ClearOutputButton.IsEnabled = command is not null && SelectedHistoricalRun is null;
+        LogStatusText.Text = SelectedHistoricalRun is { } historicalRun
+            ? historicalRun.Truncated ? "该批次日志已达到容量上限，后续输出未保存。" :
+                historicalRun.WriteFailed ? "该批次日志写入失败，内容不完整。" : string.Empty
+            : command is not null && _logWarnings.TryGetValue(command.Id, out var logWarning) ? logWarning : _logInitError ?? string.Empty;
         EditButton.IsEnabled = command is not null && !running && canChangeWorkspace;
         CopyButton.IsEnabled = command is not null;
         var selectedIndex = command is null ? -1 : _selectedProject?.Commands.IndexOf(command) ?? -1;
@@ -712,12 +743,15 @@ public partial class MainWindow : Window
         }
 
         var commandLogs = GetLogs(command.Id);
-        if (_renderedOutputCommandId != command.Id || !ReferenceEquals(_renderedOutputLogs, commandLogs))
+        if (SelectedHistoricalRun is null && (_renderedOutputCommandId != command.Id || !ReferenceEquals(_renderedOutputLogs, commandLogs)))
         {
             RenderSelectedOutput(command, scrollToEnd: true);
         }
-        EmptyOutputHint.Text = "这条命令尚无输出。";
-        EmptyOutputHint.Visibility = commandLogs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (SelectedHistoricalRun is null)
+        {
+            EmptyOutputHint.Text = "这条命令尚无输出。";
+            EmptyOutputHint.Visibility = commandLogs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
         RunStateText.Text = GetCommandStatusText(command);
         if (running || restarting) RunStateText.Foreground = (System.Windows.Media.Brush)FindResource("AccentBrush");
         else if (_lastResults.TryGetValue(command.Id, out var result))
@@ -725,7 +759,7 @@ public partial class MainWindow : Window
                 ? System.Windows.Media.Brushes.SeaGreen
                 : (System.Windows.Media.Brush)FindResource("AccentBrush");
         else RunStateText.Foreground = (System.Windows.Media.Brush)FindResource("MutedBrush");
-        OutputRunStateText.Text = RunStateText.Text;
+        OutputRunStateText.Text = SelectedHistoricalRun is { } historicalState ? GetRunStateLabel(historicalState.State) : RunStateText.Text;
         OutputRunStateText.Foreground = RunStateText.Foreground;
     }
 
@@ -1744,49 +1778,111 @@ public partial class MainWindow : Window
             return false;
         }
         var workingDirectory = string.IsNullOrWhiteSpace(command.WorkingDirectory) ? project.Directory : command.WorkingDirectory;
+        RunLogWriter? logWriter = null;
+        try
+        {
+            if (!_logStoreAvailable) throw new IOException("日志目录或设置不可用。");
+            logWriter = _runLogStore.Begin(project.Id, command.Id, DateTimeOffset.Now);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            _logWarnings[command.Id] = $"本次日志未保存：{exception.Message}";
+            LogStatusText.Text = _logWarnings[command.Id];
+        }
         try
         {
             var nextVersion = _runVersions.GetValueOrDefault(command.Id) + 1;
             var started = _runner.Start(command.Id, command.Command, workingDirectory,
-                (_, output) => QueueOutput(command.Id, nextVersion, output));
+                (_, output) =>
+                {
+                    if (logWriter is not null)
+                    {
+                        try { _runLogStore.Append(logWriter, output); }
+                        catch (Exception) { logWriter.Info.WriteFailed = true; }
+                        if ((logWriter.Info.WriteFailed || logWriter.Info.Truncated) &&
+                            Interlocked.Exchange(ref logWriter.WarningReported, 1) == 0)
+                        {
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                _logWarnings[command.Id] = logWriter.Info.Truncated ? "日志达到容量上限，本批次后续输出未保存。" : "日志写入失败，本批次输出不完整。";
+                                if (_selectedCommand?.Id == command.Id) LogStatusText.Text = _logWarnings[command.Id];
+                            }));
+                        }
+                    }
+                    QueueOutput(command.Id, nextVersion, output);
+                });
             _runVersions[command.Id] = nextVersion;
+            if (logWriter is not null) _runLogWriters[command.Id] = logWriter;
             _lastResults.Remove(command.Id);
             _runStartedAt[command.Id] = DateTimeOffset.Now;
             GetLogs(command.Id).Clear();
             if (_selectedCommand?.Id == command.Id) RenderSelectedOutput(command, scrollToEnd: true);
             _sessions[command.Id] = started;
             session = started;
+            RefreshRunHistory(selectCurrent: true);
             RefreshCommandSelection();
-            _ = CompleteRunAsync(command.Id, started);
+            _logFinalizations[command.Id] = CompleteRunAsync(command.Id, started, logWriter);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
         {
+            if (logWriter is not null)
+            {
+                try { _runLogStore.Discard(logWriter); }
+                catch (Exception cleanupFailure) when (cleanupFailure is IOException or UnauthorizedAccessException)
+                {
+                    _logWarnings[command.Id] = $"启动失败批次的日志未能清理：{cleanupFailure.Message}";
+                }
+            }
             RefreshCommandSelection();
             error = exception.Message;
             return false;
         }
     }
 
-    private async Task CompleteRunAsync(Guid commandId, CommandRunSession session)
+    private async Task CompleteRunAsync(Guid commandId, CommandRunSession session, RunLogWriter? logWriter)
     {
         try
         {
             var result = await session.Completion;
+            if (logWriter is not null)
+            {
+                try { _runLogStore.Complete(logWriter, result); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    _logWarnings[commandId] = $"日志完成写入失败：{exception.Message}";
+                }
+            }
             await Dispatcher.InvokeAsync(() =>
             {
+                if (logWriter is not null && _runLogWriters.TryGetValue(commandId, out var currentWriter) && ReferenceEquals(currentWriter, logWriter))
+                    _runLogWriters.Remove(commandId);
                 if (_sessions.TryGetValue(commandId, out var current) && ReferenceEquals(current, session)) _sessions.Remove(commandId);
                 if (Projects.Any(project => project.Commands.Any(command => command.Id == commandId))) _lastResults[commandId] = result;
+                if (_selectedCommand?.Id == commandId) RefreshRunHistory(selectCurrent: false);
                 RefreshCommandSelection();
             });
         }
         catch (Exception exception)
         {
+            if (logWriter is not null)
+            {
+                try { _runLogStore.Complete(logWriter, null); }
+                catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
+                {
+                    _logWarnings[commandId] = $"日志完成写入失败：{failure.Message}";
+                }
+            }
             await Dispatcher.InvokeAsync(() =>
             {
                 RunStateText.Text = "进程异常";
                 RunStateText.ToolTip = exception.Message;
             });
+        }
+        finally
+        {
+            if (_logFinalizations.TryGetValue(commandId, out var pending) && pending.IsCompleted)
+                _logFinalizations.Remove(commandId);
         }
     }
 
@@ -1842,12 +1938,155 @@ public partial class MainWindow : Window
 
     private void ClearOutput_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedCommand is null) return;
+        if (_selectedCommand is null || SelectedHistoricalRun is not null) return;
         GetLogs(_selectedCommand.Id).Clear();
         _pendingOutput.Clear(_selectedCommand.Id);
         RenderSelectedOutput(_selectedCommand, scrollToEnd: true);
         CopySelectedOutputButton.IsEnabled = false;
         EmptyOutputHint.Visibility = Visibility.Visible;
+    }
+
+    private RunLogInfo? SelectedHistoricalRun => (RunHistoryComboBox.SelectedItem as RunHistoryItem)?.Info;
+
+    private void RefreshRunHistory(bool selectCurrent)
+    {
+        if (RunHistoryComboBox is null) return;
+        var selectedRunId = selectCurrent ? null : SelectedHistoricalRun?.RunId;
+        _syncingRunHistory = true;
+        try
+        {
+            _runHistory.Clear();
+            if (_selectedProject is null || _selectedCommand is null)
+            {
+                RunHistoryComboBox.SelectedItem = null;
+                return;
+            }
+            _runHistory.Add(new RunHistoryItem("当前显示", null));
+            foreach (var info in _runLogStore.GetRuns(_selectedProject.Id, _selectedCommand.Id))
+                _runHistory.Add(new RunHistoryItem($"{info.StartedAt.ToLocalTime():MM-dd HH:mm:ss} · {GetRunStateLabel(info.State)}", info));
+            var previous = selectedRunId.HasValue ? _runHistory.FirstOrDefault(item => item.Info?.RunId == selectedRunId) : null;
+            RunHistoryComboBox.SelectedItem = selectCurrent ? _runHistory[0] : previous ?? (_logs.TryGetValue(_selectedCommand.Id, out var lines) && lines.Count > 0 ||
+                _sessions.ContainsKey(_selectedCommand.Id) ? _runHistory[0] : _runHistory.Skip(1).FirstOrDefault() ?? _runHistory[0]);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            LogStatusText.Text = $"无法读取历史日志：{exception.Message}";
+        }
+        finally { _syncingRunHistory = false; }
+        ShowSelectedRun();
+    }
+
+    private void RunHistoryComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_syncingRunHistory) ShowSelectedRun();
+    }
+
+    private void HistoryStreamComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_syncingRunHistory) ShowSelectedRun();
+    }
+
+    private void ShowSelectedRun()
+    {
+        if (OutputTextBox is null) return;
+        var info = SelectedHistoricalRun;
+        if (info is null)
+        {
+            RenderSelectedOutput(_selectedCommand, scrollToEnd: true);
+            ClearOutputButton.IsEnabled = _selectedCommand is not null;
+            if (_selectedCommand is not null)
+            {
+                OutputRunStateText.Text = GetCommandStatusText(_selectedCommand);
+                RunStartedText.Text = _runStartedAt.TryGetValue(_selectedCommand.Id, out var startedAt)
+                    ? $"开始时间：{startedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}" : string.Empty;
+                LogStatusText.Text = _logWarnings.GetValueOrDefault(_selectedCommand.Id) ?? string.Empty;
+            }
+            return;
+        }
+        try
+        {
+            var stream = HistoryStreamComboBox.SelectedIndex == 1 ? "stderr" : "stdout";
+            var lines = _runLogStore.ReadTail(info, stream);
+            _syncingOutputText = true;
+            OutputTextBox.Text = string.Join(Environment.NewLine, lines);
+            OutputTextBox.ScrollToEnd();
+            EmptyOutputHint.Text = lines.Count == 0 ? "该批次的此输出通道没有内容。" : string.Empty;
+            EmptyOutputHint.Visibility = lines.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            OutputRunStateText.Text = GetRunStateLabel(info.State);
+            RunStartedText.Text = $"开始时间：{info.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+            LogStatusText.Text = info.Truncated ? "该批次日志已达到容量上限，后续输出未保存。" :
+                info.WriteFailed ? "该批次日志写入失败，内容不完整。" : string.Empty;
+            ClearOutputButton.IsEnabled = false;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            LogStatusText.Text = $"无法读取历史日志：{exception.Message}";
+        }
+        finally { _syncingOutputText = false; }
+    }
+
+    private void SaveLogSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (!long.TryParse(LogLimitMbTextBox.Text, out var mb) || mb is < 1 or > 102400 ||
+            !int.TryParse(LogRetentionDaysTextBox.Text, out var days) || days is < 1 or > 3650)
+        {
+            MessageBox.Show(this, "日志容量请输入 1–102400 MB，保留时间请输入 1–3650 天。", "日志设置无效", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        try
+        {
+            _runLogStore.UpdateSettings(new RunLogSettings(mb * 1024 * 1024, days));
+            if (!_logStoreAvailable) _runLogStore.Initialize();
+            _logStoreAvailable = true;
+            _logInitError = null;
+            RefreshRunHistory(selectCurrent: false);
+            LogStatusText.Text = "日志设置已保存。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentOutOfRangeException or InvalidDataException or System.Text.Json.JsonException)
+        {
+            MessageBox.Show(this, $"无法保存日志设置。\n\n{exception.Message}", "日志设置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static string GetRunStateLabel(string state) => state switch
+    {
+        "Running" => "运行中",
+        "Succeeded" => "已完成",
+        "Failed" => "运行失败",
+        "Stopped" => "已停止",
+        "Interrupted" => "意外中断",
+        _ => "状态未知"
+    };
+
+    private void OpenLogFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(_runLogStore.RootPath);
+            var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+            start.ArgumentList.Add(_runLogStore.RootPath);
+            Process.Start(start);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(this, $"无法打开日志目录。\n\n{exception.Message}", "打开目录失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void ClearHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "清理此工作区所有已结束批次的日志吗？运行中的日志会保留。", "清理历史日志",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        try
+        {
+            _runLogStore.ClearHistory();
+            RefreshRunHistory(selectCurrent: true);
+            LogStatusText.Text = "已清理历史日志。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, $"部分日志无法清理。\n\n{exception.Message}", "清理未完成", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private async void MainWindow_Closing(object? sender, CancelEventArgs e)
@@ -1867,7 +2106,16 @@ public partial class MainWindow : Window
         }
         var active = _sessions.Values.Where(session => !session.Completion.IsCompleted).ToArray();
         var activeSequences = _sequentialGroupCancellations.Count;
-        if (active.Length == 0 && activeSequences == 0) return;
+        if (active.Length == 0 && activeSequences == 0 && _logFinalizations.Values.All(task => task.IsCompleted)) return;
+
+        if (active.Length == 0 && activeSequences == 0)
+        {
+            e.Cancel = true;
+            await Task.WhenAll(_logFinalizations.Values.ToArray());
+            _allowClose = true;
+            Close();
+            return;
+        }
 
         e.Cancel = true;
         var choice = MessageBox.Show(this,
@@ -1887,6 +2135,7 @@ public partial class MainWindow : Window
             await Task.WhenAll(active.Select(session => session.StopAsync()));
             await Task.WhenAll(active.Select(session => session.Completion));
             await Task.WhenAll(groupTasks);
+            await Task.WhenAll(_logFinalizations.Values.ToArray());
             _allowClose = true;
             Close();
         }
@@ -2066,7 +2315,7 @@ public partial class MainWindow : Window
 
     private void AppendSelectedOutputBatch(IReadOnlyList<CommandOutput> entries, bool trimmed)
     {
-        if (_selectedCommand is null || _renderedOutputCommandId != _selectedCommand.Id) return;
+        if (_selectedCommand is null || SelectedHistoricalRun is not null || _renderedOutputCommandId != _selectedCommand.Id) return;
 
         var selectionStart = OutputTextBox.SelectionStart;
         var selectionLength = OutputTextBox.SelectionLength;
@@ -2143,6 +2392,8 @@ public partial class MainWindow : Window
     }
 
 }
+
+public sealed record RunHistoryItem(string Label, RunLogInfo? Info);
 
 public sealed class OutputCommandItem(CommandDefinition command) : INotifyPropertyChanged
 {
