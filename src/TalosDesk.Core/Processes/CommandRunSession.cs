@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 
 namespace TalosDesk.Core.Processes;
 
@@ -27,6 +28,7 @@ public sealed class CommandRunSession : IAsyncDisposable
     private readonly SafeProcessHandle _process;
     private readonly int _processId;
     private readonly ICommandStopOperations _stopOperations;
+    private readonly IReadOnlyList<string> _sensitiveValues;
     private readonly ConcurrentQueue<CommandOutput> _output = new();
     private readonly Task<CommandRunResult> _completion;
     private readonly SemaphoreSlim _stopLock = new(1, 1);
@@ -34,12 +36,14 @@ public sealed class CommandRunSession : IAsyncDisposable
     private int _stopRequested;
     private int _forceTerminated;
 
-    internal CommandRunSession(SafeJobHandle job, SafeProcessHandle process, int processId, StreamReader stdout, StreamReader stderr, EventHandler<CommandOutput>? outputReceived, ICommandStopOperations stopOperations)
+    internal CommandRunSession(SafeJobHandle job, SafeProcessHandle process, int processId, StreamReader stdout, StreamReader stderr,
+        EventHandler<CommandOutput>? outputReceived, ICommandStopOperations stopOperations, IReadOnlyList<string> sensitiveValues)
     {
         _job = job;
         _process = process;
         _processId = processId;
         _stopOperations = stopOperations;
+        _sensitiveValues = sensitiveValues;
         if (outputReceived is not null) OutputReceived += outputReceived;
         _completion = ObserveAsync(stdout, stderr);
     }
@@ -134,22 +138,55 @@ public sealed class CommandRunSession : IAsyncDisposable
         }
     }
 
-    private Task PumpAsync(StreamReader reader, string stream) => Task.Run(() =>
+    private async Task PumpAsync(StreamReader reader, string stream)
     {
         using (reader)
         {
-            while (reader.ReadLine() is { } line)
+            var redactor = new StreamingOutputRedactor(_sensitiveValues);
+            var line = new StringBuilder();
+            var buffer = new char[16_384];
+            try
             {
-                var entry = new CommandOutput(DateTimeOffset.Now, stream, line);
-                _output.Enqueue(entry);
-                if (Interlocked.Increment(ref _outputCount) > 10_000 && _output.TryDequeue(out _))
+                int length;
+                while ((length = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false)) != 0)
                 {
-                    Interlocked.Decrement(ref _outputCount);
+                    AppendSanitized(redactor.Append(new string(buffer, 0, length)), line, stream);
                 }
-
-                try { OutputReceived?.Invoke(this, entry); }
-                catch { /* A view subscriber must not stop output draining. */ }
+                AppendSanitized(redactor.Finish(), line, stream);
             }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                AppendSanitized(StreamingOutputRedactor.OmittedMarker, line, stream);
+            }
+            if (line.Length > 0) Emit(line.ToString(), stream);
         }
-    });
+    }
+
+    private void AppendSanitized(string text, StringBuilder line, string stream)
+    {
+        foreach (var character in text)
+        {
+            if (character == '\n')
+            {
+                var count = line.Length > 0 && line[^1] == '\r' ? line.Length - 1 : line.Length;
+                Emit(line.ToString(0, count), stream);
+                line.Clear();
+                continue;
+            }
+            line.Append(character);
+            if (line.Length < 16_384) continue;
+            Emit(line.ToString(), stream);
+            line.Clear();
+        }
+    }
+
+    private void Emit(string text, string stream)
+    {
+        var entry = new CommandOutput(DateTimeOffset.Now, stream, text);
+        _output.Enqueue(entry);
+        if (Interlocked.Increment(ref _outputCount) > 10_000 && _output.TryDequeue(out _))
+            Interlocked.Decrement(ref _outputCount);
+        try { OutputReceived?.Invoke(this, entry); }
+        catch { /* A view subscriber must not stop output draining. */ }
+    }
 }

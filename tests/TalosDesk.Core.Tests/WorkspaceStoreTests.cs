@@ -30,7 +30,7 @@ public sealed class WorkspaceStoreTests
     }
 
     [TestMethod]
-    public async Task MigratesSchemaOneWorkspaceToSchemaTwoWithEmptyGroups()
+    public async Task MigratesSchemaOneWorkspaceToSchemaThreeWithEmptyGroupsAndVariables()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -45,16 +45,28 @@ public sealed class WorkspaceStoreTests
                       "Id": "{{Guid.NewGuid()}}",
                       "Name": "Legacy",
                       "Directory": "{{directory.Replace("\\", "\\\\")}}",
-                      "Commands": []
+                      "Commands": [
+                        {
+                          "Id": "{{Guid.NewGuid()}}",
+                          "Name": "Check",
+                          "Command": "Write-Output 'ok'",
+                          "WorkingDirectory": "{{directory.Replace("\\", "\\\\")}}"
+                        }
+                      ]
                     }
                   ]
                 }
                 """);
 
+            var originalBytes = await File.ReadAllBytesAsync(path);
             var loaded = await WorkspaceStore.ReadFileAsync(path);
 
             Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, loaded.SchemaVersion);
             Assert.HasCount(0, loaded.Projects[0].Groups);
+            Assert.HasCount(0, loaded.Projects[0].Commands[0].EnvironmentVariables);
+            CollectionAssert.AreEqual(originalBytes, await File.ReadAllBytesAsync(path));
+            await new WorkspaceStore(path).SaveAsync(loaded);
+            Assert.IsTrue((await File.ReadAllTextAsync(path)).Contains("\"SchemaVersion\": 3", StringComparison.Ordinal));
         }
         finally
         {
@@ -119,13 +131,13 @@ public sealed class WorkspaceStoreTests
             var path = Path.Combine(directory, "invalid-group.json");
 
             project.Groups = [new CommandGroupDefinition { Name = "Broken", CommandIds = [Guid.NewGuid()] }];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
 
             project.Groups = [new CommandGroupDefinition { Name = "Repeated", CommandIds = [service.Id, service.Id] }];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
 
             project.Groups = [new CommandGroupDefinition { Name = "Sequence", ExecutionMode = CommandGroupExecutionMode.Sequential, CommandIds = [service.Id] }];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
 
             var duplicateGroupId = Guid.NewGuid();
             project.Groups =
@@ -133,14 +145,14 @@ public sealed class WorkspaceStoreTests
                 new CommandGroupDefinition { Id = duplicateGroupId, Name = "First", CommandIds = [service.Id] },
                 new CommandGroupDefinition { Id = duplicateGroupId, Name = "Second", CommandIds = [] }
             ];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
 
             project.Groups =
             [
                 new CommandGroupDefinition { Name = "Duplicate", CommandIds = [service.Id] },
                 new CommandGroupDefinition { Name = "duplicate", CommandIds = [] }
             ];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
         }
         finally
         {
@@ -244,7 +256,7 @@ public sealed class WorkspaceStoreTests
                 }]
             };
 
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteFileAsync(Path.Combine(directory, "duplicate.json"), duplicate));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(Path.Combine(directory, "duplicate.json"), duplicate));
         }
         finally
         {

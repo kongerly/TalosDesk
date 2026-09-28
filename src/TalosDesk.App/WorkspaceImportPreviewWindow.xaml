@@ -1,0 +1,18 @@
+<Window x:Class="TalosDesk.App.WorkspaceImportPreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="确认导入工作区" Width="850" Height="650" MinWidth="620" MinHeight="440"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        Background="{StaticResource CanvasBrush}" Foreground="{StaticResource InkBrush}" FontFamily="{StaticResource BodyFont}" Icon="Assets/TalosDeskMark.ico">
+    <Grid Margin="22">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <TextBlock Text="导入预览" FontFamily="{StaticResource DisplayFont}" FontSize="23" FontWeight="Bold" Margin="0,0,0,13" />
+        <TextBox x:Name="PreviewBox" Grid.Row="1" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="12"
+                 AutomationProperties.AutomationId="WorkspaceImportPreview" />
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="取消" Style="{StaticResource EditorButton}" IsCancel="True" Margin="0,0,8,0" />
+            <Button Content="继续导入" Style="{StaticResource EditorPrimaryButton}" IsDefault="True" Click="Confirm_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

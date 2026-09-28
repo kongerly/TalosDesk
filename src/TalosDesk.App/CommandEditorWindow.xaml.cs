@@ -8,10 +8,13 @@ namespace TalosDesk.App;
 public partial class CommandEditorWindow : Window
 {
     private readonly Guid _commandId;
+    private readonly List<CommandEnvironmentVariable> _environmentVariables;
 
     public CommandEditorWindow(string projectDirectory, CommandDefinition? existing = null)
     {
         InitializeComponent();
+        _environmentVariables = existing?.EnvironmentVariables.Select(variable => variable.Clone()).ToList() ?? [];
+        RefreshEnvironmentList();
         WorkingDirectoryBox.Text = existing?.WorkingDirectory ?? projectDirectory;
         CommandBox.WorkingDirectory = WorkingDirectoryBox.Text;
         if (existing is null) return;
@@ -32,6 +35,58 @@ public partial class CommandEditorWindow : Window
     }
 
     private void CommandBox_SaveRequested(object? sender, EventArgs e) => SaveCommand();
+
+    private void RefreshEnvironmentList(int selectedIndex = -1)
+    {
+        EnvironmentList.Items.Clear();
+        foreach (var variable in _environmentVariables)
+        {
+            var status = !variable.IsSensitive ? "普通值（明文）" : variable.ValueState == "Required"
+                ? "待填写" : IsSensitiveValueAvailable(variable) ? "已保存" : "不可解密";
+            EnvironmentList.Items.Add($"{variable.Name}  ·  {status}");
+        }
+        if (selectedIndex >= 0 && selectedIndex < EnvironmentList.Items.Count) EnvironmentList.SelectedIndex = selectedIndex;
+    }
+
+    private static bool IsSensitiveValueAvailable(CommandEnvironmentVariable variable)
+    {
+        if (variable.ValueState != "Protected" || string.IsNullOrEmpty(variable.ProtectedValue)) return false;
+        try { _ = SensitiveValueProtector.Unprotect(variable.ProtectedValue); return true; }
+        catch (Exception exception) when (exception is not OutOfMemoryException) { return false; }
+    }
+
+    private void EnvironmentList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        EditEnvironmentButton.IsEnabled = EnvironmentList.SelectedIndex >= 0;
+        DeleteEnvironmentButton.IsEnabled = EnvironmentList.SelectedIndex >= 0;
+    }
+
+    private void AddEnvironment_Click(object sender, RoutedEventArgs e)
+    {
+        var editor = new EnvironmentVariableEditorWindow(null, _environmentVariables.Select(variable => variable.Name)) { Owner = this };
+        if (editor.ShowDialog() != true || editor.Result is null) return;
+        _environmentVariables.Add(editor.Result);
+        RefreshEnvironmentList(_environmentVariables.Count - 1);
+    }
+
+    private void EditEnvironment_Click(object sender, RoutedEventArgs e)
+    {
+        var index = EnvironmentList.SelectedIndex;
+        if (index < 0) return;
+        var editor = new EnvironmentVariableEditorWindow(_environmentVariables[index],
+            _environmentVariables.Where((_, position) => position != index).Select(variable => variable.Name)) { Owner = this };
+        if (editor.ShowDialog() != true || editor.Result is null) return;
+        _environmentVariables[index] = editor.Result;
+        RefreshEnvironmentList(index);
+    }
+
+    private void DeleteEnvironment_Click(object sender, RoutedEventArgs e)
+    {
+        var index = EnvironmentList.SelectedIndex;
+        if (index < 0) return;
+        _environmentVariables.RemoveAt(index);
+        RefreshEnvironmentList(Math.Min(index, _environmentVariables.Count - 1));
+    }
 
     private void BrowseDirectory_Click(object sender, RoutedEventArgs e)
     {
@@ -67,7 +122,8 @@ public partial class CommandEditorWindow : Window
             Purpose = PurposeBox.Text.Trim(),
             Command = CommandBox.Text.Trim(),
             WorkingDirectory = Path.GetFullPath(WorkingDirectoryBox.Text.Trim()),
-            Kind = kind
+            Kind = kind,
+            EnvironmentVariables = _environmentVariables.Select(variable => variable.Clone()).ToList()
         };
         DialogResult = true;
     }

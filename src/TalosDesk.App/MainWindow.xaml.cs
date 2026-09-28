@@ -910,7 +910,7 @@ public partial class MainWindow : Window
     {
         if (_workspaceChangeInProgress || _restartsInProgress.Count > 0 || _isStoppingForClose || !_canSave) return;
         var confirmation = MessageBox.Show(this,
-            "导出文件会以明文包含项目路径和完整命令；如果命令中写有密钥或其他敏感值，它们也会一并导出。\n\n请在分享文件前检查内容。是否继续导出？",
+            "导出文件会以明文包含项目路径、完整命令和普通环境变量。显式标记的敏感变量只导出名称和待填写状态，不包含本机密文。\n\n如果命令或普通变量中写有密钥，它们仍会导出。请在分享前检查内容。是否继续？",
             "确认导出明文工作区", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirmation != MessageBoxResult.Yes) return;
 
@@ -924,11 +924,17 @@ public partial class MainWindow : Window
         };
         if (picker.ShowDialog(this) != true) return;
 
+        if (string.Equals(Path.GetFullPath(picker.FileName), _store.FilePath, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, "不能将导出文件保存到当前工作区路径。请选择其他位置。", "导出位置无效", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
         var tracksWorkspaceChange = _sequentialGroupCancellations.Count == 0;
         if (tracksWorkspaceChange && !BeginWorkspaceChange()) return;
         try
         {
-            await WorkspaceStore.WriteFileAsync(picker.FileName, new WorkspaceConfiguration { Projects = Projects.ToList() });
+            await WorkspaceStore.WriteExportFileAsync(picker.FileName, new WorkspaceConfiguration { Projects = Projects.ToList() });
             SaveStatusText.Text = "工作区已导出";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -974,7 +980,7 @@ public partial class MainWindow : Window
             }
 
             var preview = BuildImportPreview(imported);
-            if (MessageBox.Show(this, preview, "确认导入工作区", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
+            if (new WorkspaceImportPreviewWindow(preview) { Owner = this }.ShowDialog() != true) return;
 
             var previousProjects = Projects.ToList();
             var applied = false;
@@ -1021,27 +1027,34 @@ public partial class MainWindow : Window
             return existing is null ? project.Commands.Count : project.Commands.Count(command => !existing.Commands.Any(current => SameCommandName(current.Name, command.Name)));
         });
 
-        var visibleProjects = imported.Projects.Take(12).Select(project =>
+        var visibleProjects = imported.Projects.Select(project =>
         {
-            var commands = project.Commands.Take(8).Select(command => $"    - {command.Name}: {command.Command}");
-            var omittedCommands = project.Commands.Count > 8 ? $"\n    … 另有 {project.Commands.Count - 8} 条命令" : string.Empty;
-            var groups = project.Groups.Take(5).Select(group =>
+            var commands = project.Commands.Select(command =>
+                $"    - {command.Name}: {command.Command}{FormatSensitiveVariables(command)}");
+            var groups = project.Groups.Select(group =>
             {
                 var memberNames = group.CommandIds.Select(id => project.Commands.First(command => command.Id == id).Name);
                 var mode = group.ExecutionMode == CommandGroupExecutionMode.Sequential ? "顺序" : "同时";
                 return $"    ◇ {group.Name}（{mode}）：{string.Join(" → ", memberNames)}";
             });
             var groupSection = project.Groups.Count == 0 ? string.Empty : $"\n  分组：\n{string.Join("\n", groups)}";
-            var omittedGroups = project.Groups.Count > 5 ? $"\n    … 另有 {project.Groups.Count - 5} 个分组" : string.Empty;
-            return $"• {project.Name}\n  {project.Directory}\n{string.Join("\n", commands)}{omittedCommands}{groupSection}{omittedGroups}";
+            return $"• {project.Name}\n  {project.Directory}\n{string.Join("\n", commands)}{groupSection}";
         });
-        var omittedProjects = imported.Projects.Count > 12 ? $"\n… 另有 {imported.Projects.Count - 12} 个项目" : string.Empty;
 
-        return $"即将导入 {imported.Projects.Count} 个项目、{imported.Projects.Sum(project => project.Commands.Count)} 条命令、{imported.Projects.Sum(project => project.Groups.Count)} 个分组。\n" +
+        var sensitiveCount = imported.Projects.Sum(project => project.Commands.Sum(command => command.EnvironmentVariables.Count(variable => variable.IsSensitive)));
+        return $"即将导入 {imported.Projects.Count} 个项目、{imported.Projects.Sum(project => project.Commands.Count)} 条命令、{imported.Projects.Sum(project => project.Groups.Count)} 个分组、{sensitiveCount} 个敏感变量。\n" +
                $"新增项目：{newProjects} · 文件夹相同：{matchingProjects}\n" +
                $"新增命令：{newCommands} · 名称冲突：{projectDetails}\n\n" +
-               $"{string.Join("\n\n", visibleProjects)}{omittedProjects}\n\n" +
-               "导入不会自动运行任何命令。遇到同一项目、同名命令或同名分组时，你可以选择保留本机版本或替换为导入版本。是否继续？";
+               $"{string.Join("\n\n", visibleProjects)}\n\n" +
+               "导入不会自动运行任何命令。同名命令若选择替换，其整套环境变量也会替换本机配置；待填写或不可解密的敏感值可能使该命令暂不可运行。遇到冲突时仍可逐项选择保留、替换或取消。";
+    }
+
+    private static string FormatSensitiveVariables(CommandDefinition command)
+    {
+        var sensitive = command.EnvironmentVariables.Where(variable => variable.IsSensitive)
+            .Select(variable => $"{variable.Name}（{(variable.ValueState == "Protected" ? "本机密文，可用性未验证" : "待填写")}）")
+            .ToArray();
+        return sensitive.Length == 0 ? string.Empty : $"\n      敏感变量：{string.Join("、", sensitive)}";
     }
 
     private bool MergeImportedWorkspace(WorkspaceConfiguration imported, List<ProjectDefinition> targetProjects)
@@ -1096,7 +1109,7 @@ public partial class MainWindow : Window
 
                 var existingCommand = existingProject.Commands[existingCommandIndex];
                 var commandChoice = MessageBox.Show(this,
-                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n\n选择“是”以替换命令，选择“否”以保留本机命令，选择“取消”以停止导入。",
+                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n选择“是”将以导入的整套变量替换本机变量，不沿用旧密文；选择“否”保留本机命令及变量；选择“取消”停止导入。",
                     "命令名称冲突", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
                 if (commandChoice == MessageBoxResult.Cancel) return false;
                 if (commandChoice == MessageBoxResult.Yes)
@@ -1183,7 +1196,8 @@ public partial class MainWindow : Window
         Purpose = command.Purpose,
         Command = command.Command,
         WorkingDirectory = command.WorkingDirectory,
-        Kind = command.Kind
+        Kind = command.Kind,
+        EnvironmentVariables = command.EnvironmentVariables.Select(variable => variable.Clone()).ToList()
     };
 
     private static CommandGroupDefinition CloneGroup(CommandGroupDefinition group) => new()
@@ -1471,6 +1485,7 @@ public partial class MainWindow : Window
     private void RunParallelGroup(ProjectDefinition project, CommandGroupDefinition group)
     {
         var commands = CommandGroupExecution.GetParallelReadyCommands(project, group, IsCommandBusy);
+        if (!TryPreflightCommands(commands)) return;
         var failures = new List<string>();
         var launched = new List<ParallelCommandExecution>();
         CommandDefinition? firstStarted = null;
@@ -1622,6 +1637,7 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "顺序分组中的所有命令都必须处于空闲状态。", "分组暂不可运行", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
+        if (!TryPreflightCommands(commands)) return;
         if (commands.Any(command => command.Kind == CommandKind.Service))
         {
             MessageBox.Show(this, "顺序执行仅支持任务命令。请编辑分组并移除服务命令。", "顺序分组包含服务", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -1707,6 +1723,7 @@ public partial class MainWindow : Window
         var project = _selectedProject;
         var commands = project.Commands.Where(command => _checkedCommandIds.Contains(command.Id) &&
             !IsCommandBusy(command.Id)).ToArray();
+        if (!TryPreflightCommands(commands)) return;
         CommandDefinition? firstStarted = null;
         foreach (var command in commands)
         {
@@ -1723,6 +1740,7 @@ public partial class MainWindow : Window
     private async void RestartCommand_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedProject is null || _selectedCommand is null) return;
+        if (!TryPreflightCommands([_selectedCommand])) return;
         var projectId = _selectedProject.Id;
         var commandId = _selectedCommand.Id;
         if (_reservedCommandIds.Contains(commandId) || !_restartsInProgress.Add(commandId)) return;
@@ -1767,6 +1785,21 @@ public partial class MainWindow : Window
         return false;
     }
 
+    private bool TryPreflightCommands(IEnumerable<CommandDefinition> commands)
+    {
+        foreach (var command in commands)
+        {
+            try { _ = CommandRunEnvironmentResolver.Resolve(command); }
+            catch (CommandEnvironmentException exception)
+            {
+                MessageBox.Show(this, $"命令“{command.Name}”的环境变量不可用：\n\n{exception.Message}\n\n本次不会启动任何命令。",
+                    "命令暂不可运行", MessageBoxButton.OK, MessageBoxImage.Information);
+                return false;
+            }
+        }
+        return true;
+    }
+
     private bool TryStartCommand(ProjectDefinition project, CommandDefinition command, out CommandRunSession? session, out string error, bool allowReserved = false)
     {
         session = null;
@@ -1775,6 +1808,13 @@ public partial class MainWindow : Window
         if (!allowReserved && _reservedCommandIds.Contains(command.Id))
         {
             error = "这条命令正在等待顺序分组执行。";
+            return false;
+        }
+        CommandRunEnvironment runEnvironment;
+        try { runEnvironment = CommandRunEnvironmentResolver.Resolve(command); }
+        catch (CommandEnvironmentException exception)
+        {
+            error = exception.Message;
             return false;
         }
         var workingDirectory = string.IsNullOrWhiteSpace(command.WorkingDirectory) ? project.Directory : command.WorkingDirectory;
@@ -1810,7 +1850,7 @@ public partial class MainWindow : Window
                         }
                     }
                     QueueOutput(command.Id, nextVersion, output);
-                });
+                }, runEnvironment);
             _runVersions[command.Id] = nextVersion;
             if (logWriter is not null) _runLogWriters[command.Id] = logWriter;
             _lastResults.Remove(command.Id);
