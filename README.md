@@ -90,13 +90,14 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration
 pwsh -NoProfile -File .\scripts\Publish.ps1
 ```
 
-脚本会执行还原、Release 构建和自动化测试，再生成 `artifacts/TalosDesk-v0.1.0-win-x64.zip` 及对应 SHA-256 文件。
+脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.1.1-win-x64.zip` 及对应 SHA-256 文件。
 
 ## 文档与许可
 
 - [设计说明](docs/design.md)
 - [隐私说明](docs/privacy.md)：本机数据位置、明文与加密边界、保留和联网行为。
 - [开发与发布路线图](docs/roadmap.md)：当前分支收口与隐私保护、更新分发、就绪检查，以及后续多 Shell 的范围和验收条件。
+- [v0.1.1 发布说明](docs/release-v0.1.1.md)
 - [v0.1.0 发布说明](docs/release-v0.1.0.md)
 
 TalosDesk 使用 [MIT License](LICENSE)。发布包包含的 .NET 运行时许可信息随包提供。
