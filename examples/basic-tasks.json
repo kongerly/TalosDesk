@@ -1,0 +1,15 @@
+{
+  "SchemaVersion": 3,
+  "Projects": [
+    {
+      "Id": "11111111-1111-1111-1111-111111111111",
+      "Name": "基础任务示例",
+      "Directory": "C:\\Path\\To\\SampleProject",
+      "Commands": [
+        { "Id": "11111111-1111-1111-1111-111111111101", "Name": "成功任务", "Purpose": "输出一行合成文本", "Command": "Write-Output 'sample-success'", "WorkingDirectory": "C:\\Path\\To\\SampleProject", "Kind": 0, "EnvironmentVariables": [] },
+        { "Id": "11111111-1111-1111-1111-111111111102", "Name": "失败任务", "Purpose": "演示非零退出", "Command": "Write-Error 'sample-failure'; exit 2", "WorkingDirectory": "C:\\Path\\To\\SampleProject", "Kind": 0, "EnvironmentVariables": [] }
+      ],
+      "Groups": []
+    }
+  ]
+}

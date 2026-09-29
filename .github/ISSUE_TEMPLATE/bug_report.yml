@@ -1,0 +1,47 @@
+name: 缺陷报告
+description: 报告可复现的 TalosDesk 问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 请勿提交密钥、完整工作区、命令日志或未经检查的本地诊断文件。
+  - type: input
+    id: version
+    attributes:
+      label: TalosDesk 版本
+      placeholder: 例如 0.2.0 Preview
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 与 PowerShell 版本
+      placeholder: 例如 Windows 11 24H2 x64，PowerShell 7.x
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 使用占位路径和合成命令，不要粘贴凭据。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 可选的最小诊断字段
+      description: 仅粘贴在应用内查看并经人工确认的最小字段；不要上传整个目录或原始用户日志。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已删除真实凭据、用户日志、完整工作区和不必要的本机路径。
+          required: true

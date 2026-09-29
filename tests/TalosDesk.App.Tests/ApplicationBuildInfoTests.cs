@@ -13,7 +13,7 @@ public sealed class ApplicationBuildInfoTests
         var info = ApplicationBuildInfo.Read(typeof(App).Assembly);
 
         Assert.IsTrue(info.IsValid);
-        Assert.AreEqual("0.1.1", info.Version);
+        Assert.AreEqual("0.2.0", info.Version);
         Assert.AreEqual(ReleaseChannel.Preview, info.Channel);
     }
 
