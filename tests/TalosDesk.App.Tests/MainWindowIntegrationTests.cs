@@ -96,7 +96,7 @@ public sealed class MainWindowIntegrationTests
                 }
             ]
         };
-        new WorkspaceStore(workspace).SaveAsync(new WorkspaceConfiguration()).GetAwaiter().GetResult();
+        new WorkspaceStore(workspace).SaveAsync(configuration).GetAwaiter().GetResult();
 
         var clock = new TestTimeProvider(new DateTimeOffset(2026, 9, 29, 10, 0, 0, TimeSpan.Zero));
         var handler = new ScenarioHandler("NetworkFailure");
@@ -133,9 +133,11 @@ public sealed class MainWindowIntegrationTests
 
                     if (phase == 0 && manual.IsEnabled)
                     {
-                        progress.Stage = "验证无项目页面并载入隔离配置";
-                        timer.Stop();
+                        progress.Stage = "验证无项目页面并恢复隔离项目";
                         Assert.AreEqual(0, handler.RequestCount);
+                        Assert.HasCount(1, window.Projects);
+                        var loadedProject = window.Projects[0];
+                        window.Projects.Clear();
                         Assert.HasCount(0, window.Projects);
                         Assert.IsFalse(File.Exists(workspace + ".update-settings.json"));
                         Assert.IsFalse(File.Exists(workspace + ".update-cache.json"));
@@ -143,29 +145,12 @@ public sealed class MainWindowIntegrationTests
                         Assert.AreEqual(Visibility.Visible, ((Grid)window.FindName("AboutPage")).Visibility);
                         Assert.AreEqual(1050d, window.MinWidth);
                         Assert.AreEqual(650d, window.MinHeight);
-                        phase = -1;
-                        _ = PrepareWorkspaceAsync(window, workspace, configuration).ContinueWith(task =>
-                        {
-                            window.Dispatcher.BeginInvoke(new Action(() =>
-                            {
-                                try
-                                {
-                                    if (task.Exception is { } exception) throw exception.GetBaseException();
-                                    Assert.HasCount(1, window.Projects);
-                                    progress.Stage = "发起网络失败检查";
-                                    manual.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                                    phase = 1;
-                                    progress.Phase = phase;
-                                    timer.Start();
-                                }
-                                catch (Exception exception)
-                                {
-                                    scenarioFailure = exception;
-                                    window.Close();
-                                    Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
-                                }
-                            }));
-                        }, TaskScheduler.Default);
+                        window.Projects.Add(loadedProject);
+                        ((ListBox)window.FindName("ProjectList")).SelectedIndex = 0;
+                        Assert.HasCount(1, window.Projects);
+                        progress.Stage = "发起网络失败检查";
+                        manual.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        phase = 1;
                     }
                     else if (phase == 1 && status.Text == "无法连接更新服务")
                     {
@@ -298,15 +283,6 @@ public sealed class MainWindowIntegrationTests
         {
             Directory.Delete(sandbox, true);
         }
-    }
-
-    private static async Task PrepareWorkspaceAsync(
-        MainWindow window,
-        string workspace,
-        WorkspaceConfiguration configuration)
-    {
-        await new WorkspaceStore(workspace).SaveAsync(configuration);
-        await window.ReloadWorkspaceForSecondaryLaunchAsync();
     }
 
     private static void RunGroup(MainWindow window, int index)
