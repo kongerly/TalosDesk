@@ -1,0 +1,14 @@
+{
+  "SchemaVersion": 3,
+  "Projects": [
+    {
+      "Id": "22222222-2222-2222-2222-222222222222",
+      "Name": "服务停止示例",
+      "Directory": "C:\\Path\\To\\SampleService",
+      "Commands": [
+        { "Id": "22222222-2222-2222-2222-222222222201", "Name": "合成长运行服务", "Purpose": "演示启动、输出和停止", "Command": "Write-Output 'sample-service-started'; while ($true) { Start-Sleep -Seconds 1 }", "WorkingDirectory": "C:\\Path\\To\\SampleService", "Kind": 1, "EnvironmentVariables": [] }
+      ],
+      "Groups": []
+    }
+  ]
+}

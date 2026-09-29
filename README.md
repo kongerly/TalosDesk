@@ -2,7 +2,7 @@
 
 TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令，一键运行，并集中查看状态和输出。
 
-当前已发布版本为 `v0.1.1` 公开预览版。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包；本版本新增项目内命令分组、磁盘运行日志，以及敏感环境变量的配置、DPAPI 本机保护、运行注入和输出脱敏，可从 [GitHub Releases](https://github.com/kongerly/TalosDesk/releases/tag/v0.1.1) 下载。
+当前已发布版本为 `v0.1.1` 公开预览版；当前开发分支正在准备 `v0.2.0` 候选包。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包。开发分支新增可关闭的更新检查和按工作区隔离的本地崩溃诊断。
 
 ## 主要功能
 
@@ -15,6 +15,7 @@ TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令�
 - 按项目、命令和运行批次保存 stdout/stderr，可在输出页查看历史批次、调整保留上限并清理已结束批次。
 - 保存本机工作区，并通过 JSON 文件预览、导入和导出配置。
 - 在“关于与更新”页手动检查官方发布，或按工作区开启下次启动检查；应用只提示更新并打开经校验的官方发布页。
+- 在“关于与更新”页查看、关闭或清理本地崩溃诊断；记录只保存在本机，不自动上传。
 - 关闭应用时，若有任务仍在运行，可选择停止任务后退出或返回应用。
 
 典型流程：
@@ -63,6 +64,8 @@ TalosDesk 只停止由当前应用实例启动并确认归属的进程，不会�
 
 当前开发分支已接入“关于与更新”页。更新检查默认关闭；打开页面和切换渠道不会自动联网，用户可以随时手动检查，也可以按当前工作区开启下次启动后的后台检查。应用匿名读取官方 GitHub Releases 元数据，只显示版本和状态；仅在用户点击后打开经再次校验的官方发布页，不下载或替换程序。偏好和缓存分别保存在工作区文件旁的 `.update-settings.json` 与 `.update-cache.json` 文件中，不进入工作区导入导出。
 
+本地崩溃诊断默认开启，可按工作区关闭。记录位于 `<工作区文件路径>.crashes`，设置位于 `<工作区文件路径>.diagnostics-settings.json`；最多保留 100 条、5 MiB 和 30 天。记录只含版本、平台、异常类型、错误码和不带源码路径的结构化堆栈，不保存异常消息、命令、输出、环境变量或凭据，也不会自动上传。可在“关于与更新”页查看最小字段、打开目录和清理全部记录。强制结束、断电、栈溢出或严重内存故障可能无法留下记录。
+
 ## 已知限制
 
 - 只支持不需要中途输入的非交互命令。
@@ -93,7 +96,7 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration
 pwsh -NoProfile -File .\scripts\Publish.ps1
 ```
 
-脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.1.1-win-x64.zip` 及对应 SHA-256 文件。
+脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.2.0-win-x64.zip` 及对应 SHA-256 文件。
 
 ## 手工升级
 
@@ -109,6 +112,9 @@ pwsh -NoProfile -File .\scripts\Publish.ps1
 - [隐私说明](docs/privacy.md)：本机数据位置、明文与加密边界、保留和联网行为。
 - [开发与发布路线图](docs/roadmap.md)：当前分支收口与隐私保护、更新分发、就绪检查，以及后续多 Shell 的范围和验收条件。
 - [v0.1.1 发布说明](docs/release-v0.1.1.md)
+- [v0.2.0 候选说明](docs/release-v0.2.0.md)
+- [贡献指南](CONTRIBUTING.md)与[隔离测试说明](docs/testing.md)
+- [常见问题](docs/faq.md)与[示例工作区](examples)
 - [v0.1.0 发布说明](docs/release-v0.1.0.md)
 
 TalosDesk 使用 [MIT License](LICENSE)。发布包包含的 .NET 运行时许可信息随包提供。

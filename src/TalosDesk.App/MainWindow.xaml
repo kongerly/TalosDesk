@@ -551,6 +551,47 @@
                                 <TextBlock Text="关闭应用后可删除缓存以重新获取元数据；删除偏好会恢复默认关闭，并清除跳过和稍后记录。" Foreground="{StaticResource MutedBrush}" FontSize="10" TextWrapping="Wrap" Margin="0,9,0,0" />
                             </StackPanel>
                         </Border>
+
+                        <Border Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="14" Padding="18,15" Margin="0,12,0,0">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="本地崩溃诊断" FontFamily="{StaticResource DisplayFont}" FontSize="16" FontWeight="Bold" />
+                                        <TextBlock Text="仅在本机保存最小结构信息，不保存异常消息、命令、输出、环境变量或源码路径，也不会自动上传。" Foreground="{StaticResource MutedBrush}" FontSize="10" TextWrapping="Wrap" Margin="0,5,18,0" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="DiagnosticSummaryText" Grid.Column="1" Text="0 条 · 0 B" FontFamily="{StaticResource CodeFont}" FontSize="10" VerticalAlignment="Top" />
+                                </Grid>
+                                <CheckBox x:Name="DiagnosticEnabledCheckBox" Content="记录本工作区的最小崩溃诊断（默认开启）" Margin="0,12,0,0" Click="DiagnosticEnabledCheckBox_Click" />
+                                <TextBlock Text="诊断目录" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,10,0,2" />
+                                <TextBlock x:Name="DiagnosticPathText" FontFamily="{StaticResource CodeFont}" FontSize="9" TextWrapping="Wrap" />
+                                <TextBlock Text="诊断设置" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,7,0,2" />
+                                <TextBlock x:Name="DiagnosticSettingsPathText" FontFamily="{StaticResource CodeFont}" FontSize="9" TextWrapping="Wrap" />
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="280" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <ListBox x:Name="DiagnosticRecordsList" Height="170" SelectionChanged="DiagnosticRecordsList_SelectionChanged">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="3">
+                                                    <TextBlock Text="{Binding ExceptionType, TargetNullValue=记录损坏}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding OccurredAtUtc, StringFormat={}{0:yyyy-MM-dd HH:mm:ss} UTC}" Foreground="{StaticResource MutedBrush}" FontFamily="{StaticResource CodeFont}" FontSize="9" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBox x:Name="DiagnosticDetailTextBox" Grid.Column="2" Height="170" IsReadOnly="True" IsReadOnlyCaretVisible="True"
+                                             AcceptsReturn="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                             FontFamily="{StaticResource CodeFont}" FontSize="9" Text="暂无本地崩溃记录。" />
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                    <Button Content="刷新" Style="{StaticResource ActionButton}" Click="RefreshDiagnostics_Click" />
+                                    <Button Content="打开目录" Style="{StaticResource ActionButton}" Margin="8,0,0,0" Click="OpenDiagnosticFolder_Click" />
+                                    <Button Content="清理全部" Style="{StaticResource ActionButton}" Margin="8,0,0,0" Click="ClearDiagnostics_Click" />
+                                </StackPanel>
+                                <TextBlock x:Name="DiagnosticWarningText" Foreground="#9B4E42" FontSize="10" Margin="0,8,0,0" TextWrapping="Wrap" />
+                                <TextBlock Text="最多保留 100 条、5 MiB 和 30 天。关闭只影响后续采集；既有记录需在此清理或关闭应用后手工删除。强制结束、断电、栈溢出或严重内存故障可能无法留下记录。" Foreground="{StaticResource MutedBrush}" FontSize="10" TextWrapping="Wrap" Margin="0,7,0,0" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </Grid>

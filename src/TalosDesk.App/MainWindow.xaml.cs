@@ -10,6 +10,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using TalosDesk.Core.Configuration;
+using TalosDesk.Core.Diagnostics;
 using TalosDesk.Core.Processes;
 using TalosDesk.Core.Updates;
 
@@ -26,6 +27,11 @@ public partial class MainWindow : Window
     private readonly UpdateStateStore _updateStateStore;
     private readonly ApplicationBuildInfo _buildInfo;
     private readonly ReleasePageNavigator _releasePageNavigator;
+    private readonly CrashRecordStore _crashRecordStore;
+    private readonly DiagnosticSettingsStore _diagnosticSettingsStore;
+    private readonly AppDiagnosticsController? _diagnosticsController;
+    private DiagnosticSettingsResult _diagnosticSettings;
+    private bool _syncingDiagnosticControls;
     private UpdateCheckCoordinator? _updateCoordinator;
     private Action<UpdateCoordinatorState>? _updateStateHandler;
     private bool _updateControlsLoaded;
@@ -105,12 +111,19 @@ public partial class MainWindow : Window
         string? profileLabel,
         UpdateCheckCoordinator? updateCoordinator,
         ApplicationBuildInfo? buildInfo,
-        IReleasePageLauncher? releasePageLauncher)
+        IReleasePageLauncher? releasePageLauncher,
+        CrashRecordStore? crashRecordStore = null,
+        DiagnosticSettingsStore? diagnosticSettingsStore = null,
+        AppDiagnosticsController? diagnosticsController = null)
     {
         _store = store;
         _updateStateStore = new UpdateStateStore(store.FilePath);
         _buildInfo = buildInfo ?? ApplicationBuildInfo.Read(typeof(App).Assembly);
         _releasePageNavigator = new ReleasePageNavigator(releasePageLauncher ?? new SystemReleasePageLauncher());
+        _crashRecordStore = crashRecordStore ?? new CrashRecordStore(store.FilePath);
+        _diagnosticSettingsStore = diagnosticSettingsStore ?? new DiagnosticSettingsStore(store.FilePath);
+        _diagnosticSettings = _diagnosticSettingsStore.Load();
+        _diagnosticsController = diagnosticsController;
         _updateCoordinator = updateCoordinator ?? CreateUpdateCoordinator();
         _runLogStore = new RunLogStore(store.FilePath);
         _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
@@ -128,6 +141,11 @@ public partial class MainWindow : Window
         UpdateSettingsPathText.ToolTip = _updateStateStore.SettingsPath;
         UpdateCachePathText.Text = _updateStateStore.CachePath;
         UpdateCachePathText.ToolTip = _updateStateStore.CachePath;
+        DiagnosticPathText.Text = _crashRecordStore.RootPath;
+        DiagnosticPathText.ToolTip = _crashRecordStore.RootPath;
+        DiagnosticSettingsPathText.Text = _diagnosticSettingsStore.SettingsPath;
+        DiagnosticSettingsPathText.ToolTip = _diagnosticSettingsStore.SettingsPath;
+        RefreshDiagnosticView();
         AttachUpdateCoordinator(_updateCoordinator);
         _commandDragScrollTimer = new DispatcherTimer(DispatcherPriority.Input)
         {
@@ -186,7 +204,123 @@ public partial class MainWindow : Window
         }
 
         await InitializeUpdatesAsync(startAutomaticCheck: true);
+        RefreshDiagnosticView();
     }
+
+    private void DiagnosticEnabledCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingDiagnosticControls || !_diagnosticSettings.CanEdit) return;
+        var enabled = DiagnosticEnabledCheckBox.IsChecked == true;
+        var saved = _diagnosticSettingsStore.Save(enabled);
+        _diagnosticSettings = saved;
+        if (_diagnosticsController is not null) _diagnosticsController.IsEnabled = enabled;
+        DiagnosticWarningText.Text = saved.Status == DiagnosticSettingsStatus.SaveFailed
+            ? "设置未保存；本次会话已生效，重启后可能恢复原设置。"
+            : string.Empty;
+        RefreshDiagnosticView(keepWarning: saved.Status == DiagnosticSettingsStatus.SaveFailed);
+    }
+
+    private void RefreshDiagnostics_Click(object sender, RoutedEventArgs e) => RefreshDiagnosticView();
+
+    private void DiagnosticRecordsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DiagnosticRecordsList.SelectedItem is not CrashRecordSummary summary)
+        {
+            DiagnosticDetailTextBox.Text = "选择一条记录查看最小诊断字段。";
+            return;
+        }
+        if (summary.Status == CrashReadStatus.Corrupted)
+        {
+            DiagnosticDetailTextBox.Text = "记录已损坏或格式不受支持；原始内容不会显示。";
+            return;
+        }
+        var result = _crashRecordStore.Read(summary.FileName);
+        DiagnosticDetailTextBox.Text = result.Record is { } record
+            ? FormatCrashRecord(record)
+            : "记录已损坏或读取失败；原始内容不会显示。";
+    }
+
+    private void OpenDiagnosticFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(_crashRecordStore.RootPath);
+            var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+            start.ArgumentList.Add(_crashRecordStore.RootPath);
+            Process.Start(start);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            DiagnosticWarningText.Text = "无法打开诊断目录。";
+        }
+    }
+
+    private void ClearDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "清理此工作区的全部本地崩溃记录吗？", "清理本地诊断",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        var result = _crashRecordStore.Clear();
+        DiagnosticWarningText.Text = result.Completed
+            ? $"已清理 {result.DeletedCount} 条本地诊断记录。"
+            : $"部分记录无法清理，仍剩 {result.RemainingCount} 条。";
+        RefreshDiagnosticView(keepWarning: true);
+    }
+
+    private void RefreshDiagnosticView(bool keepWarning = false)
+    {
+        _syncingDiagnosticControls = true;
+        try
+        {
+            if (!keepWarning) DiagnosticWarningText.Text = string.Empty;
+            DiagnosticEnabledCheckBox.IsChecked = _diagnosticSettings.Settings.IsEnabled;
+            DiagnosticEnabledCheckBox.IsEnabled = _diagnosticSettings.CanEdit;
+            if (_diagnosticSettings.Status == DiagnosticSettingsStatus.Corrupted)
+                DiagnosticWarningText.Text = "诊断设置文件损坏或不可读；已停止采集。请关闭应用后移走该文件再重新打开。";
+            var result = _crashRecordStore.List();
+            DiagnosticRecordsList.ItemsSource = result.Records;
+            DiagnosticSummaryText.Text = $"{result.Records.Count} 条 · {FormatBytes(result.TotalBytes)}";
+            if (result.MaintenanceFailed && string.IsNullOrEmpty(DiagnosticWarningText.Text))
+                DiagnosticWarningText.Text = "部分过期或超限记录无法清理。";
+            DiagnosticDetailTextBox.Text = result.Records.Count == 0
+                ? "暂无本地崩溃记录。"
+                : "选择一条记录查看最小诊断字段。";
+        }
+        finally { _syncingDiagnosticControls = false; }
+    }
+
+    private static string FormatCrashRecord(CrashRecord record)
+    {
+        var lines = new List<string>
+        {
+            $"记录：{record.Id}",
+            $"时间（UTC）：{record.OccurredAtUtc:O}",
+            $"版本：{record.ApplicationVersion} / {record.ReleaseChannel}",
+            $"系统：{record.OperatingSystem}",
+            $"运行时：{record.Runtime} / {record.Architecture}",
+            $"来源：{record.Source}",
+            $"致命：{(record.IsFatal ? "是" : "否")}",
+            $"异常：{record.Exception.Type} (0x{record.Exception.HResult:X8})",
+            $"已截断：{(record.Truncated ? "是" : "否")}",
+            "堆栈："
+        };
+        AppendException(lines, record.Exception, 0);
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static void AppendException(List<string> lines, CrashExceptionNode node, int depth)
+    {
+        var indent = new string(' ', depth * 2);
+        foreach (var frame in node.Frames) lines.Add($"{indent}  {frame.Type}.{frame.Method}");
+        foreach (var inner in node.InnerExceptions)
+        {
+            lines.Add($"{indent}内部异常：{inner.Type} (0x{inner.HResult:X8})");
+            AppendException(lines, inner, depth + 1);
+        }
+    }
+
+    private static string FormatBytes(long bytes) => bytes < 1024
+        ? $"{bytes} B"
+        : bytes < 1024 * 1024 ? $"{bytes / 1024d:F1} KiB" : $"{bytes / (1024d * 1024d):F1} MiB";
 
     private async Task RefreshWorkspaceAfterStartupAsync()
     {

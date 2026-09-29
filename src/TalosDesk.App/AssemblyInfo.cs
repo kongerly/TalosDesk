@@ -11,3 +11,4 @@ using System.Windows;
 )]
 
 [assembly: InternalsVisibleTo("TalosDesk.App.Tests")]
+[assembly: InternalsVisibleTo("TalosDesk.CrashTestHost")]

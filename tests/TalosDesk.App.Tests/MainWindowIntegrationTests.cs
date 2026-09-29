@@ -145,6 +145,17 @@ public sealed class MainWindowIntegrationTests
                         Assert.AreEqual(Visibility.Visible, ((Grid)window.FindName("AboutPage")).Visibility);
                         Assert.AreEqual(1050d, window.MinWidth);
                         Assert.AreEqual(650d, window.MinHeight);
+                        var diagnosticsEnabled = (CheckBox)window.FindName("DiagnosticEnabledCheckBox");
+                        Assert.IsTrue(diagnosticsEnabled.IsChecked);
+                        Assert.IsTrue(diagnosticsEnabled.IsEnabled);
+                        Assert.AreEqual("0 条 · 0 B", ((TextBlock)window.FindName("DiagnosticSummaryText")).Text);
+                        Assert.IsFalse(Directory.Exists(workspace + ".crashes"));
+                        diagnosticsEnabled.IsChecked = false;
+                        diagnosticsEnabled.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        Assert.IsFalse(new TalosDesk.Core.Diagnostics.DiagnosticSettingsStore(workspace).Load().Settings.IsEnabled);
+                        diagnosticsEnabled.IsChecked = true;
+                        diagnosticsEnabled.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        Assert.IsTrue(new TalosDesk.Core.Diagnostics.DiagnosticSettingsStore(workspace).Load().Settings.IsEnabled);
                         window.Projects.Add(loadedProject);
                         ((ListBox)window.FindName("ProjectList")).SelectedIndex = 0;
                         Assert.HasCount(1, window.Projects);
