@@ -37,6 +37,7 @@ public sealed class UpdateCheckCoordinatorTests
         var state = await coordinator.CheckManuallyAsync();
 
         Assert.AreEqual(UpdateCheckPhase.UpdateAvailable, state.Phase);
+        Assert.AreEqual(UpdateCheckSource.Manual, state.CheckSource);
         Assert.AreEqual("0.2.0", state.Candidate!.Version.Identity);
         Assert.IsFalse(state.ReminderEligible);
         Assert.IsFalse(state.IsHistorical);
@@ -169,6 +170,8 @@ public sealed class UpdateCheckCoordinatorTests
         var state = await startup;
 
         Assert.AreEqual(UpdateCheckPhase.UpdateAvailable, state.Phase);
+        Assert.AreEqual(UpdateCheckSource.Automatic, state.CheckSource);
+        Assert.IsTrue(state.ReminderEligible);
         Assert.HasCount(1, handler.Requests);
     }
 
@@ -196,6 +199,8 @@ public sealed class UpdateCheckCoordinatorTests
 
         Assert.AreEqual(UpdateCheckPhase.UpdateAvailable, (await manual).Phase);
         Assert.AreEqual(UpdateCheckPhase.UpdateAvailable, (await automatic).Phase);
+        Assert.AreEqual(UpdateCheckSource.Manual, coordinator.State.CheckSource);
+        Assert.IsFalse(coordinator.State.ReminderEligible);
         Assert.HasCount(1, handler.Requests);
     }
 
@@ -275,7 +280,8 @@ public sealed class UpdateCheckCoordinatorTests
         Assert.AreEqual("0.2.0", coordinator.State.Candidate!.Version.Identity);
         clock.Advance(TimeSpan.FromHours(24));
         await coordinator.SetChannelAsync(UpdateChannelPreference.IncludePreview);
-        Assert.IsTrue(coordinator.State.ReminderEligible);
+        Assert.IsFalse(coordinator.State.ReminderEligible);
+        Assert.IsTrue(coordinator.State.IsHistorical);
 
         await coordinator.SkipVersionAsync("0.2.0");
         Assert.IsFalse(coordinator.State.ReminderEligible);
@@ -361,6 +367,9 @@ public sealed class UpdateCheckCoordinatorTests
 
         Assert.AreEqual(UpdateCheckPhase.Failed, state.Phase);
         Assert.AreEqual(UpdateFetchStatus.InvalidResponse, state.FetchStatus);
+        Assert.IsNotNull(state.LastSuccessfulResult);
+        Assert.AreEqual(UpdateCheckPhase.UpdateAvailable, state.LastSuccessfulResult.Phase);
+        Assert.AreEqual("0.2.0", state.LastSuccessfulResult.Candidate!.Version.Identity);
         Assert.AreEqual(priorSuccess, persisted.LastSuccessUtc);
         Assert.AreEqual("0.2.0", persisted.Pages.Single().Releases.Single().TagName);
         Assert.IsNotNull(persisted.LastAttemptUtc);
@@ -386,6 +395,35 @@ public sealed class UpdateCheckCoordinatorTests
         var state = await checking.WaitAsync(TimeSpan.FromSeconds(2));
 
         Assert.AreEqual(UpdateCheckPhase.Cancelled, state.Phase);
+    }
+
+    [TestMethod]
+    public async Task DisablingAutomaticCheckCancelsPureAutomaticRequest()
+    {
+        using var sandbox = new Sandbox();
+        var store = new UpdateStateStore(Path.Combine(sandbox.Path, "workspace.json"));
+        await store.SavePreferencesAsync(new UpdatePreferences { AutomaticCheckEnabled = true });
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 29, 10, 0, 0, TimeSpan.Zero));
+        var handler = new TestHandler(async (_, token) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return Response("0.2.0");
+        });
+        using var http = new HttpClient(handler);
+        using var client = new GitHubReleaseClient(http, clock);
+        using var coordinator = new UpdateCheckCoordinator("0.1.1", ReleaseChannel.Preview, client, store, clock);
+        await coordinator.InitializeAsync();
+        var automatic = coordinator.NotifyStartupReadyAsync();
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await handler.RequestStarted.Task;
+
+        await coordinator.SetAutomaticCheckEnabledAsync(false);
+        var state = await automatic.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.AreEqual(UpdateCheckPhase.Cancelled, state.Phase);
+        Assert.IsFalse(state.Preferences.AutomaticCheckEnabled);
+        Assert.IsFalse(state.ReminderEligible);
+        Assert.HasCount(1, handler.Requests);
     }
 
     private static UpdateCheckCoordinator Coordinator(Sandbox sandbox, GitHubReleaseClient client, TimeProvider clock) =>

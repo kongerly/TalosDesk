@@ -4,6 +4,7 @@
     <Project Path="src/TalosDesk.Core/TalosDesk.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj" />
     <Project Path="tests/TalosDesk.Core.Tests/TalosDesk.Core.Tests.csproj" />
   </Folder>
 </Solution>

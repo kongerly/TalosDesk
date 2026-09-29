@@ -11,6 +11,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using TalosDesk.Core.Configuration;
 using TalosDesk.Core.Processes;
+using TalosDesk.Core.Updates;
 
 namespace TalosDesk.App;
 
@@ -19,9 +20,19 @@ public partial class MainWindow : Window
     private const double CommandDragEdgeSize = 44;
     private const double CommandDragScrollStep = 18;
 
-    private enum MainPage { Overview, Commands, Groups, Output }
+    private enum MainPage { Overview, Commands, Groups, Output, About }
 
     private readonly WorkspaceStore _store;
+    private readonly UpdateStateStore _updateStateStore;
+    private readonly ApplicationBuildInfo _buildInfo;
+    private readonly ReleasePageNavigator _releasePageNavigator;
+    private UpdateCheckCoordinator? _updateCoordinator;
+    private Action<UpdateCoordinatorState>? _updateStateHandler;
+    private bool _updateControlsLoaded;
+    private bool _syncingUpdateControls;
+    private UpdateCandidate? _pageUpdateCandidate;
+    private UpdateCandidate? _reminderCandidate;
+    private string? _browserWarning;
     private readonly CommandRunner _runner = new();
     private readonly RunLogStore _runLogStore;
     private bool _logStoreAvailable;
@@ -85,8 +96,22 @@ public partial class MainWindow : Window
     }
 
     internal MainWindow(WorkspaceStore store, string? profileLabel)
+        : this(store, profileLabel, null, null, null)
+    {
+    }
+
+    internal MainWindow(
+        WorkspaceStore store,
+        string? profileLabel,
+        UpdateCheckCoordinator? updateCoordinator,
+        ApplicationBuildInfo? buildInfo,
+        IReleasePageLauncher? releasePageLauncher)
     {
         _store = store;
+        _updateStateStore = new UpdateStateStore(store.FilePath);
+        _buildInfo = buildInfo ?? ApplicationBuildInfo.Read(typeof(App).Assembly);
+        _releasePageNavigator = new ReleasePageNavigator(releasePageLauncher ?? new SystemReleasePageLauncher());
+        _updateCoordinator = updateCoordinator ?? CreateUpdateCoordinator();
         _runLogStore = new RunLogStore(store.FilePath);
         _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
         InitializeComponent();
@@ -97,6 +122,13 @@ public partial class MainWindow : Window
         WorkspaceProfileText.Text = _profileLabel;
         WorkspacePathText.Text = _store.FilePath;
         WorkspacePathText.ToolTip = _store.FilePath;
+        CurrentVersionText.Text = _buildInfo.DisplayVersion;
+        BuildChannelText.Text = FormatReleaseChannel(_buildInfo.Channel);
+        UpdateSettingsPathText.Text = _updateStateStore.SettingsPath;
+        UpdateSettingsPathText.ToolTip = _updateStateStore.SettingsPath;
+        UpdateCachePathText.Text = _updateStateStore.CachePath;
+        UpdateCachePathText.ToolTip = _updateStateStore.CachePath;
+        AttachUpdateCoordinator(_updateCoordinator);
         _commandDragScrollTimer = new DispatcherTimer(DispatcherPriority.Input)
         {
             Interval = TimeSpan.FromMilliseconds(50)
@@ -152,6 +184,8 @@ public partial class MainWindow : Window
                 $"TalosDesk 无法读取本机工作区配置，原文件未作修改。\n\n{exception.Message}",
                 "无法加载工作区", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+
+        await InitializeUpdatesAsync(startAutomaticCheck: true);
     }
 
     private async Task RefreshWorkspaceAfterStartupAsync()
@@ -224,6 +258,197 @@ public partial class MainWindow : Window
     private void UpdateWorkspaceIdentity()
     {
         WorkspaceProfileText.Text = $"{_profileLabel} · {Projects.Count} 个项目";
+    }
+
+    private UpdateCheckCoordinator CreateUpdateCoordinator()
+    {
+        var client = GitHubReleaseClient.CreateDefault();
+        return new UpdateCheckCoordinator(
+            _buildInfo.Version ?? string.Empty,
+            _buildInfo.Channel ?? (ReleaseChannel)(-1),
+            client,
+            _updateStateStore);
+    }
+
+    private void AttachUpdateCoordinator(UpdateCheckCoordinator coordinator)
+    {
+        Action<UpdateCoordinatorState> handler = state =>
+        {
+            if (Dispatcher.HasShutdownStarted) return;
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+            {
+                if (ReferenceEquals(_updateCoordinator, coordinator)) RenderUpdateState(state);
+            }));
+        };
+        _updateStateHandler = handler;
+        coordinator.StateChanged += handler;
+    }
+
+    private async Task InitializeUpdatesAsync(bool startAutomaticCheck)
+    {
+        var coordinator = _updateCoordinator;
+        if (coordinator is null) return;
+        _updateControlsLoaded = false;
+        SetUpdateControlsEnabled(false);
+        try
+        {
+            var state = await coordinator.InitializeAsync();
+            if (!ReferenceEquals(_updateCoordinator, coordinator)) return;
+            _updateControlsLoaded = true;
+            RenderUpdateState(state);
+            if (startAutomaticCheck) _ = ObserveStartupUpdateCheckAsync(coordinator);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            UpdateStatusText.Text = "更新检查初始化失败";
+            UpdateWarningText.Text = "无法读取更新设置，命令运行不受影响。";
+        }
+    }
+
+    private async Task ObserveStartupUpdateCheckAsync(UpdateCheckCoordinator coordinator)
+    {
+        try { await coordinator.NotifyStartupReadyAsync(); }
+        catch (ObjectDisposedException) { }
+        catch (OperationCanceledException) { }
+    }
+
+    private void RenderUpdateState(UpdateCoordinatorState state)
+    {
+        _syncingUpdateControls = true;
+        try
+        {
+            AutomaticUpdateCheckBox.IsChecked = state.Preferences.AutomaticCheckEnabled;
+            SelectUpdateChannel(state.Preferences.Channel);
+            EffectiveChannelText.Text = FormatEffectiveChannel(state.Preferences.Channel);
+            SetUpdateControlsEnabled(_updateControlsLoaded && state.Phase != UpdateCheckPhase.Checking, state.PreferencesEditable);
+            UpdateStatusText.Text = FormatUpdateStatus(state);
+            LastUpdateAttemptText.Text = FormatUpdateTime(state.LastAttemptUtc);
+            LastUpdateSuccessText.Text = FormatUpdateTime(state.LastSuccessUtc);
+            HistoricalUpdateResultText.Text = FormatHistoricalResult(state.LastSuccessfulResult);
+
+            _pageUpdateCandidate = state.Phase == UpdateCheckPhase.UpdateAvailable
+                ? state.Candidate
+                : state.LastSuccessfulResult is { Phase: UpdateCheckPhase.UpdateAvailable } historical
+                    ? historical.Candidate
+                    : null;
+            OpenReleasePageButton.IsEnabled = _pageUpdateCandidate is not null;
+            UpdateCandidateText.Text = FormatCandidate(state);
+            UpdateWarningText.Text = JoinUpdateWarnings(JoinUpdateWarnings(state.Warning, _buildInfo.Error), _browserWarning);
+
+            if (state.ReminderEligible && state.Candidate is { } reminder)
+            {
+                _reminderCandidate = reminder;
+                UpdateBannerTitle.Text = $"发现新版本 {reminder.Version.Identity}";
+                UpdateBannerText.Text = "可以前往官方发布页查看说明并手工升级。";
+                UpdateBanner.Visibility = Visibility.Visible;
+                _updateCoordinator?.MarkReminderShown(reminder.Version.Identity);
+            }
+            else if (state.CheckSource == UpdateCheckSource.Automatic && state.Phase is not UpdateCheckPhase.Checking and not UpdateCheckPhase.UpdateAvailable)
+            {
+                HideUpdateReminder();
+            }
+        }
+        finally
+        {
+            _syncingUpdateControls = false;
+        }
+    }
+
+    private void SetUpdateControlsEnabled(bool enabled, bool preferencesEditable = false)
+    {
+        ManualUpdateCheckButton.IsEnabled = enabled && _buildInfo.IsValid;
+        AutomaticUpdateCheckBox.IsEnabled = enabled && preferencesEditable && _buildInfo.IsValid;
+        UpdateChannelComboBox.IsEnabled = enabled && preferencesEditable && _buildInfo.IsValid;
+    }
+
+    private void SelectUpdateChannel(UpdateChannelPreference channel)
+    {
+        foreach (var item in UpdateChannelComboBox.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag as string, channel.ToString(), StringComparison.Ordinal))
+            {
+                UpdateChannelComboBox.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    private string FormatEffectiveChannel(UpdateChannelPreference preference) => preference switch
+    {
+        UpdateChannelPreference.StableOnly => "仅稳定版",
+        UpdateChannelPreference.IncludePreview => "稳定版与预览版",
+        UpdateChannelPreference.FollowCurrent when _buildInfo.Channel == ReleaseChannel.Stable => "跟随当前版本 · 仅稳定版",
+        UpdateChannelPreference.FollowCurrent when _buildInfo.Channel == ReleaseChannel.Preview => "跟随当前版本 · 包含预览版",
+        _ => "不可用"
+    };
+
+    private static string FormatReleaseChannel(ReleaseChannel? channel) => channel switch
+    {
+        ReleaseChannel.Stable => "稳定版",
+        ReleaseChannel.Preview => "预览版",
+        _ => "无效"
+    };
+
+    private static string FormatUpdateTime(DateTimeOffset? time) =>
+        time is null ? "无" : time.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
+
+    private static string FormatHistoricalResult(UpdateHistoricalResult? result) => result?.Phase switch
+    {
+        UpdateCheckPhase.UpdateAvailable => $"{FormatUpdateTime(result.CheckedAtUtc)} · 发现版本 {result.Candidate!.Version.Identity}",
+        UpdateCheckPhase.NoUpdate => $"{FormatUpdateTime(result.CheckedAtUtc)} · 当前渠道没有更新版本",
+        UpdateCheckPhase.NoRelease => $"{FormatUpdateTime(result.CheckedAtUtc)} · 当前渠道暂无可用发布",
+        _ => "无完整成功记录"
+    };
+
+    private static string FormatUpdateStatus(UpdateCoordinatorState state) => state.Phase switch
+    {
+        UpdateCheckPhase.Idle => state.IsHistorical ? "正在显示历史检查结果" : "尚未检查",
+        UpdateCheckPhase.Checking => state.CheckSource == UpdateCheckSource.Manual ? "正在手动检查…" : "正在后台检查…",
+        UpdateCheckPhase.UpdateAvailable => state.IsHistorical ? "历史记录中有可用更新" : "发现新版本",
+        UpdateCheckPhase.NoUpdate => state.IsHistorical ? "历史记录：当前渠道没有更新版本" : "当前渠道没有更新版本",
+        UpdateCheckPhase.NoRelease => state.IsHistorical ? "历史记录：当前渠道暂无可用发布" : "当前渠道暂无可用发布",
+        UpdateCheckPhase.RateLimited => state.RetryAfterUtc is { } retry
+            ? $"请求受限，可在 {FormatUpdateTime(retry)} 后重试"
+            : "请求受限，请稍后重试",
+        UpdateCheckPhase.Cancelled => "检查已取消",
+        UpdateCheckPhase.InvalidLocalVersion => "本机版本信息异常",
+        UpdateCheckPhase.Failed => state.FetchStatus switch
+        {
+            UpdateFetchStatus.NetworkError => "无法连接更新服务",
+            UpdateFetchStatus.InvalidResponse => "更新服务返回异常",
+            UpdateFetchStatus.SourceAddressError => "更新源地址异常",
+            UpdateFetchStatus.Incomplete => "检查未完成",
+            _ => "检查更新失败"
+        },
+        _ => "检查状态未知"
+    };
+
+    private static string FormatCandidate(UpdateCoordinatorState state)
+    {
+        var candidate = state.Candidate ?? state.LastSuccessfulResult?.Candidate;
+        if (candidate is null) return string.Empty;
+        var suffix = string.Empty;
+        if (state.Preferences.SkippedVersions.Contains(candidate.Version.Identity, StringComparer.Ordinal))
+            suffix = " · 已跳过自动提醒";
+        else if (state.Preferences.RemindAfterUtc.TryGetValue(candidate.Version.Identity, out var until) && until > DateTimeOffset.UtcNow)
+            suffix = $" · 已暂停提醒至 {FormatUpdateTime(until)}";
+        return $"版本 {candidate.Version.Identity}{suffix}";
+    }
+
+    private static string JoinUpdateWarnings(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first)) return second ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(second)) return first;
+        return first + " " + second;
+    }
+
+    private void HideUpdateReminder()
+    {
+        _reminderCandidate = null;
+        UpdateBanner.Visibility = Visibility.Collapsed;
     }
 
     private void ProjectList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -627,6 +852,7 @@ public partial class MainWindow : Window
     private void CommandsPage_Click(object sender, RoutedEventArgs e) => SetPage(MainPage.Commands);
     private void GroupsPage_Click(object sender, RoutedEventArgs e) => SetPage(MainPage.Groups);
     private void OutputPage_Click(object sender, RoutedEventArgs e) => SetPage(MainPage.Output);
+    private void AboutPage_Click(object sender, RoutedEventArgs e) => SetPage(MainPage.About);
 
     private void SetPage(MainPage page)
     {
@@ -634,12 +860,14 @@ public partial class MainWindow : Window
         CommandsPage.Visibility = page == MainPage.Commands ? Visibility.Visible : Visibility.Collapsed;
         GroupsPage.Visibility = page == MainPage.Groups ? Visibility.Visible : Visibility.Collapsed;
         OutputPage.Visibility = page == MainPage.Output ? Visibility.Visible : Visibility.Collapsed;
+        AboutPage.Visibility = page == MainPage.About ? Visibility.Visible : Visibility.Collapsed;
         foreach (var (button, buttonPage) in new[]
                  {
                      (OverviewPageButton, MainPage.Overview),
                      (CommandsPageButton, MainPage.Commands),
                      (GroupsPageButton, MainPage.Groups),
-                     (OutputPageButton, MainPage.Output)
+                     (OutputPageButton, MainPage.Output),
+                     (AboutPageButton, MainPage.About)
                  })
         {
             button.Background = buttonPage == page
@@ -649,6 +877,70 @@ public partial class MainWindow : Window
                 ? (System.Windows.Media.Brush)FindResource("GoldBrush")
                 : (System.Windows.Media.Brush)FindResource("SidebarRaisedBrush");
         }
+    }
+
+    private async void ManualUpdateCheck_Click(object sender, RoutedEventArgs e)
+    {
+        var coordinator = _updateCoordinator;
+        if (coordinator is null || !_updateControlsLoaded) return;
+        _browserWarning = null;
+        try { await coordinator.CheckManuallyAsync(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async void AutomaticUpdateCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingUpdateControls || !_updateControlsLoaded || _updateCoordinator is not { } coordinator) return;
+        var enabled = AutomaticUpdateCheckBox.IsChecked == true;
+        if (!enabled) HideUpdateReminder();
+        try { await coordinator.SetAutomaticCheckEnabledAsync(enabled); }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException)
+        {
+            RenderUpdateState(coordinator.State);
+        }
+    }
+
+    private async void UpdateChannelComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingUpdateControls || !_updateControlsLoaded || _updateCoordinator is not { } coordinator ||
+            UpdateChannelComboBox.SelectedItem is not ComboBoxItem { Tag: string value } ||
+            !Enum.TryParse<UpdateChannelPreference>(value, false, out var channel)) return;
+        HideUpdateReminder();
+        try { await coordinator.SetChannelAsync(channel); }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException)
+        {
+            RenderUpdateState(coordinator.State);
+        }
+    }
+
+    private async void RemindLater_Click(object sender, RoutedEventArgs e)
+    {
+        if (_reminderCandidate is not { } candidate || _updateCoordinator is not { } coordinator) return;
+        HideUpdateReminder();
+        try { await coordinator.RemindLaterAsync(candidate.Version.Identity); }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { RenderUpdateState(coordinator.State); }
+    }
+
+    private async void SkipVersion_Click(object sender, RoutedEventArgs e)
+    {
+        if (_reminderCandidate is not { } candidate || _updateCoordinator is not { } coordinator) return;
+        HideUpdateReminder();
+        try { await coordinator.SkipVersionAsync(candidate.Version.Identity); }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { RenderUpdateState(coordinator.State); }
+    }
+
+    private void OpenReminderRelease_Click(object sender, RoutedEventArgs e) => OpenReleasePage(_reminderCandidate);
+
+    private void OpenReleasePage_Click(object sender, RoutedEventArgs e) => OpenReleasePage(_pageUpdateCandidate);
+
+    private void OpenReleasePage(UpdateCandidate? candidate)
+    {
+        _releasePageNavigator.TryOpen(candidate, out _browserWarning);
+        if (_updateCoordinator is { } coordinator) RenderUpdateState(coordinator.State);
     }
 
     private void BatchCheckBox_Loaded(object sender, RoutedEventArgs e)
@@ -2199,12 +2491,17 @@ public partial class MainWindow : Window
         }
         var active = _sessions.Values.Where(session => !session.Completion.IsCompleted).ToArray();
         var activeSequences = _sequentialGroupCancellations.Count;
-        if (active.Length == 0 && activeSequences == 0 && _logFinalizations.Values.All(task => task.IsCompleted)) return;
+        if (active.Length == 0 && activeSequences == 0 && _logFinalizations.Values.All(task => task.IsCompleted))
+        {
+            StopUpdatesForShutdown();
+            return;
+        }
 
         if (active.Length == 0 && activeSequences == 0)
         {
             e.Cancel = true;
             await Task.WhenAll(_logFinalizations.Values.ToArray());
+            StopUpdatesForShutdown();
             _allowClose = true;
             Close();
             return;
@@ -2218,6 +2515,7 @@ public partial class MainWindow : Window
             "命令仍在运行", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (choice != MessageBoxResult.Yes) return;
 
+        StopUpdatesForShutdown();
         _isStoppingForClose = true;
         RunButton.IsEnabled = false;
         StopButton.IsEnabled = false;
@@ -2236,8 +2534,29 @@ public partial class MainWindow : Window
         {
             _isStoppingForClose = false;
             RefreshCommandSelection();
+            await RestoreUpdatesAfterFailedExitAsync();
             MessageBox.Show(this, $"TalosDesk 无法确认所有命令均已停止，因此窗口保持打开。\n\n{exception.Message}", "仍有命令未停止", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void StopUpdatesForShutdown()
+    {
+        var coordinator = _updateCoordinator;
+        if (coordinator is null) return;
+        if (_updateStateHandler is not null) coordinator.StateChanged -= _updateStateHandler;
+        _updateStateHandler = null;
+        _updateCoordinator = null;
+        _updateControlsLoaded = false;
+        HideUpdateReminder();
+        coordinator.Dispose();
+    }
+
+    private async Task RestoreUpdatesAfterFailedExitAsync()
+    {
+        if (_updateCoordinator is not null) return;
+        _updateCoordinator = CreateUpdateCoordinator();
+        AttachUpdateCoordinator(_updateCoordinator);
+        await InitializeUpdatesAsync(startAutomaticCheck: false);
     }
 
     private async Task<bool> SaveWorkspaceAsync()

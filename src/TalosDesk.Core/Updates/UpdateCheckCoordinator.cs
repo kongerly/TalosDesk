@@ -15,6 +15,18 @@ public enum UpdateCheckPhase
     InvalidLocalVersion
 }
 
+public enum UpdateCheckSource
+{
+    None,
+    Automatic,
+    Manual
+}
+
+public sealed record UpdateHistoricalResult(
+    UpdateCheckPhase Phase,
+    UpdateCandidate? Candidate,
+    DateTimeOffset CheckedAtUtc);
+
 public sealed record UpdatePreferencesSnapshot(
     bool AutomaticCheckEnabled,
     UpdateChannelPreference Channel,
@@ -40,7 +52,9 @@ public sealed record UpdateCoordinatorState(
     DateTimeOffset? LastSuccessUtc,
     DateTimeOffset? RetryAfterUtc,
     bool ReminderEligible,
-    string? Warning);
+    string? Warning,
+    UpdateCheckSource CheckSource = UpdateCheckSource.None,
+    UpdateHistoricalResult? LastSuccessfulResult = null);
 
 public sealed class UpdateCheckCoordinator : IDisposable
 {
@@ -142,6 +156,8 @@ public sealed class UpdateCheckCoordinator : IDisposable
             if (_activeTask is not null)
             {
                 _activeIsManual = true;
+                _state = _state with { CheckSource = UpdateCheckSource.Manual, ReminderEligible = false };
+                StateChanged?.Invoke(_state);
                 return _activeTask;
             }
             return StartCheckLocked(isManual: true, cancellationToken);
@@ -175,14 +191,18 @@ public sealed class UpdateCheckCoordinator : IDisposable
     {
         if (!Enum.IsDefined(channel)) throw new ArgumentOutOfRangeException(nameof(channel));
         Task<UpdateCoordinatorState>? active;
+        CancellationTokenSource? startupCancellation;
+        CancellationTokenSource? activeCancellation;
         lock (_sync)
         {
             EnsurePreferencesEditable();
             _generation++;
-            _startupDelayCancellation?.Cancel();
-            _activeCancellation?.Cancel();
+            startupCancellation = _startupDelayCancellation;
+            activeCancellation = _activeCancellation;
             active = _activeTask;
         }
+        startupCancellation?.Cancel();
+        activeCancellation?.Cancel();
         if (active is not null)
         {
             try { await active.ConfigureAwait(false); }
@@ -233,13 +253,17 @@ public sealed class UpdateCheckCoordinator : IDisposable
 
     public void CancelForShutdown()
     {
+        CancellationTokenSource? startupCancellation;
+        CancellationTokenSource? activeCancellation;
         lock (_sync)
         {
             if (_disposed) return;
             _disposed = true;
-            _startupDelayCancellation?.Cancel();
-            _activeCancellation?.Cancel();
+            startupCancellation = _startupDelayCancellation;
+            activeCancellation = _activeCancellation;
         }
+        startupCancellation?.Cancel();
+        activeCancellation?.Cancel();
         _client.Dispose();
     }
 
@@ -279,6 +303,7 @@ public sealed class UpdateCheckCoordinator : IDisposable
             if (isManual)
             {
                 _state = _state with { Phase = UpdateCheckPhase.RateLimited, FetchStatus = null, RetryAfterUtc = retry, Warning = null };
+                _state = _state with { CheckSource = UpdateCheckSource.Manual, ReminderEligible = false };
                 StateChanged?.Invoke(_state);
             }
             return Task.FromResult(_state);
@@ -288,7 +313,15 @@ public sealed class UpdateCheckCoordinator : IDisposable
         _activeCancellation?.Dispose();
         _activeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var generation = ++_generation;
-        _state = _state with { Phase = UpdateCheckPhase.Checking, FetchStatus = null, RetryAfterUtc = null, Warning = null };
+        _state = _state with
+        {
+            Phase = UpdateCheckPhase.Checking,
+            FetchStatus = null,
+            RetryAfterUtc = null,
+            Warning = null,
+            CheckSource = isManual ? UpdateCheckSource.Manual : UpdateCheckSource.Automatic,
+            ReminderEligible = false
+        };
         StateChanged?.Invoke(_state);
         _activeTask = RunCheckAsync(generation, _activeCancellation.Token);
         return _activeTask;
@@ -320,7 +353,8 @@ public sealed class UpdateCheckCoordinator : IDisposable
                 _cache.RateLimitUntilUtc = fetch.RetryAfterUtc;
             }
             cacheToSave = _cache.Clone();
-            state = BuildResultState(fetch, generation == _generation, attemptSave.Warning);
+            var source = _activeIsManual ? UpdateCheckSource.Manual : UpdateCheckSource.Automatic;
+            state = BuildResultState(fetch, generation == _generation, source, attemptSave.Warning);
             if (generation == _generation) _state = state;
         }
         var save = await _store.SaveCacheAsync(cacheToSave, CancellationToken.None).ConfigureAwait(false);
@@ -342,7 +376,11 @@ public sealed class UpdateCheckCoordinator : IDisposable
         return state;
     }
 
-    private UpdateCoordinatorState BuildResultState(UpdateFetchResult fetch, bool currentGeneration, string? warning)
+    private UpdateCoordinatorState BuildResultState(
+        UpdateFetchResult fetch,
+        bool currentGeneration,
+        UpdateCheckSource source,
+        string? warning)
     {
         if (!currentGeneration) return _state;
         if (fetch.Status == UpdateFetchStatus.Success)
@@ -350,17 +388,17 @@ public sealed class UpdateCheckCoordinator : IDisposable
             var selection = SelectFromCache();
             return selection.Status switch
             {
-                UpdateSelectionStatus.UpdateAvailable => CreateState(UpdateCheckPhase.UpdateAvailable, selection.Candidate, false, warning, fetchStatus: fetch.Status),
-                UpdateSelectionStatus.NoUpdate => CreateState(UpdateCheckPhase.NoUpdate, selection.Candidate, false, warning, fetchStatus: fetch.Status),
-                UpdateSelectionStatus.NoRelease => CreateState(UpdateCheckPhase.NoRelease, warning: warning, fetchStatus: fetch.Status),
-                _ => CreateState(UpdateCheckPhase.Failed, warning: JoinWarnings(warning, "更新发布地址无效。"), fetchStatus: UpdateFetchStatus.InvalidResponse)
+                UpdateSelectionStatus.UpdateAvailable => CreateState(UpdateCheckPhase.UpdateAvailable, selection.Candidate, false, warning, fetchStatus: fetch.Status, source: source),
+                UpdateSelectionStatus.NoUpdate => CreateState(UpdateCheckPhase.NoUpdate, selection.Candidate, false, warning, fetchStatus: fetch.Status, source: source),
+                UpdateSelectionStatus.NoRelease => CreateState(UpdateCheckPhase.NoRelease, warning: warning, fetchStatus: fetch.Status, source: source),
+                _ => CreateState(UpdateCheckPhase.Failed, warning: JoinWarnings(warning, "更新发布地址无效。"), fetchStatus: UpdateFetchStatus.InvalidResponse, source: source)
             };
         }
         return fetch.Status switch
         {
-            UpdateFetchStatus.RateLimited => CreateState(UpdateCheckPhase.RateLimited, retryAfterUtc: fetch.RetryAfterUtc, warning: warning, fetchStatus: fetch.Status),
-            UpdateFetchStatus.Cancelled => CreateState(UpdateCheckPhase.Cancelled, warning: warning, fetchStatus: fetch.Status),
-            _ => CreateState(UpdateCheckPhase.Failed, warning: warning, fetchStatus: fetch.Status)
+            UpdateFetchStatus.RateLimited => CreateState(UpdateCheckPhase.RateLimited, retryAfterUtc: fetch.RetryAfterUtc, warning: warning, fetchStatus: fetch.Status, source: source),
+            UpdateFetchStatus.Cancelled => CreateState(UpdateCheckPhase.Cancelled, warning: warning, fetchStatus: fetch.Status, source: source),
+            _ => CreateState(UpdateCheckPhase.Failed, warning: warning, fetchStatus: fetch.Status, source: source)
         };
     }
 
@@ -430,14 +468,30 @@ public sealed class UpdateCheckCoordinator : IDisposable
         bool isHistorical = false,
         string? warning = null,
         DateTimeOffset? retryAfterUtc = null,
-        UpdateFetchStatus? fetchStatus = null)
+        UpdateFetchStatus? fetchStatus = null,
+        UpdateCheckSource source = UpdateCheckSource.None)
     {
-        var reminder = _preferences.AutomaticCheckEnabled && phase == UpdateCheckPhase.UpdateAvailable && candidate is not null &&
+        var reminder = source == UpdateCheckSource.Automatic && !isHistorical &&
+            _preferences.AutomaticCheckEnabled && phase == UpdateCheckPhase.UpdateAvailable && candidate is not null &&
             !_shownReminders.Contains(candidate.Version.Identity) &&
             !_preferences.SkippedVersions.Contains(candidate.Version.Identity, StringComparer.Ordinal) &&
             (!_preferences.RemindAfterUtc.TryGetValue(candidate.Version.Identity, out var until) || until <= _timeProvider.GetUtcNow());
         return new UpdateCoordinatorState(phase, fetchStatus, UpdatePreferencesSnapshot.From(_preferences), _preferencesEditable, candidate, isHistorical,
-            _cache.LastAttemptUtc, _cache.LastSuccessUtc, retryAfterUtc ?? _cache.RateLimitUntilUtc, reminder, warning);
+            _cache.LastAttemptUtc, _cache.LastSuccessUtc, retryAfterUtc ?? _cache.RateLimitUntilUtc, reminder, warning, source,
+            CreateLastSuccessfulResult());
+    }
+
+    private UpdateHistoricalResult? CreateLastSuccessfulResult()
+    {
+        if (_currentVersion is null || _cache.LastSuccessUtc is not { } checkedAt || _cache.Pages.Count == 0) return null;
+        var selection = SelectFromCache();
+        return selection.Status switch
+        {
+            UpdateSelectionStatus.UpdateAvailable => new UpdateHistoricalResult(UpdateCheckPhase.UpdateAvailable, selection.Candidate, checkedAt),
+            UpdateSelectionStatus.NoUpdate => new UpdateHistoricalResult(UpdateCheckPhase.NoUpdate, selection.Candidate, checkedAt),
+            UpdateSelectionStatus.NoRelease => new UpdateHistoricalResult(UpdateCheckPhase.NoRelease, null, checkedAt),
+            _ => null
+        };
     }
 
     private void PublishWarning(string? warning)
