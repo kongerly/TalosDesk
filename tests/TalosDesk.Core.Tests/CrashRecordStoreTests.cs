@@ -33,6 +33,30 @@ public sealed class CrashRecordStoreTests
     }
 
     [TestMethod]
+    public void PersistsOccurredTimeAsUtcWithoutDisplayConversion()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var occurredAtUtc = new DateTimeOffset(2026, 10, 1, 9, 44, 46, 996, TimeSpan.Zero);
+        var store = new CrashRecordStore(
+            Path.Combine(sandbox.Path, "workspace.json"),
+            new FixedTimeProvider(occurredAtUtc));
+
+        var result = store.Write(
+            new InvalidOperationException(),
+            CrashSource.Dispatcher,
+            true,
+            "0.2.0",
+            "Preview");
+
+        Assert.AreEqual(CrashWriteStatus.Written, result.Status);
+        var record = store.Read(result.FileName!).Record!;
+        Assert.AreEqual(occurredAtUtc, record.OccurredAtUtc);
+        Assert.AreEqual(TimeSpan.Zero, record.OccurredAtUtc.Offset);
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(store.RootPath, result.FileName!)));
+        Assert.AreEqual(occurredAtUtc, json.RootElement.GetProperty("OccurredAtUtc").GetDateTimeOffset());
+    }
+
+    [TestMethod]
     public void TruncatesLargeAggregateAndLongMetadata()
     {
         using var sandbox = new TemporaryDirectory();

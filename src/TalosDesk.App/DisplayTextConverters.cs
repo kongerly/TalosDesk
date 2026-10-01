@@ -35,3 +35,27 @@ public sealed class CommandGroupModeToChineseConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         Binding.DoNothing;
 }
+
+public sealed class UtcToLocalTimeConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is DateTimeOffset timestamp ? CrashTimestampFormatter.FormatLocal(timestamp) : string.Empty;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        Binding.DoNothing;
+}
+
+internal static class CrashTimestampFormatter
+{
+    internal static string FormatLocal(
+        DateTimeOffset timestamp,
+        TimeZoneInfo? timeZone = null,
+        bool includeMilliseconds = false)
+    {
+        var local = TimeZoneInfo.ConvertTime(timestamp, timeZone ?? TimeZoneInfo.Local);
+        var format = includeMilliseconds
+            ? "yyyy-MM-dd HH:mm:ss.fff"
+            : "yyyy-MM-dd HH:mm:ss";
+        return local.ToString(format, CultureInfo.InvariantCulture);
+    }
+}

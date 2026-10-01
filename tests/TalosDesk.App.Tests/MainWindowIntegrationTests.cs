@@ -148,6 +148,8 @@ public sealed class MainWindowIntegrationTests
                         var diagnosticsEnabled = (CheckBox)window.FindName("DiagnosticEnabledCheckBox");
                         Assert.IsTrue(diagnosticsEnabled.IsChecked);
                         Assert.IsTrue(diagnosticsEnabled.IsEnabled);
+                        Assert.AreEqual("诊断时间按当前 Windows 时区显示；文件中仍以 UTC 保存。",
+                            ((TextBlock)window.FindName("DiagnosticTimeZoneHintText")).Text);
                         Assert.AreEqual("0 条 · 0 B", ((TextBlock)window.FindName("DiagnosticSummaryText")).Text);
                         Assert.IsFalse(Directory.Exists(workspace + ".crashes"));
                         diagnosticsEnabled.IsChecked = false;
@@ -241,6 +243,26 @@ public sealed class MainWindowIntegrationTests
                     {
                         progress.Stage = "读取历史 stderr 并运行顺序分组";
                         ((Button)window.FindName("OutputPageButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        window.Width = window.MinWidth;
+                        window.UpdateLayout();
+                        var outputPage = (Grid)window.FindName("OutputPage");
+                        var clearHistory = (Button)window.FindName("ClearHistoryButton");
+                        var clearHistoryBounds = clearHistory.TransformToAncestor(outputPage)
+                            .TransformBounds(new Rect(clearHistory.RenderSize));
+                        Assert.IsTrue(clearHistory.IsVisible && clearHistory.ActualWidth > 0,
+                            "最小窗口宽度下应显示清理历史日志按钮。");
+                        Assert.IsLessThanOrEqualTo(outputPage.ActualWidth + 0.5, clearHistoryBounds.Right,
+                            $"清理历史日志按钮超出输出页：右边界 {clearHistoryBounds.Right:F1}，页面宽度 {outputPage.ActualWidth:F1}。");
+                        var logStatus = (TextBlock)window.FindName("LogStatusText");
+                        logStatus.Text = "本次日志未保存：日志目录或设置不可用。";
+                        window.UpdateLayout();
+                        var logStatusBounds = logStatus.TransformToAncestor(outputPage)
+                            .TransformBounds(new Rect(logStatus.RenderSize));
+                        Assert.IsTrue(logStatus.IsVisible && logStatus.ActualHeight > 0,
+                            "最小窗口宽度下应显示日志警告。");
+                        Assert.IsLessThanOrEqualTo(outputPage.ActualWidth + 0.5, logStatusBounds.Right,
+                            $"日志警告超出输出页：右边界 {logStatusBounds.Right:F1}，页面宽度 {outputPage.ActualWidth:F1}。");
+                        logStatus.Text = string.Empty;
                         var history = (ComboBox)window.FindName("RunHistoryComboBox");
                         if (history.Items.Count < 2) return;
                         history.SelectedIndex = 1;
