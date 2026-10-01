@@ -19,6 +19,7 @@
         <local:CommandKindToChineseConverter x:Key="CommandKindConverter" />
         <local:OutputStreamToChineseConverter x:Key="OutputStreamConverter" />
         <local:CommandGroupModeToChineseConverter x:Key="CommandGroupModeConverter" />
+        <local:UtcToLocalTimeConverter x:Key="UtcToLocalTimeConverter" />
         <DrawingBrush x:Key="BlueprintGridBrush" TileMode="Tile" Viewport="0,0,32,32" ViewportUnits="Absolute" Viewbox="0,0,32,32" ViewboxUnits="Absolute">
             <DrawingBrush.Drawing>
                 <GeometryDrawing>
@@ -424,25 +425,30 @@
                                 <Button x:Name="CopySelectedOutputButton" Content="复制所选" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="CopySelectedOutput_Click" IsEnabled="False" ToolTip="先拖选任意文本，再复制；Ctrl+A 可选择全部输出" />
                                 <Button x:Name="ClearOutputButton" Content="清空显示" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearOutput_Click" IsEnabled="False" />
                             </StackPanel>
-                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,10,0,0">
-                                <TextBlock Text="运行批次" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <ComboBox x:Name="RunHistoryComboBox" Width="225" DisplayMemberPath="Label" SelectionChanged="RunHistoryComboBox_SelectionChanged" />
-                                <TextBlock Text="输出通道" VerticalAlignment="Center" Margin="10,0,6,0" />
-                                <ComboBox x:Name="HistoryStreamComboBox" Width="100" SelectionChanged="HistoryStreamComboBox_SelectionChanged">
-                                    <ComboBoxItem Content="标准输出" /><ComboBoxItem Content="诊断输出" />
-                                </ComboBox>
-                                <TextBlock x:Name="LogStatusText" Foreground="#935B42" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" />
-                            </StackPanel>
-                            <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
-                                <TextBlock Text="日志上限" VerticalAlignment="Center" Margin="0,0,5,0" />
-                                <TextBox x:Name="LogLimitMbTextBox" Style="{StaticResource EditorTextBox}" Width="65" Height="30" Padding="5,2" FontFamily="{StaticResource CodeFont}" FontSize="12" />
-                                <TextBlock Text="MB · 保留" VerticalAlignment="Center" Margin="5,0" />
-                                <TextBox x:Name="LogRetentionDaysTextBox" Style="{StaticResource EditorTextBox}" Width="48" Height="30" Padding="5,2" FontFamily="{StaticResource CodeFont}" FontSize="12" />
-                                <TextBlock Text="天" VerticalAlignment="Center" Margin="5,0,8,0" />
-                                <Button x:Name="SaveLogSettingsButton" Content="保存设置" Style="{StaticResource SidebarButton}" Click="SaveLogSettings_Click" />
-                                <Button x:Name="OpenLogFolderButton" Content="打开目录" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="OpenLogFolder_Click" />
-                                <Button x:Name="ClearHistoryButton" Content="清理历史日志" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearHistory_Click" />
-                            </StackPanel>
+                            <Grid Grid.Row="2" Margin="0,10,0,0">
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <WrapPanel>
+                                    <TextBlock Text="运行批次" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <ComboBox x:Name="RunHistoryComboBox" Width="225" DisplayMemberPath="Label" SelectionChanged="RunHistoryComboBox_SelectionChanged" />
+                                    <TextBlock Text="输出通道" VerticalAlignment="Center" Margin="10,0,6,0" />
+                                    <ComboBox x:Name="HistoryStreamComboBox" Width="100" SelectionChanged="HistoryStreamComboBox_SelectionChanged">
+                                        <ComboBoxItem Content="标准输出" /><ComboBoxItem Content="诊断输出" />
+                                    </ComboBox>
+                                </WrapPanel>
+                                <TextBlock x:Name="LogStatusText" Grid.Row="1" Foreground="#935B42" Margin="0,5,0,0" TextWrapping="Wrap" />
+                            </Grid>
+                            <WrapPanel Grid.Row="3" Margin="0,8,0,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,8,6">
+                                    <TextBlock Text="日志上限" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                    <TextBox x:Name="LogLimitMbTextBox" Style="{StaticResource EditorTextBox}" Width="65" Height="30" Padding="5,2" FontFamily="{StaticResource CodeFont}" FontSize="12" />
+                                    <TextBlock Text="MB · 保留" VerticalAlignment="Center" Margin="5,0" />
+                                    <TextBox x:Name="LogRetentionDaysTextBox" Style="{StaticResource EditorTextBox}" Width="48" Height="30" Padding="5,2" FontFamily="{StaticResource CodeFont}" FontSize="12" />
+                                    <TextBlock Text="天" VerticalAlignment="Center" Margin="5,0,0,0" />
+                                </StackPanel>
+                                <Button x:Name="SaveLogSettingsButton" Content="保存设置" Style="{StaticResource SidebarButton}" Margin="0,0,0,6" Click="SaveLogSettings_Click" />
+                                <Button x:Name="OpenLogFolderButton" Content="打开目录" Style="{StaticResource SidebarButton}" Margin="7,0,0,6" Click="OpenLogFolder_Click" />
+                                <Button x:Name="ClearHistoryButton" Content="清理历史日志" Style="{StaticResource SidebarButton}" Margin="7,0,0,6" Click="ClearHistory_Click" />
+                            </WrapPanel>
                             <StackPanel Grid.Row="4" Margin="0,8,0,8">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
                                     <Button x:Name="ChangeLogFolderButton" Content="选择日志位置" Style="{StaticResource SidebarButton}" Click="ChangeLogFolder_Click" />
@@ -563,6 +569,7 @@
                                     <TextBlock x:Name="DiagnosticSummaryText" Grid.Column="1" Text="0 条 · 0 B" FontFamily="{StaticResource CodeFont}" FontSize="10" VerticalAlignment="Top" />
                                 </Grid>
                                 <CheckBox x:Name="DiagnosticEnabledCheckBox" Content="记录本工作区的最小崩溃诊断（默认开启）" Margin="0,12,0,0" Click="DiagnosticEnabledCheckBox_Click" />
+                                <TextBlock x:Name="DiagnosticTimeZoneHintText" Text="诊断时间按当前 Windows 时区显示；文件中仍以 UTC 保存。" Foreground="{StaticResource MutedBrush}" FontSize="10" TextWrapping="Wrap" Margin="0,7,0,0" />
                                 <TextBlock Text="诊断目录" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,10,0,2" />
                                 <TextBlock x:Name="DiagnosticPathText" FontFamily="{StaticResource CodeFont}" FontSize="9" TextWrapping="Wrap" />
                                 <TextBlock Text="诊断设置" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,7,0,2" />
@@ -574,7 +581,7 @@
                                             <DataTemplate>
                                                 <StackPanel Margin="3">
                                                     <TextBlock Text="{Binding ExceptionType, TargetNullValue=记录损坏}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding OccurredAtUtc, StringFormat={}{0:yyyy-MM-dd HH:mm:ss} UTC}" Foreground="{StaticResource MutedBrush}" FontFamily="{StaticResource CodeFont}" FontSize="9" />
+                                                    <TextBlock Text="{Binding OccurredAtUtc, Converter={StaticResource UtcToLocalTimeConverter}}" Foreground="{StaticResource MutedBrush}" FontFamily="{StaticResource CodeFont}" FontSize="9" />
                                                 </StackPanel>
                                             </DataTemplate>
                                         </ListBox.ItemTemplate>

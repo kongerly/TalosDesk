@@ -86,7 +86,7 @@ internal static class WindowsNative
             // Captured stdout and stderr are decoded as UTF-8 by the readers below.
             // Set PowerShell's console output encoding explicitly so Windows' active
             // legacy code page cannot corrupt non-ASCII paths or command output.
-            var encodedCommand = $"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); {command}";
+            var encodedCommand = $"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $PSStyle.OutputRendering = 'PlainText'; {command}";
             var commandLine = new StringBuilder($"\"{shellPath}\" -NoLogo -NoProfile -NonInteractive -Command {QuoteArgument(encodedCommand)}");
 
             if (environmentOverrides is { Count: > 0 })
@@ -434,7 +434,7 @@ internal static class WindowsNative
             if (File.Exists(candidate)) return candidate;
         }
 
-        throw new FileNotFoundException("PowerShell 7 (pwsh.exe) was not found on the application PATH.");
+        throw new FileNotFoundException("未在应用启动时继承的 PATH 中找到 PowerShell 7（pwsh.exe）。");
     }
 
     private static string QuoteArgument(string argument)

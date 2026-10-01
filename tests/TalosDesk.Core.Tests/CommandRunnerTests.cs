@@ -47,6 +47,22 @@ public sealed class CommandRunnerTests
     }
 
     [TestMethod]
+    public async Task PowerShellDiagnosticOutputIsCapturedWithoutAnsiControlSequences()
+    {
+        using var sandbox = new TemporaryDirectory();
+        await using var session = _runner.Start(Guid.NewGuid(), "Write-Error 'sample-failure'; exit 2", sandbox.Path);
+        var result = await session.Completion.WaitAsync(TimeSpan.FromSeconds(20));
+        var diagnosticOutput = string.Join('\n', session.GetRecentOutput()
+            .Where(line => line.Stream == "stderr")
+            .Select(line => line.Text));
+
+        Assert.AreEqual(CommandRunState.Failed, result.State);
+        Assert.AreEqual(2, result.ExitCode);
+        StringAssert.Contains(diagnosticOutput, "sample-failure");
+        Assert.DoesNotContain('\u001b', diagnosticOutput);
+    }
+
+    [TestMethod]
     public async Task MissingCommandAndUnhandledExceptionAreReportedAsFailures()
     {
         using var sandbox = new TemporaryDirectory();
@@ -99,8 +115,8 @@ public sealed class CommandRunnerTests
         var exception = Assert.ThrowsExactly<FileNotFoundException>(() =>
             WindowsNative.FindPowerShellPath(sandbox.Path, sandbox.Path));
 
-        StringAssert.Contains(exception.Message, "PowerShell 7 (pwsh.exe)");
-        StringAssert.Contains(exception.Message, "application PATH");
+        StringAssert.Contains(exception.Message, "未在应用启动时继承的 PATH 中找到 PowerShell 7（pwsh.exe）");
+        StringAssert.Contains(exception.Message, "PATH");
     }
 
     [TestMethod]

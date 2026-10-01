@@ -288,12 +288,12 @@ public partial class MainWindow : Window
         finally { _syncingDiagnosticControls = false; }
     }
 
-    private static string FormatCrashRecord(CrashRecord record)
+    internal static string FormatCrashRecord(CrashRecord record, TimeZoneInfo? timeZone = null)
     {
         var lines = new List<string>
         {
             $"记录：{record.Id}",
-            $"时间（UTC）：{record.OccurredAtUtc:O}",
+            $"时间（本地）：{CrashTimestampFormatter.FormatLocal(record.OccurredAtUtc, timeZone, includeMilliseconds: true)}",
             $"版本：{record.ApplicationVersion} / {record.ReleaseChannel}",
             $"系统：{record.OperatingSystem}",
             $"运行时：{record.Runtime} / {record.Architecture}",
@@ -2301,9 +2301,24 @@ public partial class MainWindow : Window
                 }
             }
             RefreshCommandSelection();
-            error = exception.Message;
+            error = FormatCommandStartError(exception, workingDirectory);
             return false;
         }
+    }
+
+    internal static string FormatCommandStartError(Exception exception, string workingDirectory)
+    {
+        return exception switch
+        {
+            DirectoryNotFoundException => $"运行目录不存在：{workingDirectory}",
+            FileNotFoundException => "未在应用启动时继承的 PATH 中找到 PowerShell 7（pwsh.exe）。",
+            UnauthorizedAccessException => $"无法访问运行目录或启动 PowerShell 7，请检查权限后重试：{workingDirectory}",
+            Win32Exception win32 => $"无法启动 PowerShell 7（Windows 错误代码 {win32.NativeErrorCode}）。",
+            InvalidOperationException => "命令当前无法启动，可能已在运行。",
+            ArgumentException => "命令或运行环境无效，未能启动。",
+            IOException => "启动命令时发生文件系统错误。",
+            _ => "命令启动失败。"
+        };
     }
 
     private async Task CompleteRunAsync(Guid commandId, CommandRunSession session, RunLogWriter? logWriter)
