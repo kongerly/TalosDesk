@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: TalosDesk 版本
-      placeholder: 例如 0.2.0 Preview
+      placeholder: 例如 0.2.0 Stable
     validations:
       required: true
   - type: input
