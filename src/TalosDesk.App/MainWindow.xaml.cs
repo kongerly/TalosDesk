@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private enum MainPage { Overview, Commands, Groups, Output, About }
 
     private readonly WorkspaceStore _store;
+    private readonly WindowSettingsStore _windowSettingsStore;
     private readonly UpdateStateStore _updateStateStore;
     private readonly ApplicationBuildInfo _buildInfo;
     private readonly ReleasePageNavigator _releasePageNavigator;
@@ -117,6 +118,7 @@ public partial class MainWindow : Window
         AppDiagnosticsController? diagnosticsController = null)
     {
         _store = store;
+        _windowSettingsStore = new WindowSettingsStore(store.FilePath);
         _updateStateStore = new UpdateStateStore(store.FilePath);
         _buildInfo = buildInfo ?? ApplicationBuildInfo.Read(typeof(App).Assembly);
         _releasePageNavigator = new ReleasePageNavigator(releasePageLauncher ?? new SystemReleasePageLauncher());
@@ -128,6 +130,7 @@ public partial class MainWindow : Window
         _runLogStore = new RunLogStore(store.FilePath);
         _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
         InitializeComponent();
+        WindowPlacementController.Attach(this, _windowSettingsStore);
         if (!string.IsNullOrWhiteSpace(profileLabel))
         {
             Title = $"TalosDesk · {profileLabel}";
@@ -153,6 +156,7 @@ public partial class MainWindow : Window
         };
         _commandDragScrollTimer.Tick += CommandDragScrollTimer_Tick;
         OutputCommandList.ItemsSource = _outputCommands;
+        OutputCommandComboBox.ItemsSource = _outputCommands;
         RunHistoryComboBox.ItemsSource = _runHistory;
         HistoryStreamComboBox.SelectedIndex = 0;
         UpdateLogPathDisplay();
@@ -163,6 +167,39 @@ public partial class MainWindow : Window
 
     public ObservableCollection<ProjectDefinition> Projects { get; } = [];
     public ObservableCollection<CommandGroupItem> GroupItems { get; } = [];
+
+    private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (SidebarColumn is null || OutputLayoutGrid is null) return;
+        var compact = ActualWidth < 1200;
+        SidebarColumn.Width = new GridLength(compact ? 210 : 280);
+        OutputLayoutGrid.ColumnDefinitions[0].Width = compact ? new GridLength(1, GridUnitType.Star) : new GridLength(235);
+        OutputLayoutGrid.ColumnDefinitions[1].Width = new GridLength(compact ? 0 : 12);
+        OutputLayoutGrid.ColumnDefinitions[2].Width = compact ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        OutputLayoutGrid.RowDefinitions[0].Height = compact ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+        OutputLayoutGrid.RowDefinitions[1].Height = compact ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        Grid.SetColumn(OutputDetailScroll, compact ? 0 : 2);
+        Grid.SetRow(OutputDetailScroll, compact ? 1 : 0);
+        OutputDetailScroll.Margin = new Thickness(0, compact ? 10 : 0, 0, 0);
+        OutputCommandPanel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        OutputCommandComboBox.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+        SetStackedLayout(AboutSettingsGrid, AboutStatusPanel, compact);
+        SetStackedLayout(DiagnosticLayoutGrid, DiagnosticDetailTextBox, compact);
+    }
+
+    private static void SetStackedLayout(Grid grid, FrameworkElement second, bool stacked)
+    {
+        grid.ColumnDefinitions[1].Width = new GridLength(stacked ? 0 : 12);
+        grid.ColumnDefinitions[2].Width = stacked ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        Grid.SetColumn(second, stacked ? 0 : 2);
+        Grid.SetRow(second, stacked ? 1 : 0);
+        second.Margin = new Thickness(0, stacked ? 12 : 0, 0, 0);
+    }
+
+    private void OutputControls_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        OutputSurface.MinHeight = e.NewSize.Height + 180;
+    }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {

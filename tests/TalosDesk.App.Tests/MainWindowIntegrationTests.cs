@@ -23,8 +23,9 @@ public sealed class MainWindowIntegrationTests
         {
             try
             {
-                var application = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+                var application = new App(launchWorkspace: false) { ShutdownMode = ShutdownMode.OnExplicitShutdown };
                 application.InitializeComponent();
+                WindowLayoutRegression.Run();
                 RunRegression(progress);
                 application.Shutdown();
             }
@@ -37,8 +38,8 @@ public sealed class MainWindowIntegrationTests
         thread.IsBackground = true;
         thread.Start();
 
-        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(40)),
-            $"桌面测试线程没有按时退出；阶段：{progress.Stage}，页面阶段：{progress.Phase}。");
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(90)),
+            $"桌面测试线程没有按时退出；阶段：{progress.Stage}，页面阶段：{progress.Phase}，布局：{WindowLayoutRegression.Stage}。");
         if (failure is not null) throw new AssertFailedException($"桌面集成检查失败：{failure}");
     }
 
@@ -143,8 +144,8 @@ public sealed class MainWindowIntegrationTests
                         Assert.IsFalse(File.Exists(workspace + ".update-cache.json"));
                         ((Button)window.FindName("AboutPageButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         Assert.AreEqual(Visibility.Visible, ((Grid)window.FindName("AboutPage")).Visibility);
-                        Assert.AreEqual(1050d, window.MinWidth);
-                        Assert.AreEqual(650d, window.MinHeight);
+                        Assert.AreEqual(800d, window.MinWidth);
+                        Assert.AreEqual(520d, window.MinHeight);
                         var diagnosticsEnabled = (CheckBox)window.FindName("DiagnosticEnabledCheckBox");
                         Assert.IsTrue(diagnosticsEnabled.IsChecked);
                         Assert.IsTrue(diagnosticsEnabled.IsEnabled);
@@ -246,6 +247,8 @@ public sealed class MainWindowIntegrationTests
                         window.Width = window.MinWidth;
                         window.UpdateLayout();
                         var outputPage = (Grid)window.FindName("OutputPage");
+                        ((Expander)window.FindName("LogSettingsExpander")).IsExpanded = true;
+                        window.UpdateLayout();
                         var clearHistory = (Button)window.FindName("ClearHistoryButton");
                         var clearHistoryBounds = clearHistory.TransformToAncestor(outputPage)
                             .TransformBounds(new Rect(clearHistory.RenderSize));
@@ -286,8 +289,8 @@ public sealed class MainWindowIntegrationTests
                         Assert.AreEqual(3, handler.RequestCount);
                         ((Button)window.FindName("AboutPageButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         Assert.AreEqual(Visibility.Visible, ((Grid)window.FindName("AboutPage")).Visibility);
-                        Assert.AreEqual(1050d, window.MinWidth);
-                        Assert.AreEqual(650d, window.MinHeight);
+                        Assert.AreEqual(800d, window.MinWidth);
+                        Assert.AreEqual(520d, window.MinHeight);
                         phase = 11;
                         timer.Stop();
                         window.Close();
@@ -391,4 +394,5 @@ public sealed class MainWindowIntegrationTests
         public string Stage { get; set; } = "未启动";
         public int Phase { get; set; } = -1;
     }
+
 }

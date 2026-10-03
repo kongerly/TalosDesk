@@ -7,6 +7,7 @@ public partial class WorkspaceImportPreviewWindow : Window
     public WorkspaceImportPreviewWindow(string preview)
     {
         InitializeComponent();
+        WindowPlacementController.Attach(this);
         PreviewBox.Text = preview;
     }
 

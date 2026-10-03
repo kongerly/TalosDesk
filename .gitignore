@@ -15,6 +15,7 @@ TestResults/
 workspace.json
 *.logs/
 *.log-location.json
+*.window-settings.json
 *.diagnostics-settings.json
 *.crashes/
 *.secrets.json

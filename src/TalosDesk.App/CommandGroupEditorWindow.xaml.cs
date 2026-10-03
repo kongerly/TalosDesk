@@ -13,6 +13,16 @@ public partial class CommandGroupEditorWindow : Window
     public CommandGroupEditorWindow(IReadOnlyList<CommandDefinition> commands, CommandGroupDefinition? existing = null)
     {
         InitializeComponent();
+        WindowPlacementController.Attach(this);
+        SizeChanged += (_, _) =>
+        {
+            var stacked = ActualWidth < 760;
+            MemberLayout.ColumnDefinitions[1].Width = new GridLength(stacked ? 0 : 14);
+            MemberLayout.ColumnDefinitions[2].Width = stacked ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+            Grid.SetColumn(SelectedMemberPanel, stacked ? 0 : 2);
+            Grid.SetRow(SelectedMemberPanel, stacked ? 1 : 0);
+            SelectedMemberPanel.Margin = new Thickness(0, stacked ? 12 : 0, 0, 0);
+        };
         _groupId = existing?.Id ?? Guid.Empty;
         var order = existing?.CommandIds.Select((id, index) => (id, index)).ToDictionary(item => item.id, item => item.index) ?? [];
         foreach (var command in commands)
