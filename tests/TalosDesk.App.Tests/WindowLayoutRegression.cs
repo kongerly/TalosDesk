@@ -163,7 +163,7 @@ internal static class WindowLayoutRegression
     private static MainWindow Open(WorkspaceStore store)
     {
         Stage = "创建窗口";
-        var window = new MainWindow(store, "隔离布局测试");
+        var window = new MainWindow(store, "隔离布局测试", null, null, null, trayIcon: new TestTrayIcon());
         Stage = "显示窗口";
         window.Show();
         Stage = "等待初始化";

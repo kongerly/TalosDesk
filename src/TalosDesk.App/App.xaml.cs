@@ -1,6 +1,5 @@
 ﻿using System.Configuration;
 using System.Windows;
-using System.Windows.Interop;
 using TalosDesk.Core.Configuration;
 using TalosDesk.Core.Diagnostics;
 
@@ -60,8 +59,8 @@ public partial class App : Application
         MainWindow = window;
         _instanceCoordinator.StartListening(() => Dispatcher.BeginInvoke(async () =>
         {
+            window.RestoreWindow();
             await window.ReloadWorkspaceForSecondaryLaunchAsync();
-            ActivateWindow(window);
         }));
         window.Show();
     }
@@ -85,15 +84,6 @@ public partial class App : Application
     {
         _instanceCoordinator?.Dispose();
         base.OnExit(e);
-    }
-
-    private static void ActivateWindow(Window window)
-    {
-        if (!window.IsVisible) window.Show();
-        if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
-        window.Activate();
-        var handle = new WindowInteropHelper(window).Handle;
-        if (handle != IntPtr.Zero) NativeMethods.SetForegroundWindow(handle);
     }
 
 }
