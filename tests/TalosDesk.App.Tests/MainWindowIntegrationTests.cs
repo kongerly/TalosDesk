@@ -25,6 +25,8 @@ public sealed class MainWindowIntegrationTests
             {
                 var application = new App(launchWorkspace: false) { ShutdownMode = ShutdownMode.OnExplicitShutdown };
                 application.InitializeComponent();
+                TrayIconControllerTests.Run();
+                TrayCommandRegression.Run();
                 WindowLayoutRegression.Run();
                 RunRegression(progress);
                 application.Shutdown();
@@ -38,9 +40,9 @@ public sealed class MainWindowIntegrationTests
         thread.IsBackground = true;
         thread.Start();
 
-        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(90)),
-            $"桌面测试线程没有按时退出；阶段：{progress.Stage}，页面阶段：{progress.Phase}，布局：{WindowLayoutRegression.Stage}。");
-        if (failure is not null) throw new AssertFailedException($"桌面集成检查失败：{failure}");
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(120)),
+            $"桌面测试线程没有按时退出；阶段：{progress.Stage}，页面阶段：{progress.Phase}，布局：{WindowLayoutRegression.Stage}，托盘：{TrayCommandRegression.Stage}。");
+        if (failure is not null) throw new AssertFailedException($"桌面集成检查失败（托盘：{TrayCommandRegression.Stage}）：{failure}");
     }
 
     private static void RunRegression(ProgressState progress)
@@ -116,7 +118,7 @@ public sealed class MainWindowIntegrationTests
                 "隔离测试",
                 coordinator,
                 new ApplicationBuildInfo("0.1.1", "0.1.1", ReleaseChannel.Preview, null),
-                new RecordingLauncher());
+                new RecordingLauncher(), trayIcon: new TestTrayIcon());
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
             var phase = 0;
             var deadline = DateTime.UtcNow.AddSeconds(30);

@@ -25,6 +25,8 @@ public partial class MainWindow : Window
 
     private readonly WorkspaceStore _store;
     private readonly WindowSettingsStore _windowSettingsStore;
+    private readonly TrayIconController _trayController;
+    private readonly IMainWindowExitInteraction _exitInteraction;
     private readonly UpdateStateStore _updateStateStore;
     private readonly ApplicationBuildInfo _buildInfo;
     private readonly ReleasePageNavigator _releasePageNavigator;
@@ -69,6 +71,7 @@ public partial class MainWindow : Window
     private bool _saveFailed;
     private bool _workspaceChangeInProgress;
     private bool _allowClose;
+    private bool _closeInProgress;
     private bool _isStoppingForClose;
     private ProjectDefinition? _selectedProject;
     private CommandDefinition? _selectedCommand;
@@ -115,7 +118,9 @@ public partial class MainWindow : Window
         IReleasePageLauncher? releasePageLauncher,
         CrashRecordStore? crashRecordStore = null,
         DiagnosticSettingsStore? diagnosticSettingsStore = null,
-        AppDiagnosticsController? diagnosticsController = null)
+        AppDiagnosticsController? diagnosticsController = null,
+        ITrayIcon? trayIcon = null,
+        IMainWindowExitInteraction? exitInteraction = null)
     {
         _store = store;
         _windowSettingsStore = new WindowSettingsStore(store.FilePath);
@@ -129,8 +134,10 @@ public partial class MainWindow : Window
         _updateCoordinator = updateCoordinator ?? CreateUpdateCoordinator();
         _runLogStore = new RunLogStore(store.FilePath);
         _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
+        _exitInteraction = exitInteraction ?? new MainWindowExitInteraction();
         InitializeComponent();
         WindowPlacementController.Attach(this, _windowSettingsStore);
+        _trayController = new TrayIconController(this, _profileLabel, trayIcon ?? new WindowsTrayIcon());
         if (!string.IsNullOrWhiteSpace(profileLabel))
         {
             Title = $"TalosDesk · {profileLabel}";
@@ -167,6 +174,8 @@ public partial class MainWindow : Window
 
     public ObservableCollection<ProjectDefinition> Projects { get; } = [];
     public ObservableCollection<CommandGroupItem> GroupItems { get; } = [];
+
+    internal void RestoreWindow() => _trayController.RestoreWindow();
 
     private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -385,7 +394,7 @@ public partial class MainWindow : Window
 
     internal async Task ReloadWorkspaceForSecondaryLaunchAsync()
     {
-        if (!_workspaceLoaded || _workspaceChangeInProgress || _restartsInProgress.Count > 0 ||
+        if (!_workspaceLoaded || _workspaceChangeInProgress || _closeInProgress || _restartsInProgress.Count > 0 ||
             _sequentialGroupCancellations.Count > 0 || _sessions.Values.Any(session => !session.Completion.IsCompleted))
         {
             SaveStatusText.Text = "已有任务运行，未重新加载配置";
@@ -2663,6 +2672,11 @@ public partial class MainWindow : Window
     private async void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         if (_allowClose) return;
+        if (_closeInProgress)
+        {
+            e.Cancel = true;
+            return;
+        }
         if (_workspaceChangeInProgress)
         {
             e.Cancel = true;
@@ -2683,33 +2697,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (active.Length == 0 && activeSequences == 0)
-        {
-            e.Cancel = true;
-            await Task.WhenAll(_logFinalizations.Values.ToArray());
-            StopUpdatesForShutdown();
-            _allowClose = true;
-            Close();
-            return;
-        }
-
         e.Cancel = true;
-        var choice = MessageBox.Show(this,
-            activeSequences > 0
-                ? $"还有 {active.Length} 条命令正在运行，{activeSequences} 个顺序分组尚未完成。取消后续步骤、停止运行中的命令并退出吗？"
-                : $"还有 {active.Length} 条命令正在运行。停止这些命令并退出吗？",
-            "命令仍在运行", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (choice != MessageBoxResult.Yes) return;
-
-        StopUpdatesForShutdown();
-        _isStoppingForClose = true;
-        RunButton.IsEnabled = false;
-        StopButton.IsEnabled = false;
+        _closeInProgress = true;
         try
         {
+            if ((active.Length > 0 || activeSequences > 0) &&
+                !_exitInteraction.ConfirmExit(this, active.Length, activeSequences)) return;
+
+            _isStoppingForClose = true;
+            RefreshCommandSelection();
+            // 先结束 WPF 的 Closing 回调，后续才能安全恢复窗口或再次 Close。
+            await Task.Yield();
+            StopUpdatesForShutdown();
             foreach (var cancellation in _sequentialGroupCancellations.Values.ToArray()) cancellation.Cancel();
+            active = _sessions.Values.Where(session => !session.Completion.IsCompleted).ToArray();
             var groupTasks = _sequentialGroupTasks.Values.ToArray();
-            await Task.WhenAll(active.Select(session => session.StopAsync()));
+            await Task.WhenAll(active.Select(session => _exitInteraction.StopAsync(session)));
             await Task.WhenAll(active.Select(session => session.Completion));
             await Task.WhenAll(groupTasks);
             await Task.WhenAll(_logFinalizations.Values.ToArray());
@@ -2720,8 +2723,19 @@ public partial class MainWindow : Window
         {
             _isStoppingForClose = false;
             RefreshCommandSelection();
+            await Task.Yield();
             await RestoreUpdatesAfterFailedExitAsync();
-            MessageBox.Show(this, $"TalosDesk 无法确认所有命令均已停止，因此窗口保持打开。\n\n{exception.Message}", "仍有命令未停止", MessageBoxButton.OK, MessageBoxImage.Error);
+            RestoreWindow();
+            _exitInteraction.ReportFailure(this, exception);
+        }
+        finally
+        {
+            _closeInProgress = false;
+            if (!_allowClose)
+            {
+                _isStoppingForClose = false;
+                RefreshCommandSelection();
+            }
         }
     }
 
