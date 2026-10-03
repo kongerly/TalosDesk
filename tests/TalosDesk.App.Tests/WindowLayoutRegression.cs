@@ -32,12 +32,27 @@ internal static class WindowLayoutRegression
         try
         {
             window = Open(store);
-            foreach (var size in new[] { new Size(800, 520), new Size(1050, 650), new Size(1199, 700), new Size(1200, 700), new Size(1400, 860) })
+            var layouts = new[]
+            {
+                (Size: new Size(800, 520), Maximum: new Size(double.PositiveInfinity, double.PositiveInfinity)),
+                (Size: new Size(1050, 650), Maximum: new Size(double.PositiveInfinity, double.PositiveInfinity)),
+                (Size: new Size(1199, 700), Maximum: new Size(double.PositiveInfinity, double.PositiveInfinity)),
+                (Size: new Size(1200, 700), Maximum: new Size(double.PositiveInfinity, double.PositiveInfinity)),
+                (Size: new Size(1400, 860), Maximum: new Size(double.PositiveInfinity, double.PositiveInfinity)),
+                (Size: new Size(1400, 860), Maximum: new Size(1100, 700))
+            };
+            foreach (var (size, maximum) in layouts)
             {
                 Stage = $"调整大小 {size}";
+                window.MaxWidth = maximum.Width;
+                window.MaxHeight = maximum.Height;
                 window.Width = size.Width;
                 window.Height = size.Height;
                 Pump();
+                Console.WriteLine($"布局检查：请求 {size}，实际 {window.ActualWidth}x{window.ActualHeight}，上限 {maximum}，工作区 {SystemParameters.WorkArea}。");
+                if (double.IsFinite(maximum.Width))
+                    Assert.IsTrue(window.ActualWidth <= maximum.Width && window.ActualWidth < size.Width,
+                        "受限场景必须实际缩小窗口，验证请求尺寸与实际尺寸不同的情况。");
                 AssertButtonsReachable(window, (FrameworkElement)window.FindName("SidebarScroll"));
                 foreach (var page in new[] { "Overview", "Commands", "Groups", "Output", "About" })
                 {
@@ -49,7 +64,8 @@ internal static class WindowLayoutRegression
                     {
                         var combo = (ComboBox)window.FindName("OutputCommandComboBox");
                         var list = (ListBox)window.FindName("OutputCommandList");
-                        Assert.AreEqual(size.Width < 1200, combo.IsVisible);
+                        Assert.AreEqual(window.ActualWidth < 1200, combo.IsVisible,
+                            $"布局应由实际宽度决定：请求 {size.Width}，实际 {window.ActualWidth}。");
                         if (combo.IsVisible) combo.SelectedIndex = 0;
                         else list.SelectedIndex = 0;
                         Assert.AreSame(list.SelectedItem, combo.SelectedItem);
@@ -88,10 +104,15 @@ internal static class WindowLayoutRegression
             }
 
             var preferences = new WindowSettingsStore(store.FilePath);
-            window.Width = 1000;
-            window.Height = 600;
-            window.Left = SystemParameters.WorkArea.Left + 35;
-            window.Top = SystemParameters.WorkArea.Top + 40;
+            window.MaxWidth = double.PositiveInfinity;
+            window.MaxHeight = double.PositiveInfinity;
+            var workArea = SystemParameters.WorkArea;
+            window.Width = Math.Min(1000, workArea.Width);
+            window.Height = Math.Min(600, workArea.Height);
+            Pump();
+            // 先放进可用工作区，避免恢复时正确的边界修正被误判为位置丢失。
+            window.Left = workArea.Left + Math.Max(0, Math.Min(35, workArea.Width - window.ActualWidth));
+            window.Top = workArea.Top + Math.Max(0, Math.Min(40, workArea.Height - window.ActualHeight));
             Pump();
             var expected = new Rect(window.Left, window.Top, window.ActualWidth, window.ActualHeight);
             window.Close();
