@@ -12,6 +12,7 @@ public partial class ProjectEditorWindow : Window
     public ProjectEditorWindow(ProjectDefinition? existing = null)
     {
         InitializeComponent();
+        WindowPlacementController.Attach(this);
         if (existing is null) return;
 
         _projectId = existing.Id;

@@ -13,6 +13,7 @@ public partial class CommandEditorWindow : Window
     public CommandEditorWindow(string projectDirectory, CommandDefinition? existing = null)
     {
         InitializeComponent();
+        WindowPlacementController.Attach(this);
         _environmentVariables = existing?.EnvironmentVariables.Select(variable => variable.Clone()).ToList() ?? [];
         RefreshEnvironmentList();
         WorkingDirectoryBox.Text = existing?.WorkingDirectory ?? projectDirectory;

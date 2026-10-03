@@ -8,12 +8,20 @@ namespace TalosDesk.App;
 
 public partial class App : Application
 {
+    private readonly bool _launchWorkspace;
+
+    public App() : this(true) { }
+
+    // 桌面测试自行创建隔离窗口，不能解析测试宿主参数或打开正式工作区。
+    internal App(bool launchWorkspace) => _launchWorkspace = launchWorkspace;
+
     private WorkspaceInstanceCoordinator? _instanceCoordinator;
     private AppDiagnosticsController? _diagnostics;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (!_launchWorkspace) return;
 
         AppLaunchOptions options;
         try

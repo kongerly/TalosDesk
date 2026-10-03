@@ -12,6 +12,7 @@ public partial class EnvironmentVariableEditorWindow : Window
     public EnvironmentVariableEditorWindow(CommandEnvironmentVariable? original, IEnumerable<string> otherNames)
     {
         InitializeComponent();
+        WindowPlacementController.Attach(this);
         _original = original?.Clone();
         _otherNames = new HashSet<string>(otherNames, StringComparer.OrdinalIgnoreCase);
         if (_original is not null)

@@ -5,11 +5,13 @@
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
         Background="{StaticResource CanvasBrush}" Foreground="{StaticResource InkBrush}" FontFamily="{StaticResource BodyFont}" Icon="Assets/TalosDeskMark.ico">
     <Grid Margin="22">
+        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <Border Grid.Row="0" Background="{StaticResource EditorHeaderBrush}" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="13" Margin="0,0,0,18" Padding="18,13" ClipToBounds="True">
@@ -37,9 +39,11 @@
         <StackPanel Grid.Row="3" Margin="0,0,0,18">
             <TextBlock Text="更改项目文件夹后，项目内的命令会保留原有的相对运行目录。" Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" />
         </StackPanel>
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+        </Grid>
+        </ScrollViewer>
+        <WrapPanel Grid.Row="1" HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button Content="取消" Style="{StaticResource EditorButton}" IsCancel="True" Margin="0,0,8,0" />
             <Button x:Name="SaveButton" Content="添加项目" Style="{StaticResource EditorPrimaryButton}" IsDefault="True" Click="SaveProject_Click" />
-        </StackPanel>
+        </WrapPanel>
     </Grid>
 </Window>

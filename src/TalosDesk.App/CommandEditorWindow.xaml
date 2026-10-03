@@ -2,13 +2,16 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:editing="clr-namespace:TalosDesk.App.Editing"
-        Title="TalosDesk · 命令" Width="650" Height="740" MinWidth="560" MinHeight="625"
+        Title="TalosDesk · 命令" Width="650" Height="740" MinWidth="560" MinHeight="420"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
         Background="{StaticResource CanvasBrush}" Foreground="{StaticResource InkBrush}" FontFamily="{StaticResource BodyFont}" Icon="Assets/TalosDeskMark.ico">
     <Grid Margin="22">
+        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <Border Grid.Row="0" Background="{StaticResource EditorHeaderBrush}" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="13" Margin="0,0,0,17" Padding="18,13" ClipToBounds="True">
             <Grid>
@@ -46,25 +49,25 @@
                 <Button Grid.Column="1" Content="浏览…" Style="{StaticResource EditorButton}" Margin="8,0,0,0" Click="BrowseDirectory_Click" />
             </Grid>
         </StackPanel>
-        <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto" Margin="0,0,0,18">
-            <StackPanel>
+            <StackPanel Grid.Row="4" Margin="0,0,0,18">
                 <TextBlock Text="命令" Style="{StaticResource FieldLabel}" />
                 <editing:PowerShellCommandEditor x:Name="CommandBox" AutomationProperties.AutomationId="CommandEditorHost" MinHeight="145" SaveRequested="CommandBox_SaveRequested" />
                 <TextBlock Text="命令会以明文保存在本机配置和导出文件中。不要把密钥写入命令。命令通过 PowerShell 7 非交互运行，不加载个人配置文件；目录中的程序可用 .\程序名.exe。" Foreground="{StaticResource GoldBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
                 <TextBlock Text="环境变量" Style="{StaticResource FieldLabel}" Margin="0,15,0,0" />
                 <ListBox x:Name="EnvironmentList" Height="125" SelectionChanged="EnvironmentList_SelectionChanged"
                          AutomationProperties.AutomationId="CommandEnvironmentList" />
-                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <WrapPanel Margin="0,8,0,0">
                     <Button Content="添加变量" Style="{StaticResource EditorButton}" Click="AddEnvironment_Click" Margin="0,0,7,0" />
                     <Button x:Name="EditEnvironmentButton" Content="编辑所选" Style="{StaticResource EditorButton}" Click="EditEnvironment_Click" IsEnabled="False" Margin="0,0,7,0" />
                     <Button x:Name="DeleteEnvironmentButton" Content="删除所选" Style="{StaticResource EditorButton}" Click="DeleteEnvironment_Click" IsEnabled="False" />
-                </StackPanel>
+                </WrapPanel>
                 <TextBlock Text="普通变量以明文保存和导出；敏感变量仅本机加密保存，分享导出后需重新填写。已保存的敏感值不会显示在编辑框中。" Foreground="{StaticResource GoldBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,9,0,0" />
             </StackPanel>
+        </Grid>
         </ScrollViewer>
-        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+        <WrapPanel Grid.Row="1" HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button Content="取消" Style="{StaticResource EditorButton}" IsCancel="True" Margin="0,0,8,0" />
             <Button Content="保存命令" Style="{StaticResource EditorPrimaryButton}" IsDefault="True" Click="SaveCommand_Click" />
-        </StackPanel>
+        </WrapPanel>
     </Grid>
 </Window>
