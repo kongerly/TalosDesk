@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TalosDesk.Core.Configuration;
 
 namespace TalosDesk.Core.Tests;
@@ -5,6 +6,86 @@ namespace TalosDesk.Core.Tests;
 [TestClass]
 public sealed class WorkspaceStoreTests
 {
+    [TestMethod]
+    [DataRow(1, true)]
+    [DataRow(1, false)]
+    [DataRow(2, true)]
+    [DataRow(2, false)]
+    [DataRow(3, true)]
+    [DataRow(3, false)]
+    [DataRow(4, true)]
+    [DataRow(4, false)]
+    public async Task RejectsEmptyIdsDuringLoadAndImportWithoutChangingFile(int schemaVersion, bool emptyProjectId)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "invalid-id.json");
+            var command = new CommandDefinition { Name = "Check", Command = "Write-Output 'ok'", WorkingDirectory = directory };
+            var project = new ProjectDefinition { Name = "Sample", Directory = directory, Commands = [command] };
+            if (emptyProjectId) project.Id = Guid.Empty;
+            else command.Id = Guid.Empty;
+            var configuration = new WorkspaceConfiguration { SchemaVersion = schemaVersion, Projects = [project] };
+            var originalBytes = JsonSerializer.SerializeToUtf8Bytes(configuration);
+            await File.WriteAllBytesAsync(path, originalBytes);
+            var store = new WorkspaceStore(path);
+            var expectedMessage = emptyProjectId ? "项目 ID" : "命令 ID";
+
+            var loadError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => store.LoadAsync());
+            StringAssert.Contains(loadError.Message, expectedMessage);
+            var snapshotError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => store.LoadSnapshotAsync());
+            StringAssert.Contains(snapshotError.Message, expectedMessage);
+            var importError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.ReadFileAsync(path));
+            StringAssert.Contains(importError.Message, expectedMessage);
+
+            CollectionAssert.AreEqual(originalBytes, await File.ReadAllBytesAsync(path));
+            Assert.HasCount(1, Directory.GetFiles(directory));
+            Assert.HasCount(0, Directory.GetDirectories(directory));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public async Task RejectsEmptyIdsDuringSaveAndExportWithoutReplacingExistingFiles(bool emptyProjectId)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = new WorkspaceStore(Path.Combine(directory, "workspace.json"));
+            var exportPath = Path.Combine(directory, "export.json");
+            var command = new CommandDefinition { Name = "Check", Command = "Write-Output 'ok'", WorkingDirectory = directory };
+            var project = new ProjectDefinition { Name = "Sample", Directory = directory, Commands = [command] };
+            var configuration = new WorkspaceConfiguration { Projects = [project] };
+            await store.SaveAsync(configuration);
+            await WorkspaceStore.WriteExportFileAsync(exportPath, configuration);
+            var workspaceBytes = await File.ReadAllBytesAsync(store.FilePath);
+            var exportBytes = await File.ReadAllBytesAsync(exportPath);
+            if (emptyProjectId) project.Id = Guid.Empty;
+            else command.Id = Guid.Empty;
+
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => store.SaveAsync(configuration));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(exportPath, configuration));
+
+            CollectionAssert.AreEqual(workspaceBytes, await File.ReadAllBytesAsync(store.FilePath));
+            CollectionAssert.AreEqual(exportBytes, await File.ReadAllBytesAsync(exportPath));
+            Assert.HasCount(0, Directory.GetFiles(directory, "*.tmp"));
+            var loaded = await store.LoadAsync();
+            Assert.AreNotEqual(Guid.Empty, loaded.Projects[0].Id);
+            Assert.AreNotEqual(Guid.Empty, loaded.Projects[0].Commands[0].Id);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [TestMethod]
     public async Task SavesAndReloadsWorkspaceWithoutChangingIds()
     {

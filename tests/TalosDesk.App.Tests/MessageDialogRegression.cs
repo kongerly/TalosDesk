@@ -34,6 +34,7 @@ internal static class MessageDialogRegression
         var window = new MainWindow(store, "隔离提示验收", null, null, null, trayIcon: new TestTrayIcon());
         try
         {
+            CheckInvalidWorkspaceIds(root);
             window.Show();
             Wait(() => Find<Button>(window, "ManualUpdateCheckButton").IsEnabled);
             CheckResultsAndKeyboard(window);
@@ -295,6 +296,8 @@ internal static class MessageDialogRegression
             Click(window, "RunButton");
             Wait(() => Find<TextBox>(window, "OutputTextBox").Text.Contains("dialog-exit-ready"));
             var session = (CommandRunSession)Sessions(window)[command.Id]!;
+            CheckInvalidCommandStart(window, session, root);
+            Stage = "运行中实际关闭、取消、停止失败与重试";
             Respond(() => { window.Close(); return true; }, dialog => Press(dialog, Key.Enter));
             Assert.IsTrue(window.IsVisible);
             Assert.IsFalse(session.Completion.IsCompleted);
@@ -311,6 +314,7 @@ internal static class MessageDialogRegression
             interaction.FailStop = false;
             Respond(() => { window.Close(); return true; }, dialog => Click(dialog, "PrimaryActionButton"));
             Wait(() => session.Completion.IsCompleted && !window.IsVisible);
+            Assert.IsFalse(File.Exists(Path.Combine(root, "empty-id-started.txt")));
         }
         finally
         {
@@ -321,6 +325,78 @@ internal static class MessageDialogRegression
                 window.Close();
                 Wait(() => !window.IsVisible);
             }
+        }
+    }
+
+    private static void CheckInvalidWorkspaceIds(string root)
+    {
+        Stage = "全零项目和命令 ID 的桌面加载错误";
+        foreach (var emptyProjectId in new[] { true, false })
+        {
+            var path = Path.Combine(root, emptyProjectId ? "empty-project-id.json" : "empty-command-id.json");
+            var command = new CommandDefinition { Name = "异常配置任务", Command = "Write-Output 'unexpected'", WorkingDirectory = root };
+            var project = new ProjectDefinition { Name = "异常配置项目", Directory = root, Commands = [command] };
+            if (emptyProjectId) project.Id = Guid.Empty;
+            else command.Id = Guid.Empty;
+            var bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new WorkspaceConfiguration { Projects = [project] });
+            File.WriteAllBytes(path, bytes);
+            var window = new MainWindow(new WorkspaceStore(path), "隔离异常配置验收", null, null, null, trayIcon: new TestTrayIcon());
+            try
+            {
+                Respond(() =>
+                {
+                    window.Show();
+                    Wait(() => Find<Button>(window, "ManualUpdateCheckButton").IsEnabled);
+                    return true;
+                }, dialog =>
+                {
+                    Assert.AreEqual("无法加载工作区", Find<TextBlock>(dialog, "HeadingText").Text);
+                    StringAssert.Contains(Find<TextBox>(dialog, "MessageBox").Text, emptyProjectId ? "项目 ID" : "命令 ID");
+                    Click(dialog, "PrimaryActionButton");
+                });
+                Assert.IsTrue(window.IsVisible);
+                Assert.IsEmpty(window.Projects);
+                Assert.IsEmpty(Sessions(window));
+                Assert.IsFalse((bool)typeof(MainWindow).GetField("_canSave", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!);
+                Assert.IsFalse(Find<Button>(window, "RunButton").IsEnabled);
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+                Assert.HasCount(0, Directory.GetFiles(path + ".logs", "run.json", SearchOption.AllDirectories));
+            }
+            finally
+            {
+                window.Close();
+                Pump();
+            }
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+        }
+    }
+
+    private static void CheckInvalidCommandStart(MainWindow window, CommandRunSession runningSession, string root)
+    {
+        Stage = "全零 ID 启动失败且不影响已有服务";
+        var metadataFiles = Directory.GetFiles(root, "run.json", SearchOption.AllDirectories);
+        foreach (var emptyProjectId in new[] { true, false })
+        {
+            var command = new CommandDefinition
+            {
+                Name = "异常 ID 任务", WorkingDirectory = root,
+                Command = "Set-Content 'empty-id-started.txt' 'unexpected'"
+            };
+            var project = new ProjectDefinition { Name = "异常 ID 项目", Directory = root, Commands = [command] };
+            if (emptyProjectId) project.Id = Guid.Empty;
+            else command.Id = Guid.Empty;
+            object?[] arguments = [project, command, null, string.Empty, false];
+
+            var started = (bool)typeof(MainWindow).GetMethod("TryStartCommand", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, arguments)!;
+
+            Assert.IsFalse(started);
+            Assert.IsNull(arguments[2]);
+            StringAssert.Contains((string)arguments[3]!, "ID 不能为空");
+            Assert.HasCount(1, Sessions(window));
+            Assert.AreSame(runningSession, Sessions(window).Values.Cast<CommandRunSession>().Single());
+            Assert.IsFalse(runningSession.Completion.IsCompleted);
+            CollectionAssert.AreEquivalent(metadataFiles, Directory.GetFiles(root, "run.json", SearchOption.AllDirectories));
+            Assert.IsFalse(File.Exists(Path.Combine(root, "empty-id-started.txt")));
         }
     }
 

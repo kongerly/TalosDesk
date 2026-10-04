@@ -255,6 +255,11 @@ public sealed class WorkspaceStore
             throw new InvalidDataException("The TalosDesk workspace contains an incomplete project.");
         }
 
+        if (configuration.Projects.Any(project => project.Id == Guid.Empty))
+        {
+            throw new InvalidDataException("工作区包含全零 GUID，项目 ID 不能为空。");
+        }
+
         if (configuration.Projects.Select(project => project.Id).Distinct().Count() != configuration.Projects.Count)
         {
             throw new InvalidDataException("The TalosDesk workspace contains duplicate project IDs.");
@@ -289,6 +294,7 @@ public sealed class WorkspaceStore
 
             foreach (var command in project.Commands)
             {
+                if (command.Id == Guid.Empty) throw new InvalidDataException("工作区包含全零 GUID，命令 ID 不能为空。");
                 if (!commandIds.Add(command.Id)) throw new InvalidDataException("The TalosDesk workspace contains duplicate command IDs.");
                 if (!Enum.IsDefined(command.Kind)) throw new InvalidDataException($"Command '{command.Name}' has an unsupported run type.");
                 TcpProbeConfiguration.ValidateCommand(command);

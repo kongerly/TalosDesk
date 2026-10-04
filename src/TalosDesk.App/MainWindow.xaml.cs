@@ -2330,6 +2330,11 @@ public partial class MainWindow : Window
         session = null;
         error = string.Empty;
         if (!_canSave || _workspaceChangeInProgress || _isStoppingForClose) return false;
+        if (project.Id == Guid.Empty || command.Id == Guid.Empty)
+        {
+            error = "项目或命令 ID 不能为空（全零 GUID），请修复工作区配置后重试。";
+            return false;
+        }
         if (!allowReserved && _reservedCommandIds.Contains(command.Id))
         {
             error = "这条命令正在等待顺序分组执行。";
