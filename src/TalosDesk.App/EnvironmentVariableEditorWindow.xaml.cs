@@ -100,18 +100,18 @@ public partial class EnvironmentVariableEditorWindow : Window
         var name = NameBox.Text;
         if (_otherNames.Contains(name))
         {
-            MessageBox.Show(this, "此命令已有同名环境变量（名称不区分大小写）。", "变量名重复", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "此命令已有同名环境变量（名称不区分大小写）。", "变量名重复", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         var sensitive = SensitiveBox.IsChecked == true;
         if (!sensitive && _original?.IsSensitive == true && ConfirmPlainBox.IsChecked != true)
         {
-            MessageBox.Show(this, "请确认使用重新填写的普通值。原敏感值不会解密回填。", "需要确认明文值", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "请确认使用重新填写的普通值。原敏感值不会解密回填。", "需要确认明文值", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (sensitive && SelectedAction() is null)
         {
-            MessageBox.Show(this, "请选择敏感变量的处理方式。", "处理方式未选择", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "请选择敏感变量的处理方式。", "处理方式未选择", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -125,11 +125,11 @@ public partial class EnvironmentVariableEditorWindow : Window
         }
         catch (ArgumentException exception)
         {
-            MessageBox.Show(this, exception.Message, "环境变量无效", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, exception.Message, "环境变量无效", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            MessageBox.Show(this, "无法保护敏感值，请检查当前 Windows 用户环境后重试。", "保存敏感值失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            AppMessageDialog.Show(this, "无法保护敏感值，请检查当前 Windows 用户环境后重试。", "保存敏感值失败", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 }

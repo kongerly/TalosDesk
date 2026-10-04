@@ -29,7 +29,7 @@ public partial class App : Application
         }
         catch (ArgumentException exception)
         {
-            MessageBox.Show(exception.Message, "TalosDesk 启动参数无效", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(exception.Message, "TalosDesk 启动参数无效", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(2);
             return;
         }

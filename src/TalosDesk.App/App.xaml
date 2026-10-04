@@ -13,6 +13,7 @@
         <SolidColorBrush x:Key="LineBrush" Color="#C6DDE8" />
         <SolidColorBrush x:Key="GoldBrush" Color="#C47B50" />
         <SolidColorBrush x:Key="JadeBrush" Color="#327F9B" />
+        <SolidColorBrush x:Key="ErrorBrush" Color="#9B4E42" />
         <LinearGradientBrush x:Key="SidebarBrush" StartPoint="0,0" EndPoint="1,1">
             <GradientStop Color="#DDF3FA" Offset="0" />
             <GradientStop Color="#EDF3FD" Offset="0.58" />

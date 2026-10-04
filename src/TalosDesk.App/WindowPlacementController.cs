@@ -33,6 +33,43 @@ internal sealed class WindowPlacementController
     internal static void Attach(Window window, WindowSettingsStore? store = null) =>
         _ = new WindowPlacementController(window, store);
 
+    // 提示窗口按内容决定高度，只限制屏幕边界并相对所有者居中，不记录布局。
+    internal static void AttachDialog(Window window)
+    {
+        ScreenArea? screen = null;
+        window.SourceInitialized += (_, _) =>
+        {
+            var ownerHandle = window.Owner is null ? IntPtr.Zero : new WindowInteropHelper(window.Owner).Handle;
+            var screens = ReadScreens();
+            screen = ownerHandle == IntPtr.Zero ? screens.FirstOrDefault(s => s.IsPrimary) :
+                ReadScreen(MonitorFromWindow(ownerHandle, 2));
+            screen ??= screens[0];
+            var width = screen.WorkArea.Width / screen.Scale;
+            var height = screen.WorkArea.Height / screen.Scale;
+            window.MaxWidth = width;
+            window.MaxHeight = Math.Min(640, height);
+            window.MinWidth = Math.Min(window.MinWidth, window.MaxWidth);
+            window.MinHeight = Math.Min(window.MinHeight, window.MaxHeight);
+            window.Width = Math.Min(window.Width, window.MaxWidth);
+        };
+        window.ContentRendered += (_, _) =>
+        {
+            if (screen is null) return;
+            var handle = new WindowInteropHelper(window).Handle;
+            if (!GetWindowRect(handle, out var bounds)) return;
+            var width = bounds.Right - bounds.Left;
+            var height = bounds.Bottom - bounds.Top;
+            var area = screen.WorkArea;
+            var center = area;
+            if (window.Owner is { } owner && GetWindowRect(new WindowInteropHelper(owner).Handle, out var ownerBounds))
+                center = new Rect(ownerBounds.Left, ownerBounds.Top,
+                    ownerBounds.Right - ownerBounds.Left, ownerBounds.Bottom - ownerBounds.Top);
+            var left = Math.Clamp(center.Left + (center.Width - width) / 2, area.Left, Math.Max(area.Left, area.Right - width));
+            var top = Math.Clamp(center.Top + (center.Height - height) / 2, area.Top, Math.Max(area.Top, area.Bottom - height));
+            SetWindowPos(handle, IntPtr.Zero, (int)Math.Round(left), (int)Math.Round(top), 0, 0, 0x0015);
+        };
+    }
+
     private void Restore()
     {
         _placing = true;

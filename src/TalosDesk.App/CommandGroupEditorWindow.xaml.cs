@@ -99,13 +99,13 @@ public partial class CommandGroupEditorWindow : Window
     {
         if (string.IsNullOrWhiteSpace(NameBox.Text))
         {
-            MessageBox.Show(this, "请填写分组名称。", "分组信息不完整", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "请填写分组名称。", "分组信息不完整", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         if (SelectedChoices.Count == 0)
         {
-            MessageBox.Show(this, "请至少选择一条命令。", "分组没有成员", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "请至少选择一条命令。", "分组没有成员", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -113,7 +113,7 @@ public partial class CommandGroupEditorWindow : Window
         var services = SelectedChoices.Where(choice => choice.Command.Kind == CommandKind.Service).Select(choice => choice.Command.Name).ToArray();
         if (mode == CommandGroupExecutionMode.Sequential && services.Length > 0)
         {
-            MessageBox.Show(this, $"顺序执行仅支持任务命令。请移除以下服务：\n\n{string.Join("、", services)}", "顺序分组包含服务", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, $"顺序执行仅支持任务命令。请移除以下服务：\n\n{string.Join("、", services)}", "顺序分组包含服务", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 

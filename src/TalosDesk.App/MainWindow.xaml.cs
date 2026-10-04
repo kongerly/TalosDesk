@@ -245,7 +245,7 @@ public partial class MainWindow : Window
             _canSave = false;
             RefreshCommandSelection();
             UpdateEmptyStates();
-            MessageBox.Show(this,
+            AppMessageDialog.Show(this,
                 $"TalosDesk 无法读取本机工作区配置，原文件未作修改。\n\n{exception.Message}",
                 "无法加载工作区", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -304,8 +304,8 @@ public partial class MainWindow : Window
 
     private void ClearDiagnostics_Click(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(this, "清理此工作区的全部本地崩溃记录吗？", "清理本地诊断",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (AppMessageDialog.Show(this, "清理此工作区的全部本地崩溃记录吗？", "清理本地诊断",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, primaryText: "清理") != MessageBoxResult.Yes) return;
         var result = _crashRecordStore.Clear();
         DiagnosticWarningText.Text = result.Completed
             ? $"已清理 {result.DeletedCount} 条本地诊断记录。"
@@ -425,7 +425,7 @@ public partial class MainWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
         {
             SaveStatusText.Text = "重新加载失败";
-            MessageBox.Show(this,
+            AppMessageDialog.Show(this,
                 $"TalosDesk 无法重新加载工作区，当前窗口内容保持不变。\n\n{exception.Message}",
                 "无法重新加载工作区", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -739,7 +739,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             await CompleteCommandDragAsync(commit: false);
-            MessageBox.Show(this, $"TalosDesk 无法完成命令拖动。\n\n{exception.Message}",
+            AppMessageDialog.Show(this, $"TalosDesk 无法完成命令拖动。\n\n{exception.Message}",
                 "命令排序失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -1350,7 +1350,7 @@ public partial class MainWindow : Window
         var project = editor.Result;
         if (Projects.Any(existing => SameDirectory(existing.Directory, project.Directory)))
         {
-            MessageBox.Show(this, "已有项目使用此文件夹。请在项目列表中选择该项目并编辑信息。", "项目文件夹已存在", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "已有项目使用此文件夹。请在项目列表中选择该项目并编辑信息。", "项目文件夹已存在", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -1375,7 +1375,7 @@ public partial class MainWindow : Window
         var project = _selectedProject;
         if (HasRunningCommands(project))
         {
-            MessageBox.Show(this, "请先停止此项目中正在运行的命令，再编辑项目信息，以避免运行目录与保存配置不一致。", "项目命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "请先停止此项目中正在运行的命令，再编辑项目信息，以避免运行目录与保存配置不一致。", "项目命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -1383,7 +1383,7 @@ public partial class MainWindow : Window
         if (editor.ShowDialog() != true || editor.Result is null) return;
         if (Projects.Any(existing => existing.Id != project.Id && SameDirectory(existing.Directory, editor.Result.Directory)))
         {
-            MessageBox.Show(this, "另一个项目已使用此文件夹，请选择其他文件夹。", "项目文件夹已被使用", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "另一个项目已使用此文件夹，请选择其他文件夹。", "项目文件夹已被使用", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -1429,9 +1429,9 @@ public partial class MainWindow : Window
     private async void ExportWorkspace_Click(object sender, RoutedEventArgs e)
     {
         if (_workspaceChangeInProgress || _restartsInProgress.Count > 0 || _isStoppingForClose || !_canSave) return;
-        var confirmation = MessageBox.Show(this,
+        var confirmation = AppMessageDialog.Show(this,
             "导出文件会以明文包含项目路径、完整命令和普通环境变量。显式标记的敏感变量只导出名称和待填写状态，不包含本机密文。\n\n如果命令或普通变量中写有密钥，它们仍会导出。请在分享前检查内容。是否继续？",
-            "确认导出明文工作区", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            "确认导出明文工作区", MessageBoxButton.YesNo, MessageBoxImage.Warning, primaryText: "继续导出");
         if (confirmation != MessageBoxResult.Yes) return;
 
         var picker = new SaveFileDialog
@@ -1446,7 +1446,7 @@ public partial class MainWindow : Window
 
         if (string.Equals(Path.GetFullPath(picker.FileName), _store.FilePath, StringComparison.OrdinalIgnoreCase))
         {
-            MessageBox.Show(this, "不能将导出文件保存到当前工作区路径。请选择其他位置。", "导出位置无效", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "不能将导出文件保存到当前工作区路径。请选择其他位置。", "导出位置无效", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -1459,7 +1459,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            MessageBox.Show(this, $"TalosDesk 无法导出此工作区。\n\n{exception.Message}", "导出失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, $"TalosDesk 无法导出此工作区。\n\n{exception.Message}", "导出失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -1472,7 +1472,7 @@ public partial class MainWindow : Window
         if (_workspaceChangeInProgress || _restartsInProgress.Count > 0 || _isStoppingForClose || !_canSave) return;
         if (_restartsInProgress.Count > 0 || _sequentialGroupCancellations.Count > 0 || _sessions.Values.Any(session => !session.Completion.IsCompleted))
         {
-            MessageBox.Show(this, "导入工作区前请先停止所有正在运行的命令，以免运行中的命令与保存的配置不一致。", "命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "导入工作区前请先停止所有正在运行的命令，以免运行中的命令与保存的配置不一致。", "命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -1495,7 +1495,7 @@ public partial class MainWindow : Window
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
             {
-                MessageBox.Show(this, $"TalosDesk 无法读取此工作区文件，未作任何更改。\n\n{exception.Message}", "导入失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                AppMessageDialog.Show(this, $"TalosDesk 无法读取此工作区文件，未作任何更改。\n\n{exception.Message}", "导入失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
@@ -1521,7 +1521,7 @@ public partial class MainWindow : Window
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
             {
                 if (applied) ReplaceProjects(previousProjects);
-                MessageBox.Show(this, $"TalosDesk 无法保存导入的工作区。\n\n{exception.Message}", "未能保存导入内容", MessageBoxButton.OK, MessageBoxImage.Error);
+                AppMessageDialog.Show(this, $"TalosDesk 无法保存导入的工作区。\n\n{exception.Message}", "未能保存导入内容", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         finally { EndWorkspaceChange(); }
@@ -1608,8 +1608,8 @@ public partial class MainWindow : Window
                 continue;
             }
 
-            var projectChoice = MessageBox.Show(this,
-                $"已有项目使用此文件夹：\n{existingProject.Directory}\n\n本机名称：{existingProject.Name}\n导入名称：{incomingProject.Name}\n\n选择“是”以替换项目信息，选择“否”以保留本机信息，选择“取消”以停止导入。",
+            var projectChoice = AppMessageDialog.Show(this,
+                $"已有项目使用此文件夹：\n{existingProject.Directory}\n\n本机名称：{existingProject.Name}\n导入名称：{incomingProject.Name}\n\n选择“替换”以替换项目信息，选择“保留本机”以保留本机信息，选择“取消导入”以停止导入。",
                 "项目已存在", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
             if (projectChoice == MessageBoxResult.Cancel) return false;
             if (projectChoice == MessageBoxResult.Yes)
@@ -1632,8 +1632,8 @@ public partial class MainWindow : Window
                 }
 
                 var existingCommand = existingProject.Commands[existingCommandIndex];
-                var commandChoice = MessageBox.Show(this,
-                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n本机{FormatProbeConfiguration(existingCommand)}\n导入{FormatProbeConfiguration(incomingCommand)}\n\n选择“是”将以导入的整套变量和探测配置替换本机配置，不沿用旧密文；选择“否”保留本机命令及全部配置；选择“取消”停止导入。",
+                var commandChoice = AppMessageDialog.Show(this,
+                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n本机{FormatProbeConfiguration(existingCommand)}\n导入{FormatProbeConfiguration(incomingCommand)}\n\n选择“替换”将以导入的整套变量和探测配置替换本机配置，不沿用旧密文；选择“保留本机”保留本机命令及全部配置；选择“取消导入”停止导入。",
                     "命令名称冲突", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
                 if (commandChoice == MessageBoxResult.Cancel) return false;
                 if (commandChoice == MessageBoxResult.Yes)
@@ -1652,7 +1652,7 @@ public partial class MainWindow : Window
                 if (translated.ExecutionMode == CommandGroupExecutionMode.Sequential && translated.CommandIds.Any(id =>
                         existingProject.Commands.First(command => command.Id == id).Kind == CommandKind.Service))
                 {
-                    MessageBox.Show(this,
+                    AppMessageDialog.Show(this,
                         $"导入分组“{translated.Name}”映射到了本机的服务命令，因此不能作为顺序分组导入。请替换冲突命令，或先调整本机命令类型。",
                         "顺序分组无法合并", MessageBoxButton.OK, MessageBoxImage.Information);
                     return false;
@@ -1667,8 +1667,8 @@ public partial class MainWindow : Window
                 }
 
                 var existingGroup = existingProject.Groups[existingGroupIndex];
-                var groupChoice = MessageBox.Show(this,
-                    $"项目“{existingProject.Name}”中已有同名分组。\n\n名称：{existingGroup.Name}\n本机模式：{GetGroupModeText(existingGroup.ExecutionMode)}\n导入模式：{GetGroupModeText(incomingGroup.ExecutionMode)}\n\n选择“是”以替换分组，选择“否”以保留本机分组，选择“取消”以停止导入。",
+                var groupChoice = AppMessageDialog.Show(this,
+                    $"项目“{existingProject.Name}”中已有同名分组。\n\n名称：{existingGroup.Name}\n本机模式：{GetGroupModeText(existingGroup.ExecutionMode)}\n导入模式：{GetGroupModeText(incomingGroup.ExecutionMode)}\n\n选择“替换”以替换分组，选择“保留本机”以保留本机分组，选择“取消导入”以停止导入。",
                     "分组名称冲突", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
                 if (groupChoice == MessageBoxResult.Cancel) return false;
                 if (groupChoice == MessageBoxResult.Yes)
@@ -1798,11 +1798,11 @@ public partial class MainWindow : Window
         if (_restartsInProgress.Contains(command.Id) ||
             (_sessions.TryGetValue(command.Id, out var activeSession) && !activeSession.Completion.IsCompleted))
         {
-            MessageBox.Show(this, "请先停止这条命令，再删除保存的配置。", "命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "请先停止这条命令，再删除保存的配置。", "命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        if (MessageBox.Show(this, $"从项目“{project.Name}”删除命令“{command.Name}”吗？\n\n删除后无法从工作区恢复这条命令。",
-                "删除命令", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (AppMessageDialog.Show(this, $"从项目“{project.Name}”删除命令“{command.Name}”吗？\n\n删除后无法从工作区恢复这条命令。",
+                "删除命令", MessageBoxButton.YesNo, MessageBoxImage.Warning, primaryText: "删除") != MessageBoxResult.Yes) return;
         if (!BeginWorkspaceChange()) return;
 
         try
@@ -1841,7 +1841,7 @@ public partial class MainWindow : Window
         if (editor.ShowDialog() != true || editor.Result is null) return;
         if (_selectedProject.Commands.Any(command => SameCommandName(command.Name, editor.Result.Name)))
         {
-            MessageBox.Show(this, "此项目已有同名命令，请使用其他名称。", "命令名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "此项目已有同名命令，请使用其他名称。", "命令名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (!BeginWorkspaceChange()) return;
@@ -1868,7 +1868,7 @@ public partial class MainWindow : Window
         if (editor.ShowDialog() != true || editor.Result is null) return;
         if (_selectedProject.Commands.Any(command => command.Id != editor.Result.Id && SameCommandName(command.Name, editor.Result.Name)))
         {
-            MessageBox.Show(this, "此项目已有同名命令，请使用其他名称。", "命令名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "此项目已有同名命令，请使用其他名称。", "命令名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (editor.Result.Kind == CommandKind.Service)
@@ -1876,7 +1876,7 @@ public partial class MainWindow : Window
             var sequentialGroups = CommandGroupOperations.GetSequentialGroupsContaining(_selectedProject, editor.Result.Id);
             if (sequentialGroups.Count > 0)
             {
-                MessageBox.Show(this,
+                AppMessageDialog.Show(this,
                     $"服务命令不能留在顺序分组中。请先从以下分组移除此命令：\n\n{string.Join("、", sequentialGroups.Select(group => group.Name))}",
                     "顺序分组仅支持任务", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
@@ -1913,7 +1913,7 @@ public partial class MainWindow : Window
         if (editor.ShowDialog() != true || editor.Result is null) return;
         if (_selectedProject.Groups.Any(group => SameGroupName(group.Name, editor.Result.Name)))
         {
-            MessageBox.Show(this, "此项目已有同名分组，请使用其他名称。", "分组名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "此项目已有同名分组，请使用其他名称。", "分组名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (!BeginWorkspaceChange()) return;
@@ -1941,7 +1941,7 @@ public partial class MainWindow : Window
         if (editor.ShowDialog() != true || editor.Result is null) return;
         if (project.Groups.Any(candidate => candidate.Id != group.Id && SameGroupName(candidate.Name, editor.Result.Name)))
         {
-            MessageBox.Show(this, "此项目已有同名分组，请使用其他名称。", "分组名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "此项目已有同名分组，请使用其他名称。", "分组名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (!BeginWorkspaceChange()) return;
@@ -1969,8 +1969,8 @@ public partial class MainWindow : Window
         var project = _selectedProject;
         var group = project.Groups.FirstOrDefault(candidate => candidate.Id == item.Group.Id);
         if (group is null) return;
-        if (MessageBox.Show(this, $"删除分组“{group.Name}”吗？\n\n分组中的命令不会被删除。",
-                "删除分组", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (AppMessageDialog.Show(this, $"删除分组“{group.Name}”吗？\n\n分组中的命令不会被删除。",
+                "删除分组", MessageBoxButton.YesNo, MessageBoxImage.Warning, primaryText: "删除") != MessageBoxResult.Yes) return;
         if (!BeginWorkspaceChange()) return;
         try
         {
@@ -2037,7 +2037,7 @@ public partial class MainWindow : Window
         if (launched.Count > 0) _ = MonitorParallelGroupAsync(group.Id, group.Name, version, launched);
         if (failures.Count > 0)
         {
-            MessageBox.Show(this, $"以下命令未能启动：\n\n{string.Join("\n", failures)}", "分组启动未全部完成", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, $"以下命令未能启动：\n\n{string.Join("\n", failures)}", "分组启动未全部完成", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -2123,7 +2123,7 @@ public partial class MainWindow : Window
                 var cleanup = stopFailures.Count == 0
                     ? "已停止此分组启动的其他运行中命令。"
                     : $"以下命令未能确认停止：\n{string.Join("\n", stopFailures)}";
-                MessageBox.Show(this,
+                AppMessageDialog.Show(this,
                     $"分组“{groupName}”中的命令“{observation.Command?.Name}”执行失败，退出码为 {observation.RunResult?.ExitCode}。\n\n{cleanup}",
                     "分组执行失败", MessageBoxButton.OK, MessageBoxImage.Error);
             }
@@ -2159,13 +2159,13 @@ public partial class MainWindow : Window
         var commands = CommandGroupExecution.ResolveCommands(project, group).ToArray();
         if (commands.Length == 0 || commands.Any(command => IsCommandBusy(command.Id)))
         {
-            MessageBox.Show(this, "顺序分组中的所有命令都必须处于空闲状态。", "分组暂不可运行", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "顺序分组中的所有命令都必须处于空闲状态。", "分组暂不可运行", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (!TryPreflightCommands(commands)) return;
         if (commands.Any(command => command.Kind == CommandKind.Service))
         {
-            MessageBox.Show(this, "顺序执行仅支持任务命令。请编辑分组并移除服务命令。", "顺序分组包含服务", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "顺序执行仅支持任务命令。请编辑分组并移除服务命令。", "顺序分组包含服务", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -2214,7 +2214,7 @@ public partial class MainWindow : Window
                 };
                 if (result.StartException is not null && !_isStoppingForClose)
                 {
-                    MessageBox.Show(this, result.StartException.Message, "顺序分组启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                    AppMessageDialog.Show(this, result.StartException.Message, "顺序分组启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             });
         }
@@ -2284,7 +2284,7 @@ public partial class MainWindow : Window
                 }
                 catch (Exception exception)
                 {
-                    MessageBox.Show(this, $"TalosDesk 无法停止此命令，因此未执行重启。\n\n{exception.Message}", "重启已取消", MessageBoxButton.OK, MessageBoxImage.Error);
+                    AppMessageDialog.Show(this, $"TalosDesk 无法停止此命令，因此未执行重启。\n\n{exception.Message}", "重启已取消", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
             }
@@ -2305,7 +2305,7 @@ public partial class MainWindow : Window
         if (TryStartCommand(project, command, out _, out var error)) return true;
         if (!string.IsNullOrWhiteSpace(error))
         {
-            MessageBox.Show(this, error, "命令启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, error, "命令启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         return false;
     }
@@ -2317,7 +2317,7 @@ public partial class MainWindow : Window
             try { TcpProbeConfiguration.ValidateCommand(command); _ = CommandRunEnvironmentResolver.Resolve(command); }
             catch (Exception exception) when (exception is CommandEnvironmentException or InvalidDataException)
             {
-                MessageBox.Show(this, $"命令“{command.Name}”的配置不可用：\n\n{exception.Message}\n\n本次不会启动任何命令。",
+                AppMessageDialog.Show(this, $"命令“{command.Name}”的配置不可用：\n\n{exception.Message}\n\n本次不会启动任何命令。",
                     "命令暂不可运行", MessageBoxButton.OK, MessageBoxImage.Information);
                 return false;
             }
@@ -2501,7 +2501,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, $"TalosDesk 无法确认命令已停止。\n\n{exception.Message}", "停止未完成", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, $"TalosDesk 无法确认命令已停止。\n\n{exception.Message}", "停止未完成", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally { RefreshCommandSelection(); }
     }
@@ -2523,7 +2523,7 @@ public partial class MainWindow : Window
         }
         catch (System.Runtime.InteropServices.ExternalException exception)
         {
-            MessageBox.Show(this, $"TalosDesk 无法访问剪贴板。请稍后重试。\n\n{exception.Message}",
+            AppMessageDialog.Show(this, $"TalosDesk 无法访问剪贴板。请稍后重试。\n\n{exception.Message}",
                 "复制输出失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -2623,7 +2623,7 @@ public partial class MainWindow : Window
         if (!long.TryParse(LogLimitMbTextBox.Text, out var mb) || mb is < 1 or > 102400 ||
             !int.TryParse(LogRetentionDaysTextBox.Text, out var days) || days is < 1 or > 3650)
         {
-            MessageBox.Show(this, "日志容量请输入 1–102400 MB，保留时间请输入 1–3650 天。", "日志设置无效", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "日志容量请输入 1–102400 MB，保留时间请输入 1–3650 天。", "日志设置无效", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         try
@@ -2637,7 +2637,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentOutOfRangeException or InvalidDataException or System.Text.Json.JsonException)
         {
-            MessageBox.Show(this, $"无法保存日志设置。\n\n{exception.Message}", "日志设置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, $"无法保存日志设置。\n\n{exception.Message}", "日志设置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -2652,7 +2652,7 @@ public partial class MainWindow : Window
         if (_sessions.Values.Any(session => !session.Completion.IsCompleted) || _runLogWriters.Count > 0 ||
             _logFinalizations.Values.Any(task => !task.IsCompleted))
         {
-            MessageBox.Show(this, "请等待所有命令和日志写入结束后再更改日志位置。", "日志正在写入",
+            AppMessageDialog.Show(this, "请等待所有命令和日志写入结束后再更改日志位置。", "日志正在写入",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return false;
         }
@@ -2690,7 +2690,7 @@ public partial class MainWindow : Window
             InvalidDataException or ArgumentException or NotSupportedException or System.Text.Json.JsonException)
         {
             UpdateLogPathDisplay();
-            MessageBox.Show(this, $"无法更改日志位置。\n\n{exception.Message}", "日志位置未更改", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, $"无法更改日志位置。\n\n{exception.Message}", "日志位置未更改", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -2715,14 +2715,14 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
-            MessageBox.Show(this, $"无法打开日志目录。\n\n{exception.Message}", "打开目录失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, $"无法打开日志目录。\n\n{exception.Message}", "打开目录失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
     private void ClearHistory_Click(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(this, "清理此工作区所有已结束批次的日志吗？运行中的日志会保留。", "清理历史日志",
-            MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (AppMessageDialog.Show(this, "清理此工作区所有已结束批次的日志吗？运行中的日志会保留。", "清理历史日志",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, primaryText: "清理") != MessageBoxResult.Yes) return;
         try
         {
             _runLogStore.ClearHistory();
@@ -2731,7 +2731,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            MessageBox.Show(this, $"部分日志无法清理。\n\n{exception.Message}", "清理未完成", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, $"部分日志无法清理。\n\n{exception.Message}", "清理未完成", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -2746,13 +2746,13 @@ public partial class MainWindow : Window
         if (_workspaceChangeInProgress)
         {
             e.Cancel = true;
-            MessageBox.Show(this, "工作区正在保存或导入，请等待操作完成后再退出。", "工作区正在处理", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "工作区正在保存或导入，请等待操作完成后再退出。", "工作区正在处理", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (_restartsInProgress.Count > 0)
         {
             e.Cancel = true;
-            MessageBox.Show(this, "命令正在重启，请等待停止与重新启动完成后再退出。", "命令正在重启", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "命令正在重启，请等待停止与重新启动完成后再退出。", "命令正在重启", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         var active = _sessions.Values.Where(session => !session.Completion.IsCompleted).ToArray();
@@ -2842,7 +2842,7 @@ public partial class MainWindow : Window
         {
             _saveFailed = true;
             SaveStatusText.Text = "保存失败";
-            MessageBox.Show(this, $"TalosDesk 无法保存项目配置。\n\n{exception.Message}", "配置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppMessageDialog.Show(this, $"TalosDesk 无法保存项目配置。\n\n{exception.Message}", "配置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
     }
@@ -2860,7 +2860,7 @@ public partial class MainWindow : Window
         if (showDialog && !_externalWorkspaceChangeReported)
         {
             _externalWorkspaceChangeReported = true;
-            MessageBox.Show(this,
+            AppMessageDialog.Show(this,
                 $"工作区文件已被另一个程序修改。为避免覆盖新内容，当前窗口已停止保存。请关闭后重新打开 TalosDesk。\n\n{_store.FilePath}",
                 "检测到外部配置变化", MessageBoxButton.OK, MessageBoxImage.Warning);
         }

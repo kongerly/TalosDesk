@@ -143,13 +143,13 @@ public partial class CommandEditorWindow : Window
     {
         if (string.IsNullOrWhiteSpace(NameBox.Text) || string.IsNullOrWhiteSpace(CommandBox.Text) || string.IsNullOrWhiteSpace(WorkingDirectoryBox.Text))
         {
-            MessageBox.Show(this, "请填写名称、命令和运行目录。", "命令信息不完整", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "请填写名称、命令和运行目录。", "命令信息不完整", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         if (!Directory.Exists(WorkingDirectoryBox.Text.Trim()))
         {
-            MessageBox.Show(this, "运行目录不存在，请选择已存在的文件夹。", "未找到运行目录", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "运行目录不存在，请选择已存在的文件夹。", "未找到运行目录", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -158,7 +158,7 @@ public partial class CommandEditorWindow : Window
         try { probe = ReadProbe(kind); }
         catch (InvalidDataException exception)
         {
-            MessageBox.Show(this, exception.Message + "\n端口 1–65535；间隔和连接超时 1–60 秒；启动等待 1–3600 秒且不小于连接超时；失败阈值 1–100。", "探测配置无效", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, exception.Message + "\n端口 1–65535；间隔和连接超时 1–60 秒；启动等待 1–3600 秒且不小于连接超时；失败阈值 1–100。", "探测配置无效", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         Result = new CommandDefinition

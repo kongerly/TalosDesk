@@ -42,14 +42,14 @@ public partial class ProjectEditorWindow : Window
     {
         if (string.IsNullOrWhiteSpace(NameBox.Text) || string.IsNullOrWhiteSpace(DirectoryBox.Text))
         {
-            MessageBox.Show(this, "请填写项目名称并选择项目文件夹。", "项目信息不完整", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "请填写项目名称并选择项目文件夹。", "项目信息不完整", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         var directory = DirectoryBox.Text.Trim();
         if (!Directory.Exists(directory))
         {
-            MessageBox.Show(this, "项目文件夹不存在，请选择已存在的文件夹。", "未找到项目文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
+            AppMessageDialog.Show(this, "项目文件夹不存在，请选择已存在的文件夹。", "未找到项目文件夹", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 

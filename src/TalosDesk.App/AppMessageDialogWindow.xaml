@@ -1,0 +1,52 @@
+<Window x:Class="TalosDesk.App.AppMessageDialogWindow" x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TalosDesk · 提示" Width="560" Height="280" MinWidth="360" MinHeight="240"
+        SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False" Background="{StaticResource CanvasBrush}" Foreground="{StaticResource InkBrush}"
+        FontFamily="{StaticResource BodyFont}" Icon="Assets/TalosDeskMark.ico"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Border Background="{StaticResource EditorHeaderBrush}" BorderBrush="{StaticResource LineBrush}"
+                BorderThickness="1" CornerRadius="13" Padding="16,13" Margin="0,0,0,14">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border x:Name="StatusBadge" Width="42" Height="42" CornerRadius="12" VerticalAlignment="Top" Margin="0,2,14,0">
+                    <Path x:Name="StatusIcon" Width="24" Height="24" Stretch="Uniform" StrokeThickness="1.8"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Grid.Column="1">
+                    <TextBlock x:Name="CategoryText" FontSize="11" FontWeight="SemiBold" />
+                    <TextBlock x:Name="HeadingText" FontFamily="{StaticResource DisplayFont}" FontSize="21"
+                               FontWeight="Bold" Margin="0,3,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <Border Grid.Row="1" Background="{StaticResource PaperBrush}" BorderBrush="{StaticResource LineBrush}"
+                BorderThickness="1" CornerRadius="10" Padding="14,12">
+            <TextBox x:Name="MessageBox" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                     Background="Transparent" Foreground="{StaticResource InkBrush}" BorderThickness="0" Padding="0"
+                     FontSize="13" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                     AutomationProperties.Name="提示内容">
+                <TextBox.Template>
+                    <ControlTemplate TargetType="TextBox">
+                        <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}" />
+                    </ControlTemplate>
+                </TextBox.Template>
+            </TextBox>
+        </Border>
+        <WrapPanel Grid.Row="2" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelActionButton" Style="{StaticResource EditorButton}" MinWidth="76" Margin="0,0,8,0"
+                    Click="Action_Click" />
+            <Button x:Name="NegativeActionButton" Style="{StaticResource EditorButton}" MinWidth="76" Margin="0,0,8,0"
+                    Click="Action_Click" />
+            <Button x:Name="PrimaryActionButton" Style="{StaticResource EditorPrimaryButton}" MinWidth="76"
+                    Click="Action_Click" />
+        </WrapPanel>
+    </Grid>
+</Window>
