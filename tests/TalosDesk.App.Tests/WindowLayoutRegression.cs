@@ -34,6 +34,7 @@ internal static class WindowLayoutRegression
         DesktopTestHost.RunWithCleanup(() =>
         {
             window = Open(store);
+            CheckButtonsRecreatedWhileScrolling(window);
             var layouts = new[]
             {
                 (Size: new Size(800, 520), Maximum: new Size(double.PositiveInfinity, double.PositiveInfinity)),
@@ -166,18 +167,31 @@ internal static class WindowLayoutRegression
     {
         Stage = "创建窗口";
         var window = new MainWindow(store, "隔离布局测试", null, null, null, trayIcon: new TestTrayIcon());
-        Stage = "显示窗口";
-        window.Show();
-        Stage = "等待初始化";
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!((Button)window.FindName("ManualUpdateCheckButton")).IsEnabled)
+        var projectLoads = 0;
+        window.Projects.CollectionChanged += (_, args) => projectLoads += args.NewItems?.Count ?? 0;
+        try
         {
+            Stage = "显示窗口";
+            window.Show();
+            Stage = "等待初始化与启动重载";
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            // 合成工作区只有一个项目，首次读取和启动重载各生成一次；更新按钮可用不能代替重载完成。
+            while (!((Button)window.FindName("ManualUpdateCheckButton")).IsEnabled || projectLoads < 2 ||
+                   !((Button)window.FindName("AddGroupButton")).IsEnabled)
+            {
+                Pump();
+                if (DateTime.UtcNow > deadline) Assert.Fail($"隔离窗口未能完成初始化与启动重载，项目读取次数：{projectLoads}。");
+            }
             Pump();
-            if (DateTime.UtcNow > deadline) Assert.Fail("隔离窗口未能完成初始化。");
+            Stage = "窗口就绪";
+            return window;
         }
-        Pump();
-        Stage = "窗口就绪";
-        return window;
+        catch
+        {
+            window.Close();
+            Pump();
+            throw;
+        }
     }
 
     private static void AssertBounds(Rect expected, Window window)
@@ -188,12 +202,72 @@ internal static class WindowLayoutRegression
         Assert.AreEqual(expected.Top, window.Top, 2);
     }
 
+    private static void CheckButtonsRecreatedWhileScrolling(Window owner)
+    {
+        Stage = "滚动期间重建按钮与按钮缺失";
+        foreach (var removeButton in new[] { false, true })
+        {
+            var context = new object();
+            var panel = new StackPanel();
+            Button NewButton() => new()
+            {
+                Name = "SyntheticAction", Content = "合成操作", DataContext = context,
+                Width = 120, Height = 36, HorizontalAlignment = HorizontalAlignment.Left
+            };
+            var original = NewButton();
+            panel.Children.Add(original);
+            var sample = new Window { Owner = owner, Title = "隔离按钮重建检查", Width = 400, Height = 200, Content = panel };
+            var rebuilt = false;
+            original.RequestBringIntoView += (_, _) =>
+            {
+                if (rebuilt) return;
+                rebuilt = true;
+                sample.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+                {
+                    panel.Children.Clear();
+                    if (!removeButton) panel.Children.Add(NewButton());
+                }));
+            };
+            try
+            {
+                sample.Show();
+                Pump();
+                if (removeButton)
+                {
+                    var failure = Assert.Throws<AssertFailedException>(() => AssertButtonsReachable(sample, panel));
+                    StringAssert.Contains(failure.Message, "找不到");
+                }
+                else AssertButtonsReachable(sample, panel);
+                Assert.IsTrue(rebuilt, "合成场景必须在滚动请求后重建可视树。");
+                Assert.IsFalse(sample.IsAncestorOf(original));
+            }
+            finally { sample.Close(); }
+        }
+    }
+
     private static void AssertButtonsReachable(Window window, FrameworkElement root)
     {
-        foreach (var button in Descendants(root).OfType<Button>().Where(b => b.IsVisible && b.Content is string).ToArray())
+        var targets = Descendants(root).OfType<Button>().Where(b => b.IsVisible && b.Content is string)
+            .Select(button => (Button: button, Name: button.Name, Content: (string)button.Content, Context: button.DataContext)).ToArray();
+        foreach (var target in targets)
         {
-            button.BringIntoView();
-            Pump();
+            var button = target.Button;
+            bool IsCurrent(Button candidate) => window.IsAncestorOf(candidate) && root.IsAncestorOf(candidate) &&
+                candidate.IsVisible && candidate.Name == target.Name && Equals(candidate.Content, target.Content) &&
+                ReferenceEquals(candidate.DataContext, target.Context);
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                if (!IsCurrent(button))
+                {
+                    var replacements = Descendants(root).OfType<Button>().Where(IsCurrent).ToArray();
+                    Assert.HasCount(1, replacements, $"找不到唯一的当前按钮：{target.Content}（{target.Name}）。");
+                    button = replacements[0];
+                }
+                button.BringIntoView();
+                Pump();
+                if (IsCurrent(button)) break;
+            }
+            Assert.IsTrue(IsCurrent(button), $"按钮 {target.Content} 在滚动期间持续被替换，无法稳定检查布局。");
             var bounds = button.TransformToAncestor(window).TransformBounds(new Rect(button.RenderSize));
             var visible = new Rect(new Point(), window.RenderSize);
             for (DependencyObject? ancestor = VisualTreeHelper.GetParent(button); ancestor is not null && ancestor != window;
