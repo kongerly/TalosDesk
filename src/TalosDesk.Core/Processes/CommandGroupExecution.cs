@@ -54,11 +54,12 @@ public static class CommandGroupExecution
     }
 
     public static async Task<ParallelGroupObservationResult> ObserveParallelAsync(
-        IReadOnlyList<ParallelCommandExecution> executions)
+        IReadOnlyList<ParallelCommandExecution> executions,
+        Func<Task>? onTasksSucceeded = null)
     {
         ArgumentNullException.ThrowIfNull(executions);
         var remainingTasks = executions.Count(execution => execution.Command.Kind == CommandKind.Task);
-        if (remainingTasks == 0) return new ParallelGroupObservationResult(ParallelGroupObservationOutcome.NoTaskCommands);
+        ParallelGroupObservationResult? tasksSucceeded = null;
 
         var pending = executions.ToDictionary(execution => execution.Completion);
         while (pending.Count > 0)
@@ -81,11 +82,13 @@ public static class CommandGroupExecution
             remainingTasks--;
             if (remainingTasks == 0)
             {
-                return new ParallelGroupObservationResult(ParallelGroupObservationOutcome.TasksSucceeded, execution.Command, result);
+                tasksSucceeded = new ParallelGroupObservationResult(ParallelGroupObservationOutcome.TasksSucceeded, execution.Command, result);
+                // 任务完成只发送进度通知；服务仍属于本次执行，继续监视其退出结果。
+                if (onTasksSucceeded is not null) await onTasksSucceeded().ConfigureAwait(false);
             }
         }
 
-        return new ParallelGroupObservationResult(ParallelGroupObservationOutcome.TasksSucceeded);
+        return tasksSucceeded ?? new ParallelGroupObservationResult(ParallelGroupObservationOutcome.NoTaskCommands);
     }
 
     public static async Task<SequentialGroupExecutionResult> RunSequentialAsync(

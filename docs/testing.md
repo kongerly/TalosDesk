@@ -24,7 +24,7 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 ## 桌面回归独立执行
 
-`MainWindowIntegrationTests` 现在提供六个独立测试结果，可按方法名筛选；各套内部已有断言继续保留：
+`MainWindowIntegrationTests` 现在提供七个独立测试结果，可按方法名筛选；各套内部已有断言继续保留：
 
 | 测试方法 | 覆盖内容 |
 | --- | --- |
@@ -33,16 +33,17 @@ $workspace = Join-Path $testRoot "workspace.json"
 | `TrayCommandsContinueRunningAndExitSafely` | 隐藏期间命令与日志、取消退出、停止失败和重试 |
 | `WindowLayoutAndSettingsSurviveResizeAndReopen` | 页面与弹窗布局、窗口状态保存与恢复 |
 | `TcpProbeStatesFollowDesktopCommandLifecycle` | 探测编辑、状态、输出与项目汇总 |
+| `ParallelGroupsKeepWatchingServicesAndOnlyCleanUpTheirOwnExecution` | 纯服务及混合分组持续监视、失败清理和后续会话隔离 |
 | `UpdateStatesDoNotBlockDesktopCommandAndOutputFlows` | 更新失败、限流、挂起期间的运行、重启、停止、输出和分组 |
 
-例如，单独执行布局回归或执行全部六套并输出独立 TRX 结果：
+例如，单独执行布局回归或执行全部七套并输出独立 TRX 结果：
 
 ```powershell
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests.WindowLayoutAndSettingsSurviveResizeAndReopen"
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests" --logger "trx;LogFileName=desktop.trx" --results-directory artifacts/tests/desktop
 ```
 
-六套保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
+七套保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
 
 普通断言失败且清理成功后，宿主仍可执行下一套。清理失败、窗口残留或外层超时会使宿主不可用，后续测试直接失败并说明原因，不继续投递。共享 STA 线程卡死无法在进程内安全恢复；这时关闭宿主也可能超时，需要结束该次测试运行，不按名称结束其他系统进程。正常清理先关闭窗口、停止归属命令并完成日志收尾，再删除独立临时目录。
 
@@ -53,6 +54,14 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/Talo
 工作区旁的 `*.update-settings.json`、`*.update-cache.json` 与其他本机配置一样由 `.gitignore` 忽略，任意目录内均适用；普通 JSON 示例仍可纳入版本控制。忽略规则不会删除或改写已有旁文件。
 
 2026-10-04 桌面回归拆分检查：仅导出本次暂存源码到独立目录验证，完整自动化测试 173 通过（Core 144、App 29），0 失败、0 跳过，其中六套桌面回归及四项宿主回归分别报告通过；Release 构建 0 警告、0 错误。该快照不包含另行开发的同时分组改动。结果保存在 artifacts/tests/desktop-split/commit/。忽略规则已验证根目录及嵌套路径匹配，普通 JSON 不被误忽略；原有两个更新旁文件仍保留。未启用真实托盘 API 检查，未执行真实鼠标、多屏或 Windows DPI 人工验收，未运行 scripts/Publish.ps1，未修改版本或制作发布候选包。共享 STA 卡死仍需结束该次测试运行。
+
+## 同时分组持续监视回归
+
+`CommandGroupExecutionTests` 使用可控的合成完成任务，覆盖纯服务分组中已失败与稍后失败的成员、混合分组任务成功后的服务失败、任务成功通知只发送一次、服务正常退出或被停止后继续监视其他成员，以及空分组、纯任务和任务被停止的原有结果。
+
+`ParallelGroupRegression` 接入 STA 桌面测试宿主，在独立临时工作区运行合成服务，使用标记文件控制失败时刻。纯服务及混合分组分别验证退出码、同次启动服务被停止和失败提示；混合分组先确认“任务已成功”仍保留运行中的服务，再触发失败。另检查手动启动并被跳过的服务仍存活，手动重新启动或再次运行分组产生的新会话不被旧执行清理，再次执行后的分组状态不被旧回调覆盖。清理只调用这些隔离会话的既有停止流程。
+
+2026-10-04 同时分组源码修复检查：三个缺陷回归在修复前全部失败，修复后分组 Core 测试 15 项通过，隔离桌面四种场景通过。当前工作区完整自动化测试 182 通过（Core 152、App 30），0 失败、0 跳过；Release 构建 0 警告、0 错误。为避开并行工作的共享构建文件占用，构建使用 `--artifacts-path artifacts/parallel-group-build`；测试记录保存在 `artifacts/tests/parallel-group-regression/`。未进行人工鼠标键盘或最终发布包验收，未运行 `scripts/Publish.ps1`，未修改版本或制作候选包；该检查阶段保留已有未提交改动，后续源码提交与推送按用户明确授权执行。
 
 ## 全零配置 ID 回归
 

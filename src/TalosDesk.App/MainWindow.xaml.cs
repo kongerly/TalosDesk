@@ -2066,10 +2066,24 @@ public partial class MainWindow : Window
 
     private async Task MonitorParallelGroupAsync(Guid groupId, string groupName, long version, IReadOnlyList<ParallelCommandExecution> launched)
     {
+        async Task ReportTasksSucceededAsync()
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (_parallelGroupVersions.GetValueOrDefault(groupId) != version) return;
+                var activeServices = launched.Count(execution =>
+                    execution.Command.Kind == CommandKind.Service && !execution.Completion.IsCompleted);
+                _groupStatuses[groupId] = activeServices > 0
+                    ? $"任务已成功 · {activeServices} 个服务继续运行"
+                    : "已完成 · 所有任务成功";
+                RefreshCommandSelection();
+            });
+        }
+
         ParallelGroupObservationResult observation;
         try
         {
-            observation = await CommandGroupExecution.ObserveParallelAsync(launched);
+            observation = await CommandGroupExecution.ObserveParallelAsync(launched, ReportTasksSucceededAsync);
         }
         catch (Exception exception)
         {
@@ -2085,15 +2099,7 @@ public partial class MainWindow : Window
         if (observation.Outcome is ParallelGroupObservationOutcome.NoTaskCommands) return;
         if (observation.Outcome == ParallelGroupObservationOutcome.TasksSucceeded)
         {
-            await Dispatcher.InvokeAsync(() =>
-            {
-                if (_parallelGroupVersions.GetValueOrDefault(groupId) != version) return;
-                var activeServices = _parallelGroupSessions.GetValueOrDefault(groupId)?.Values.Count(session => !session.Completion.IsCompleted) ?? 0;
-                _groupStatuses[groupId] = activeServices > 0
-                    ? $"任务已成功 · {activeServices} 个服务继续运行"
-                    : "已完成 · 所有任务成功";
-                RefreshCommandSelection();
-            });
+            await ReportTasksSucceededAsync();
             return;
         }
 
@@ -2108,7 +2114,7 @@ public partial class MainWindow : Window
             RefreshCommandSelection();
         });
 
-        var stopFailures = await StopParallelGroupSessionsAsync(groupId);
+        var stopFailures = await StopParallelGroupSessionsAsync(groupId, launched);
         await Dispatcher.InvokeAsync(() =>
         {
             if (_parallelGroupVersions.GetValueOrDefault(groupId) == version)
@@ -2130,11 +2136,12 @@ public partial class MainWindow : Window
         });
     }
 
-    private async Task<List<string>> StopParallelGroupSessionsAsync(Guid groupId)
+    private async Task<List<string>> StopParallelGroupSessionsAsync(Guid groupId, IReadOnlyList<ParallelCommandExecution> launched)
     {
+        var completions = launched.Select(execution => execution.Completion).ToHashSet();
         var sessions = await Dispatcher.InvokeAsync(() =>
             _parallelGroupSessions.GetValueOrDefault(groupId)?.Values
-                .Where(session => !session.Completion.IsCompleted)
+                .Where(session => !session.Completion.IsCompleted && completions.Contains(session.Completion))
                 .Distinct()
                 .ToArray() ?? []);
         var failures = new List<string>();

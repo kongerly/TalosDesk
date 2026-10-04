@@ -44,6 +44,10 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(TcpProbeStatesFollowDesktopCommandLifecycle), TcpProbeRegression.Run, () => TcpProbeRegression.Stage);
 
     [TestMethod]
+    public void ParallelGroupsKeepWatchingServicesAndOnlyCleanUpTheirOwnExecution() =>
+        _host.Run(nameof(ParallelGroupsKeepWatchingServicesAndOnlyCleanUpTheirOwnExecution), ParallelGroupRegression.Run, () => ParallelGroupRegression.Stage);
+
+    [TestMethod]
     public void UpdateStatesDoNotBlockDesktopCommandAndOutputFlows()
     {
         var progress = new ProgressState();

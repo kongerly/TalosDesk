@@ -42,23 +42,162 @@ public sealed class CommandGroupExecutionTests
     }
 
     [TestMethod]
-    public async Task ParallelObservationCompletesWhenTasksSucceedAndReportsStoppedTask()
+    public async Task ParallelObservationReportsAlreadyFailedServiceWithoutWaitingForOtherServices()
+    {
+        var failedService = NewCommand("Failed server");
+        failedService.Kind = CommandKind.Service;
+        var otherService = NewCommand("Other server");
+        otherService.Kind = CommandKind.Service;
+        var pending = new TaskCompletionSource<CommandRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var result = await CommandGroupExecution.ObserveParallelAsync(
+        [
+            new ParallelCommandExecution(otherService, pending.Task),
+            new ParallelCommandExecution(failedService, Task.FromResult(new CommandRunResult(CommandRunState.Failed, 9, false)))
+        ]).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(ParallelGroupObservationOutcome.CommandFailed, result.Outcome);
+        Assert.AreSame(failedService, result.Command);
+        Assert.AreEqual(9, result.RunResult?.ExitCode);
+        Assert.IsFalse(pending.Task.IsCompleted);
+    }
+
+    [TestMethod]
+    public async Task ParallelObservationKeepsWatchingServiceOnlyGroupUntilFailure()
+    {
+        var service = NewCommand("Server");
+        service.Kind = CommandKind.Service;
+        var completion = new TaskCompletionSource<CommandRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observation = CommandGroupExecution.ObserveParallelAsync([new ParallelCommandExecution(service, completion.Task)]);
+
+        Assert.IsFalse(observation.IsCompleted);
+        completion.SetResult(new(CommandRunState.Failed, 7, false));
+        var result = await observation.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(ParallelGroupObservationOutcome.CommandFailed, result.Outcome);
+        Assert.AreSame(service, result.Command);
+        Assert.AreEqual(7, result.RunResult?.ExitCode);
+    }
+
+    [TestMethod]
+    public async Task ParallelObservationKeepsWatchingServiceAfterTasksSucceed()
     {
         var service = NewCommand("Server");
         service.Kind = CommandKind.Service;
         var test = NewCommand("Test");
         var serviceCompletion = new TaskCompletionSource<CommandRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var succeeded = await CommandGroupExecution.ObserveParallelAsync(
+        var observation = CommandGroupExecution.ObserveParallelAsync(
         [
             new ParallelCommandExecution(service, serviceCompletion.Task),
             new ParallelCommandExecution(test, Task.FromResult(new CommandRunResult(CommandRunState.Succeeded, 0, false)))
-        ]).WaitAsync(TimeSpan.FromSeconds(1));
-        Assert.AreEqual(ParallelGroupObservationOutcome.TasksSucceeded, succeeded.Outcome);
+        ]);
 
+        Assert.IsFalse(observation.IsCompleted);
+        serviceCompletion.SetResult(new(CommandRunState.Failed, 11, false));
+        var result = await observation.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.AreEqual(ParallelGroupObservationOutcome.CommandFailed, result.Outcome);
+        Assert.AreSame(service, result.Command);
+        Assert.AreEqual(11, result.RunResult?.ExitCode);
+    }
+
+    [TestMethod]
+    public async Task ParallelObservationReportsStoppedTask()
+    {
+        var test = NewCommand("Test");
+        var service = NewCommand("Server");
+        service.Kind = CommandKind.Service;
+        var serviceCompletion = new TaskCompletionSource<CommandRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var stopped = await CommandGroupExecution.ObserveParallelAsync(
-        [new ParallelCommandExecution(test, Task.FromResult(new CommandRunResult(CommandRunState.Stopped, 1, false)))]);
+        [
+            new ParallelCommandExecution(service, serviceCompletion.Task),
+            new ParallelCommandExecution(test, Task.FromResult(new CommandRunResult(CommandRunState.Stopped, 1, false)))
+        ]).WaitAsync(TimeSpan.FromSeconds(1));
         Assert.AreEqual(ParallelGroupObservationOutcome.TaskStopped, stopped.Outcome);
+        Assert.IsFalse(serviceCompletion.Task.IsCompleted);
+    }
+
+    [TestMethod]
+    [DataRow(CommandRunState.Succeeded)]
+    [DataRow(CommandRunState.Stopped)]
+    public async Task ParallelObservationNotifiesTaskSuccessOnceAndWaitsForServiceExit(CommandRunState serviceState)
+    {
+        var service = NewCommand("Server");
+        service.Kind = CommandKind.Service;
+        var firstTask = NewCommand("First task");
+        var lastTask = NewCommand("Last task");
+        var serviceCompletion = new TaskCompletionSource<CommandRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var taskCompletion = new TaskCompletionSource<CommandRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var notification = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var notificationCount = 0;
+        var observation = CommandGroupExecution.ObserveParallelAsync(
+        [
+            new ParallelCommandExecution(service, serviceCompletion.Task),
+            new ParallelCommandExecution(firstTask, Task.FromResult(new CommandRunResult(CommandRunState.Succeeded, 0, false))),
+            new ParallelCommandExecution(lastTask, taskCompletion.Task)
+        ], () =>
+        {
+            notificationCount++;
+            notification.SetResult();
+            return Task.CompletedTask;
+        });
+
+        Assert.AreEqual(0, notificationCount);
+        taskCompletion.SetResult(new(CommandRunState.Succeeded, 0, false));
+        await notification.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.IsFalse(observation.IsCompleted);
+        serviceCompletion.SetResult(new(serviceState, 0, false));
+        var result = await observation.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(1, notificationCount);
+        Assert.AreEqual(ParallelGroupObservationOutcome.TasksSucceeded, result.Outcome);
+        Assert.AreSame(lastTask, result.Command);
+    }
+
+    [TestMethod]
+    [DataRow(CommandRunState.Succeeded)]
+    [DataRow(CommandRunState.Stopped)]
+    public async Task ParallelObservationWaitsForEveryServiceEvenAfterNormalExit(CommandRunState firstState)
+    {
+        var first = NewCommand("First server");
+        first.Kind = CommandKind.Service;
+        var second = NewCommand("Second server");
+        second.Kind = CommandKind.Service;
+        var completion = new TaskCompletionSource<CommandRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observation = CommandGroupExecution.ObserveParallelAsync(
+        [
+            new ParallelCommandExecution(first, Task.FromResult(new CommandRunResult(firstState, 0, false))),
+            new ParallelCommandExecution(second, completion.Task)
+        ], () => throw new AssertFailedException("纯服务分组不应发送任务完成通知。"));
+
+        Assert.IsFalse(observation.IsCompleted);
+        completion.SetResult(new(CommandRunState.Failed, 5, false));
+        var result = await observation.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.AreEqual(ParallelGroupObservationOutcome.CommandFailed, result.Outcome);
+        Assert.AreSame(second, result.Command);
+    }
+
+    [TestMethod]
+    public async Task ParallelObservationCompletesEmptyServiceOnlyAndTaskOnlyGroups()
+    {
+        var service = NewCommand("Server");
+        service.Kind = CommandKind.Service;
+        var task = NewCommand("Test");
+        var empty = await CommandGroupExecution.ObserveParallelAsync([]);
+        var serviceOnly = await CommandGroupExecution.ObserveParallelAsync(
+            [new ParallelCommandExecution(service, Task.FromResult(new CommandRunResult(CommandRunState.Stopped, 0, false)))]);
+        var notifications = 0;
+        var taskOnly = await CommandGroupExecution.ObserveParallelAsync(
+            [new ParallelCommandExecution(task, Task.FromResult(new CommandRunResult(CommandRunState.Succeeded, 0, false)))], () =>
+            {
+                notifications++;
+                return Task.CompletedTask;
+            });
+
+        Assert.AreEqual(ParallelGroupObservationOutcome.NoTaskCommands, empty.Outcome);
+        Assert.AreEqual(ParallelGroupObservationOutcome.NoTaskCommands, serviceOnly.Outcome);
+        Assert.AreEqual(ParallelGroupObservationOutcome.TasksSucceeded, taskOnly.Outcome);
+        Assert.AreEqual(1, notifications);
     }
 
     [TestMethod]
