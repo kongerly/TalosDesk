@@ -30,7 +30,8 @@ internal static class WindowLayoutRegression
         };
         store.SaveAsync(new WorkspaceConfiguration { Projects = [project] }).GetAwaiter().GetResult();
         MainWindow? window = null;
-        try
+        Window[] dialogs = [];
+        DesktopTestHost.RunWithCleanup(() =>
         {
             window = Open(store);
             var layouts = new[]
@@ -83,7 +84,7 @@ internal static class WindowLayoutRegression
                 }
             }
 
-            Window[] dialogs =
+            dialogs =
             [
                 new ProjectEditorWindow(project), new CommandEditorWindow(root, command),
                 new CommandGroupEditorWindow(project.Commands, project.Groups[0]),
@@ -152,13 +153,13 @@ internal static class WindowLayoutRegression
             window = Open(store);
             Assert.AreEqual(WindowState.Normal, window.WindowState);
             AssertBounds(expected, window);
-        }
-        finally
+        }, () =>
         {
+            foreach (var dialog in dialogs) dialog.Close();
             window?.Close();
             Pump();
             Directory.Delete(root, true);
-        }
+        });
     }
 
     private static MainWindow Open(WorkspaceStore store)

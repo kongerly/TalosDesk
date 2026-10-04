@@ -32,7 +32,7 @@ internal static class MessageDialogRegression
         };
         store.SaveAsync(new() { Projects = [project] }).GetAwaiter().GetResult();
         var window = new MainWindow(store, "隔离提示验收", null, null, null, trayIcon: new TestTrayIcon());
-        try
+        DesktopTestHost.RunWithCleanup(() =>
         {
             CheckInvalidWorkspaceIds(root);
             window.Show();
@@ -45,15 +45,14 @@ internal static class MessageDialogRegression
             CheckExitInteraction(window);
             CheckRunningExit(root);
             Assert.IsEmpty(Sessions(window), "提示与导入合并不能启动命令。");
-        }
-        finally
+        }, () =>
         {
             Wait(() => !(bool)typeof(MainWindow).GetField("_workspaceChangeInProgress", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!);
             window.Close();
             Pump();
             Directory.Delete(root, true);
             System.Threading.SynchronizationContext.SetSynchronizationContext(previousContext);
-        }
+        });
     }
 
     private static void CheckResultsAndKeyboard(Window owner)

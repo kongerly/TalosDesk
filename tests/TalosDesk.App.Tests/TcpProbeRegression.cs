@@ -41,10 +41,11 @@ internal static class TcpProbeRegression
         var store = new WorkspaceStore(Path.Combine(root, "workspace.json"));
         store.SaveAsync(configuration).GetAwaiter().GetResult();
         var window = new MainWindow(store, "隔离 TCP 验收", null, null, null, exitInteraction: new ExitInteraction());
-        try
+        CommandEditorWindow? editor = null;
+        DesktopTestHost.RunWithCleanup(() =>
         {
             Stage = "编辑与导入预览";
-            var editor = new CommandEditorWindow(root, command);
+            editor = new CommandEditorWindow(root, command);
             Assert.IsTrue(((CheckBox)editor.FindName("ProbeEnabledBox")).IsChecked);
             ((TextBox)editor.FindName("ProbePortBox")).Text = "12346";
             ((ComboBox)editor.FindName("KindBox")).SelectedIndex = 0;
@@ -123,14 +124,14 @@ internal static class TcpProbeRegression
             Assert.AreEqual("其中 0 个探测通过", Find<TextBlock>(window, "OverviewProbeCountText").Text);
             var diskLog = Directory.GetFiles(store.FilePath + ".logs", "stdout.log", SearchOption.AllDirectories).Select(File.ReadAllText);
             Assert.IsTrue(diskLog.All(text => !text.Contains("TCP")));
-        }
-        finally
+        }, () =>
         {
+            editor?.Close();
             window.Close();
             Wait(() => !window.IsVisible);
             Directory.Delete(root, true);
             System.Threading.SynchronizationContext.SetSynchronizationContext(previousContext);
-        }
+        });
     }
 
     private static T Find<T>(Window window, string name) => (T)window.FindName(name);

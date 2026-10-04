@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using TalosDesk.Core.Configuration;
+using TalosDesk.Core.Processes;
 using TalosDesk.Core.Updates;
 
 namespace TalosDesk.App.Tests;
@@ -14,37 +15,40 @@ namespace TalosDesk.App.Tests;
 [TestClass]
 public sealed class MainWindowIntegrationTests
 {
+    private static DesktopTestHost _host = null!;
+
+    [ClassInitialize]
+    public static void Initialize(TestContext context) => _host = new DesktopTestHost();
+
+    [ClassCleanup]
+    public static void Cleanup() => _host?.Dispose();
+
+    [TestMethod]
+    public void MessageDialogsPreserveInteractionAndLayout() =>
+        _host.Run(nameof(MessageDialogsPreserveInteractionAndLayout), MessageDialogRegression.Run, () => MessageDialogRegression.Stage);
+
+    [TestMethod]
+    public void TrayControllerPreservesWindowAndIconLifecycle() =>
+        _host.Run(nameof(TrayControllerPreservesWindowAndIconLifecycle), TrayIconControllerTests.Run, () => TrayIconControllerTests.Stage);
+
+    [TestMethod]
+    public void TrayCommandsContinueRunningAndExitSafely() =>
+        _host.Run(nameof(TrayCommandsContinueRunningAndExitSafely), TrayCommandRegression.Run, () => TrayCommandRegression.Stage);
+
+    [TestMethod]
+    public void WindowLayoutAndSettingsSurviveResizeAndReopen() =>
+        _host.Run(nameof(WindowLayoutAndSettingsSurviveResizeAndReopen), WindowLayoutRegression.Run, () => WindowLayoutRegression.Stage);
+
+    [TestMethod]
+    public void TcpProbeStatesFollowDesktopCommandLifecycle() =>
+        _host.Run(nameof(TcpProbeStatesFollowDesktopCommandLifecycle), TcpProbeRegression.Run, () => TcpProbeRegression.Stage);
+
     [TestMethod]
     public void UpdateStatesDoNotBlockDesktopCommandAndOutputFlows()
     {
-        Exception? failure = null;
         var progress = new ProgressState();
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                var application = new App(launchWorkspace: false) { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-                application.InitializeComponent();
-                MessageDialogRegression.Run();
-                TrayIconControllerTests.Run();
-                TrayCommandRegression.Run();
-                WindowLayoutRegression.Run();
-                TcpProbeRegression.Run();
-                RunRegression(progress);
-                application.Shutdown();
-            }
-            catch (Exception exception)
-            {
-                failure = exception;
-            }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.IsBackground = true;
-        thread.Start();
-
-        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(120)),
-            $"桌面测试线程没有按时退出；阶段：{progress.Stage}，页面阶段：{progress.Phase}，布局：{WindowLayoutRegression.Stage}，托盘：{TrayCommandRegression.Stage}。");
-        if (failure is not null) throw new AssertFailedException($"桌面集成检查失败（提示：{MessageDialogRegression.Stage}，托盘：{TrayCommandRegression.Stage}，TCP：{TcpProbeRegression.Stage}）：{failure}");
+        _host.Run(nameof(UpdateStatesDoNotBlockDesktopCommandAndOutputFlows), () => RunRegression(progress),
+            () => $"{progress.Stage}，页面阶段：{progress.Phase}");
     }
 
     private static void RunRegression(ProgressState progress)
@@ -105,23 +109,22 @@ public sealed class MainWindowIntegrationTests
 
         var clock = new TestTimeProvider(new DateTimeOffset(2026, 9, 29, 10, 0, 0, TimeSpan.Zero));
         var handler = new ScenarioHandler("NetworkFailure");
-        try
+        MainWindow? window = null;
+        DispatcherTimer? timer = null;
+        using var http = new HttpClient(handler);
+        using var client = new GitHubReleaseClient(http, clock);
+        using var coordinator = new UpdateCheckCoordinator(
+            "0.1.1", ReleaseChannel.Preview, client, new UpdateStateStore(workspace), clock);
+        DesktopTestHost.RunWithCleanup(() =>
         {
-            using var http = new HttpClient(handler);
-            using var client = new GitHubReleaseClient(http, clock);
-            using var coordinator = new UpdateCheckCoordinator(
-                "0.1.1",
-                ReleaseChannel.Preview,
-                client,
-                new UpdateStateStore(workspace),
-                clock);
-            var window = new MainWindow(
+            window = new MainWindow(
                 new WorkspaceStore(workspace),
                 "隔离测试",
                 coordinator,
                 new ApplicationBuildInfo("0.1.1", "0.1.1", ReleaseChannel.Preview, null),
-                new RecordingLauncher(), trayIcon: new TestTrayIcon());
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+                new RecordingLauncher(), trayIcon: new TestTrayIcon(), exitInteraction: new ExitInteraction());
+            timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+            var frame = new DispatcherFrame();
             var phase = 0;
             var deadline = DateTime.UtcNow.AddSeconds(30);
             Exception? scenarioFailure = null;
@@ -298,7 +301,7 @@ public sealed class MainWindowIntegrationTests
                         phase = 11;
                         timer.Stop();
                         window.Close();
-                        Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
+                        frame.Continue = false;
                     }
                     progress.Phase = phase;
                 }
@@ -306,22 +309,45 @@ public sealed class MainWindowIntegrationTests
                 {
                     scenarioFailure = exception;
                     timer.Stop();
-                    window.Close();
-                    Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
+                    frame.Continue = false;
                 }
             };
 
             progress.Stage = "显示窗口";
             window.Show();
             timer.Start();
-            Dispatcher.Run();
-            if (scenarioFailure is not null) throw scenarioFailure;
+            Dispatcher.PushFrame(frame);
+            if (scenarioFailure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(scenarioFailure).Throw();
             Assert.AreEqual(11, phase, "桌面流程提前结束。");
-            Assert.IsTrue(SpinWait.SpinUntil(() => handler.CancellationObserved, TimeSpan.FromSeconds(2)), "确认退出没有取消挂起的更新请求。");
-        }
-        finally
+            WaitUntil(() => !Application.Current.Windows.Cast<Window>().Contains(window), TimeSpan.FromSeconds(15),
+                "更新回归窗口或归属命令未能完成关闭。");
+            WaitUntil(() => handler.CancellationObserved, TimeSpan.FromSeconds(2), "确认退出没有取消挂起的更新请求。");
+        }, () =>
         {
+            timer?.Stop();
+            if (window is not null)
+            {
+                window.Close();
+                WaitUntil(() => !Application.Current.Windows.Cast<Window>().Contains(window), TimeSpan.FromSeconds(15),
+                    "更新回归窗口或归属命令未能完成关闭。");
+            }
+            coordinator.Dispose();
             Directory.Delete(sandbox, true);
+        });
+    }
+
+    private static void WaitUntil(Func<bool> condition, TimeSpan timeout, string message)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition())
+        {
+            Assert.IsTrue(DateTime.UtcNow < deadline, message);
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(20) };
+            timer.Tick += (_, _) => frame.Continue = false;
+            timer.Start();
+            try { Dispatcher.PushFrame(frame); }
+            finally { timer.Stop(); }
         }
     }
 
@@ -395,8 +421,16 @@ public sealed class MainWindowIntegrationTests
 
     private sealed class ProgressState
     {
-        public string Stage { get; set; } = "未启动";
-        public int Phase { get; set; } = -1;
+        private string _stage = "未启动";
+        private int _phase = -1;
+        public string Stage { get => Volatile.Read(ref _stage); set => Volatile.Write(ref _stage, value); }
+        public int Phase { get => Volatile.Read(ref _phase); set => Volatile.Write(ref _phase, value); }
     }
 
+    private sealed class ExitInteraction : IMainWindowExitInteraction
+    {
+        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount) => true;
+        public async Task StopAsync(CommandRunSession session) => await session.StopAsync();
+        public void ReportFailure(Window owner, Exception exception) => throw new AssertFailedException("更新回归无法停止归属命令。", exception);
+    }
 }

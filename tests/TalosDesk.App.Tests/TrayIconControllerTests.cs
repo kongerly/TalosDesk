@@ -7,15 +7,23 @@ namespace TalosDesk.App.Tests;
 
 internal static class TrayIconControllerTests
 {
+    internal static string Stage { get; private set; } = "开始";
     // WPF 在一个进程中只能创建一次 Application，场景共用现有桌面集成宿主。
     internal static void Run()
     {
+        Stage = "普通窗口边界与最大化恢复";
         MinimizeAndRestorePreserveNormalBoundsAndMaximizedState();
+        Stage = "托盘注册失败与重试";
         FailedRegistrationKeepsTaskbarWindowAndCanRetry();
+        Stage = "通知区域重建";
         ShellRestartReregistersOrRestoresHiddenWindow();
+        Stage = "托盘退出与取消";
         TrayExitRestoresBeforeClosingAndCanceledExitKeepsIcon();
         if (Environment.GetEnvironmentVariable("TALOSDESK_NATIVE_TRAY_TEST") == "1")
+        {
+            Stage = "原生托盘 API 注册与释放";
             NativeIconRegistersAndIsReleased();
+        }
     }
 
     private static void NativeIconRegistersAndIsReleased()
@@ -23,7 +31,7 @@ internal static class TrayIconControllerTests
         var window = new Window { Title = "隔离原生托盘验证", Width = 500, Height = 300 };
         using var icon = new WindowsTrayIcon();
         using var controller = new TrayIconController(window, "隔离原生托盘验证", icon);
-        try
+        DesktopTestHost.RunWithCleanup(() =>
         {
             window.Show();
             Pump();
@@ -38,8 +46,7 @@ internal static class TrayIconControllerTests
             Assert.AreEqual(WindowState.Normal, window.WindowState);
             window.Close();
             Assert.IsFalse(icon.TryRegister(handle, "已关闭的隔离测试"));
-        }
-        finally { controller.Dispose(); if (window.IsVisible) window.Close(); }
+        }, () => { controller.Dispose(); window.Close(); });
     }
 
     private static void MinimizeAndRestorePreserveNormalBoundsAndMaximizedState()
@@ -47,7 +54,7 @@ internal static class TrayIconControllerTests
         var window = new Window { Width = 500, Height = 300 };
         var icon = new TestTrayIcon();
         using var controller = new TrayIconController(window, "隔离托盘测试", icon);
-        try
+        DesktopTestHost.RunWithCleanup(() =>
         {
             window.Show();
             Pump();
@@ -73,8 +80,7 @@ internal static class TrayIconControllerTests
             Assert.AreEqual(WindowState.Maximized, window.WindowState);
             Assert.IsTrue(window.IsVisible);
             Assert.AreEqual(1, icon.RegisterCount, "反复恢复不应增加托盘图标。");
-        }
-        finally { window.Close(); }
+        }, () => window.Close());
         Assert.AreEqual(1, icon.DisposeCount);
         icon.Restore();
         controller.Dispose();
@@ -86,7 +92,7 @@ internal static class TrayIconControllerTests
         var window = new Window();
         var icon = new TestTrayIcon { CanRegister = false };
         using var controller = new TrayIconController(window, "隔离托盘测试", icon);
-        try
+        DesktopTestHost.RunWithCleanup(() =>
         {
             window.Show();
             window.WindowState = WindowState.Minimized;
@@ -97,8 +103,7 @@ internal static class TrayIconControllerTests
             icon.CanRegister = true;
             window.WindowState = WindowState.Minimized;
             Assert.IsFalse(window.IsVisible);
-        }
-        finally { window.Close(); }
+        }, () => window.Close());
     }
 
     private static void ShellRestartReregistersOrRestoresHiddenWindow()
@@ -106,7 +111,7 @@ internal static class TrayIconControllerTests
         var window = new Window();
         var icon = new TestTrayIcon();
         using var controller = new TrayIconController(window, "隔离托盘测试", icon);
-        try
+        DesktopTestHost.RunWithCleanup(() =>
         {
             window.Show();
             window.WindowState = WindowState.Maximized;
@@ -119,8 +124,7 @@ internal static class TrayIconControllerTests
             Pump();
             Assert.IsTrue(window.IsVisible);
             Assert.AreEqual(WindowState.Maximized, window.WindowState);
-        }
-        finally { window.Close(); }
+        }, () => window.Close());
     }
 
     private static void TrayExitRestoresBeforeClosingAndCanceledExitKeepsIcon()
@@ -136,7 +140,7 @@ internal static class TrayIconControllerTests
             Assert.AreEqual(WindowState.Normal, window.WindowState);
             args.Cancel = true;
         };
-        try
+        DesktopTestHost.RunWithCleanup(() =>
         {
             window.Show();
             window.Closing += cancel;
@@ -148,12 +152,11 @@ internal static class TrayIconControllerTests
             window.WindowState = WindowState.Minimized;
             icon.Exit();
             Assert.AreEqual(1, icon.DisposeCount);
-        }
-        finally
+        }, () =>
         {
             window.Closing -= cancel;
             if (icon.DisposeCount == 0) window.Close();
-        }
+        });
     }
 
     private static void Pump()

@@ -16,6 +16,8 @@ workspace.json
 *.logs/
 *.log-location.json
 *.window-settings.json
+*.update-settings.json
+*.update-cache.json
 *.diagnostics-settings.json
 *.crashes/
 *.secrets.json

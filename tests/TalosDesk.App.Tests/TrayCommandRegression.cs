@@ -29,7 +29,7 @@ internal static class TrayCommandRegression
         var interaction = new ExitInteraction();
         var window = new MainWindow(store, "隔离托盘测试", null, null, null,
             trayIcon: icon, exitInteraction: interaction);
-        try
+        DesktopTestHost.RunWithCleanup(() =>
         {
             window.Show();
             WaitUntil(() => ((Button)window.FindName("ManualUpdateCheckButton")).IsEnabled);
@@ -116,8 +116,7 @@ internal static class TrayCommandRegression
             Assert.IsTrue(interaction.Session.Completion.IsCompleted);
             StringAssert.Contains(File.ReadAllText(stdout), "tray-heartbeat-5");
             Assert.IsFalse(window.IsVisible);
-        }
-        finally
+        }, () =>
         {
             interaction.Confirm = true;
             interaction.FailStop = false;
@@ -128,7 +127,7 @@ internal static class TrayCommandRegression
                 WaitUntil(() => icon.DisposeCount == 1);
             }
             Directory.Delete(root, true);
-        }
+        });
     }
 
     private static string ReadLiveLog(string path)

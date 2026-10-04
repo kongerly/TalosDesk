@@ -22,6 +22,38 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 候选包的人工步骤见 [v0.2.0 验收清单](acceptance-v0.2.0.md)。
 
+## 桌面回归独立执行
+
+`MainWindowIntegrationTests` 现在提供六个独立测试结果，可按方法名筛选；各套内部已有断言继续保留：
+
+| 测试方法 | 覆盖内容 |
+| --- | --- |
+| `MessageDialogsPreserveInteractionAndLayout` | 提示、导入冲突、异常配置与运行中退出 |
+| `TrayControllerPreservesWindowAndIconLifecycle` | 托盘注册、恢复、通知区域重建及资源释放 |
+| `TrayCommandsContinueRunningAndExitSafely` | 隐藏期间命令与日志、取消退出、停止失败和重试 |
+| `WindowLayoutAndSettingsSurviveResizeAndReopen` | 页面与弹窗布局、窗口状态保存与恢复 |
+| `TcpProbeStatesFollowDesktopCommandLifecycle` | 探测编辑、状态、输出与项目汇总 |
+| `UpdateStatesDoNotBlockDesktopCommandAndOutputFlows` | 更新失败、限流、挂起期间的运行、重启、停止、输出和分组 |
+
+例如，单独执行布局回归或执行全部六套并输出独立 TRX 结果：
+
+```powershell
+pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests.WindowLayoutAndSettingsSurviveResizeAndReopen"
+pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests" --logger "trx;LogFileName=desktop.trx" --results-directory artifacts/tests/desktop
+```
+
+六套保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
+
+普通断言失败且清理成功后，宿主仍可执行下一套。清理失败、窗口残留或外层超时会使宿主不可用，后续测试直接失败并说明原因，不继续投递。共享 STA 线程卡死无法在进程内安全恢复；这时关闭宿主也可能超时，需要结束该次测试运行，不按名称结束其他系统进程。正常清理先关闭窗口、停止归属命令并完成日志收尾，再删除独立临时目录。
+
+`DesktopTestHostTests` 使用不创建 `Application` 的 Dispatcher 宿主，验证异常后继续、局部消息循环结束后继续、超时拒绝后续投递，以及清理失败保留两处异常并禁用宿主。
+
+`TALOSDESK_LAYOUT_CAPTURE_DIR` 继续控制提示与布局截图目录，分别筛选提示或布局测试即可生成对应截图。`TALOSDESK_NATIVE_TRAY_TEST=1` 仅为托盘控制器测试追加真实托盘 API 检查；默认使用替身，不要求通知区域可用。这些检查不替代真实鼠标、多屏或 Windows DPI 验收。
+
+工作区旁的 `*.update-settings.json`、`*.update-cache.json` 与其他本机配置一样由 `.gitignore` 忽略，任意目录内均适用；普通 JSON 示例仍可纳入版本控制。忽略规则不会删除或改写已有旁文件。
+
+2026-10-04 桌面回归拆分检查：仅导出本次暂存源码到独立目录验证，完整自动化测试 173 通过（Core 144、App 29），0 失败、0 跳过，其中六套桌面回归及四项宿主回归分别报告通过；Release 构建 0 警告、0 错误。该快照不包含另行开发的同时分组改动。结果保存在 artifacts/tests/desktop-split/commit/。忽略规则已验证根目录及嵌套路径匹配，普通 JSON 不被误忽略；原有两个更新旁文件仍保留。未启用真实托盘 API 检查，未执行真实鼠标、多屏或 Windows DPI 人工验收，未运行 scripts/Publish.ps1，未修改版本或制作发布候选包。共享 STA 卡死仍需结束该次测试运行。
+
 ## 全零配置 ID 回归
 
 `WorkspaceStoreTests` 使用独立临时文件覆盖 schema 1–4 的全零项目 ID 和命令 ID，检查 `LoadAsync`、`LoadSnapshotAsync` 及导入读取入口 `ReadFileAsync` 都以 `InvalidDataException` 拒绝，并逐字节确认原文件未改写。保存和导出回归分别检查拒绝全零 ID 后仍保留已有目标文件、不留下临时文件；既有往返测试继续检查有效 ID 保持不变。
