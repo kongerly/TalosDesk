@@ -233,6 +233,7 @@
                             <StackPanel>
                                 <TextBlock Text="正在运行" Foreground="{StaticResource MutedBrush}" FontSize="12" />
                                 <TextBlock x:Name="OverviewRunningCountText" Text="0" FontFamily="{StaticResource CodeFont}" FontSize="27" FontWeight="Bold" Foreground="{StaticResource JadeBrush}" Margin="0,7,0,0" />
+                                <TextBlock x:Name="OverviewProbeCountText" Text="其中 0 个探测通过" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11" />
                             </StackPanel>
                         </Border>
                         <Border Grid.Column="4" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="13" Padding="20,16">
@@ -303,6 +304,7 @@
                                                 <TextBlock Text="{Binding Name}" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="Bold" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis" />
                                             </DockPanel>
                                             <TextBlock Text="{Binding Command}" FontFamily="{StaticResource CodeFont}" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Loaded="CommandStatus_Loaded" Unloaded="CommandStatus_Unloaded" DataContextChanged="CommandStatus_DataContextChanged" FontSize="10" Foreground="{StaticResource JadeBrush}" Margin="0,5,0,0" TextWrapping="Wrap" />
                                         </StackPanel>
                                         <TextBlock Grid.Column="3" Text="{Binding Purpose}" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,16,0" MaxWidth="180" TextTrimming="CharacterEllipsis" />
                                     </Grid>
@@ -393,9 +395,11 @@
                 <Grid x:Name="OutputLayoutGrid" Grid.Row="1">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="235" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                     <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="0" /></Grid.RowDefinitions>
-                    <ComboBox x:Name="OutputCommandComboBox" Visibility="Collapsed" DisplayMemberPath="Name"
+                    <ComboBox x:Name="OutputCommandComboBox" Visibility="Collapsed"
                               SelectedItem="{Binding SelectedItem, ElementName=OutputCommandList, Mode=TwoWay}"
-                              AutomationProperties.Name="当前项目的命令" MinHeight="32" />
+                              AutomationProperties.Name="当前项目的命令" MinHeight="32">
+                        <ComboBox.ItemTemplate><DataTemplate><TextBlock TextTrimming="CharacterEllipsis"><Run Text="{Binding Name, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding StatusText, Mode=OneWay}" /></TextBlock></DataTemplate></ComboBox.ItemTemplate>
+                    </ComboBox>
                     <Border x:Name="OutputCommandPanel" Grid.Column="0" Background="#FBFEFF" BorderBrush="#B9D8E4" BorderThickness="1" CornerRadius="14" ClipToBounds="True">
                         <Grid>
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -436,7 +440,10 @@
                                 <Button x:Name="CopySelectedOutputButton" Content="复制所选" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="CopySelectedOutput_Click" IsEnabled="False" ToolTip="先拖选任意文本，再复制；Ctrl+A 可选择全部输出" />
                                 <Button x:Name="ClearOutputButton" Content="清空显示" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearOutput_Click" IsEnabled="False" />
                             </WrapPanel>
-                            <TextBlock x:Name="LogStatusText" Grid.Row="2" Foreground="#935B42" Margin="0,5,0,0" TextWrapping="Wrap" />
+                            <StackPanel Grid.Row="2">
+                                <TextBlock x:Name="ProbeBoundaryText" Text="TCP 可连接不代表业务健康，也不能确认监听者属于该命令。" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11" Visibility="Collapsed" />
+                                <TextBlock x:Name="LogStatusText" Foreground="#935B42" Margin="0,5,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
                             <Expander x:Name="LogSettingsExpander" Header="日志历史与设置" Margin="0,10,0,8">
                             <StackPanel>
                             <Grid Margin="0,10,0,0">

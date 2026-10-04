@@ -31,7 +31,7 @@
             </StackPanel>
             <StackPanel Grid.Column="1">
                 <TextBlock Text="运行类型" Style="{StaticResource FieldLabel}" />
-                <ComboBox x:Name="KindBox" Style="{StaticResource EditorComboBox}" SelectedIndex="0">
+                <ComboBox x:Name="KindBox" Style="{StaticResource EditorComboBox}" SelectedIndex="0" SelectionChanged="ProbeKind_Changed">
                     <ComboBoxItem Content="任务" Tag="Task" />
                     <ComboBoxItem Content="服务" Tag="Service" />
                 </ComboBox>
@@ -53,6 +53,18 @@
                 <TextBlock Text="命令" Style="{StaticResource FieldLabel}" />
                 <editing:PowerShellCommandEditor x:Name="CommandBox" AutomationProperties.AutomationId="CommandEditorHost" MinHeight="145" SaveRequested="CommandBox_SaveRequested" />
                 <TextBlock Text="命令会以明文保存在本机配置和导出文件中。不要把密钥写入命令。命令通过 PowerShell 7 非交互运行，不加载个人配置文件；目录中的程序可用 .\程序名.exe。" Foreground="{StaticResource GoldBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+                <TextBlock Text="TCP 探测（仅服务）" Style="{StaticResource FieldLabel}" Margin="0,15,0,0" />
+                <CheckBox x:Name="ProbeEnabledBox" Content="启用本机 TCP 探测" Checked="ProbeEnabled_Changed" Unchecked="ProbeEnabled_Changed" Margin="0,4,0,8" />
+                <TextBlock x:Name="ProbeTaskHint" Text="任务不支持探测；保存为任务将移除探测配置。" TextWrapping="Wrap" Foreground="{StaticResource GoldBrush}" />
+                <WrapPanel x:Name="ProbeFields" IsEnabled="False">
+                    <StackPanel Width="150" Margin="0,0,10,8"><TextBlock Text="回环地址" /><ComboBox x:Name="ProbeAddressBox" SelectedIndex="0"><ComboBoxItem Content="127.0.0.1" /><ComboBoxItem Content="::1" /></ComboBox></StackPanel>
+                    <StackPanel Width="110" Margin="0,0,10,8"><TextBlock Text="端口（必填）" /><TextBox x:Name="ProbePortBox" /></StackPanel>
+                    <StackPanel Width="110" Margin="0,0,10,8"><TextBlock Text="检查间隔（秒）" /><TextBox x:Name="ProbeIntervalBox" Text="2" /></StackPanel>
+                    <StackPanel Width="110" Margin="0,0,10,8"><TextBlock Text="连接超时（秒）" /><TextBox x:Name="ProbeConnectTimeoutBox" Text="1" /></StackPanel>
+                    <StackPanel Width="110" Margin="0,0,10,8"><TextBlock Text="启动等待（秒）" /><TextBox x:Name="ProbeStartupTimeoutBox" Text="120" /></StackPanel>
+                    <StackPanel Width="110" Margin="0,0,10,8"><TextBlock Text="连续失败阈值" /><TextBox x:Name="ProbeFailureThresholdBox" Text="3" /></StackPanel>
+                </WrapPanel>
+                <TextBlock Text="TCP 可连接不代表业务健康，也不能确认监听者属于该命令。超时后仍持续探测；探测失败不会自动停止或重启服务。" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,8" />
                 <TextBlock Text="环境变量" Style="{StaticResource FieldLabel}" Margin="0,15,0,0" />
                 <ListBox x:Name="EnvironmentList" Height="125" SelectionChanged="EnvironmentList_SelectionChanged"
                          AutomationProperties.AutomationId="CommandEnvironmentList" />

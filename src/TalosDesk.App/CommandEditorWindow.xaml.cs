@@ -18,6 +18,7 @@ public partial class CommandEditorWindow : Window
         RefreshEnvironmentList();
         WorkingDirectoryBox.Text = existing?.WorkingDirectory ?? projectDirectory;
         CommandBox.WorkingDirectory = WorkingDirectoryBox.Text;
+        RefreshProbeFields();
         if (existing is null) return;
 
         _commandId = existing.Id;
@@ -26,9 +27,46 @@ public partial class CommandEditorWindow : Window
         PurposeBox.Text = existing.Purpose;
         CommandBox.Text = existing.Command;
         KindBox.SelectedIndex = existing.Kind == CommandKind.Service ? 1 : 0;
+        if (existing.TcpProbe is { } probe)
+        {
+            ProbeAddressBox.SelectedIndex = probe.Address == "::1" ? 1 : 0;
+            ProbePortBox.Text = probe.Port.ToString();
+            ProbeIntervalBox.Text = probe.IntervalSeconds.ToString();
+            ProbeConnectTimeoutBox.Text = probe.ConnectTimeoutSeconds.ToString();
+            ProbeStartupTimeoutBox.Text = probe.StartupTimeoutSeconds.ToString();
+            ProbeFailureThresholdBox.Text = probe.FailureThreshold.ToString();
+            ProbeEnabledBox.IsChecked = true;
+        }
     }
 
     public CommandDefinition? Result { get; private set; }
+
+    private void ProbeKind_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => RefreshProbeFields();
+    private void ProbeEnabled_Changed(object sender, RoutedEventArgs e) => RefreshProbeFields();
+
+    private void RefreshProbeFields()
+    {
+        if (ProbeFields is null || ProbeEnabledBox is null || ProbeTaskHint is null) return;
+        var service = KindBox.SelectedIndex == 1;
+        ProbeEnabledBox.IsEnabled = service;
+        ProbeFields.IsEnabled = service && ProbeEnabledBox.IsChecked == true;
+        ProbeTaskHint.Visibility = service ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private TcpProbeConfiguration? ReadProbe(CommandKind kind)
+    {
+        if (kind != CommandKind.Service || ProbeEnabledBox.IsChecked != true) return null;
+        static int Number(string value) => int.TryParse(value, out var number) ? number : -1;
+        var probe = new TcpProbeConfiguration
+        {
+            Address = ProbeAddressBox.SelectedIndex == 1 ? "::1" : "127.0.0.1",
+            Port = Number(ProbePortBox.Text), IntervalSeconds = Number(ProbeIntervalBox.Text),
+            ConnectTimeoutSeconds = Number(ProbeConnectTimeoutBox.Text),
+            StartupTimeoutSeconds = Number(ProbeStartupTimeoutBox.Text), FailureThreshold = Number(ProbeFailureThresholdBox.Text)
+        };
+        probe.Validate();
+        return probe;
+    }
 
     private void WorkingDirectoryBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
@@ -116,6 +154,13 @@ public partial class CommandEditorWindow : Window
         }
 
         var kind = (KindBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() == "Service" ? CommandKind.Service : CommandKind.Task;
+        TcpProbeConfiguration? probe;
+        try { probe = ReadProbe(kind); }
+        catch (InvalidDataException exception)
+        {
+            MessageBox.Show(this, exception.Message + "\n端口 1–65535；间隔和连接超时 1–60 秒；启动等待 1–3600 秒且不小于连接超时；失败阈值 1–100。", "探测配置无效", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         Result = new CommandDefinition
         {
             Id = _commandId == Guid.Empty ? Guid.NewGuid() : _commandId,
@@ -124,6 +169,7 @@ public partial class CommandEditorWindow : Window
             Command = CommandBox.Text.Trim(),
             WorkingDirectory = Path.GetFullPath(WorkingDirectoryBox.Text.Trim()),
             Kind = kind,
+            TcpProbe = probe,
             EnvironmentVariables = _environmentVariables.Select(variable => variable.Clone()).ToList()
         };
         DialogResult = true;

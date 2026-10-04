@@ -20,7 +20,8 @@ internal static class WindowLayoutRegression
         var command = new CommandDefinition
         {
             Name = "隔离布局测试：用于检查长名称与操作按钮是否重叠的命令",
-            Command = "Write-Output 'layout-test'", WorkingDirectory = root, Purpose = "合成布局检查"
+            Command = "Write-Output 'layout-test'", WorkingDirectory = root, Purpose = "合成布局检查",
+            Kind = CommandKind.Service, TcpProbe = new() { Port = 12345 }
         };
         var project = new ProjectDefinition
         {

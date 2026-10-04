@@ -52,6 +52,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<RunHistoryItem> _runHistory = [];
     private bool _syncingRunHistory;
     private readonly Dictionary<Guid, CommandRunSession> _sessions = [];
+    private readonly HashSet<TextBlock> _commandStatusLabels = [];
     private readonly Dictionary<Guid, CommandRunResult> _lastResults = [];
     private readonly Dictionary<Guid, DateTimeOffset> _runStartedAt = [];
     private readonly Dictionary<Guid, long> _runVersions = [];
@@ -1201,6 +1202,7 @@ public partial class MainWindow : Window
         BatchRunButton.IsEnabled = readyCount > 0 && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
         SaveStatusText.Text = !_canSave ? "配置错误" : _workspaceChangeInProgress ? "正在处理…" : _saveFailed ? "保存失败" : "本机配置";
         RefreshGroupItems(canChangeWorkspace);
+        RefreshProbeDisplay();
 
         if (command is null)
         {
@@ -1238,7 +1240,21 @@ public partial class MainWindow : Window
     private string GetCommandStatusText(CommandDefinition command)
     {
         if (_restartsInProgress.Contains(command.Id)) return "正在重启";
-        if (_sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted) return "运行中";
+        if (_sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted)
+        {
+            if (session.IsStopping) return "正在停止 · Ctrl+C";
+            var probe = session.TcpProbe;
+            return probe.State switch
+            {
+                TcpProbeState.NotConfigured => "运行中",
+                TcpProbeState.Inactive => "运行中 · 探测已停止",
+                TcpProbeState.Waiting => "运行中 · 等待中",
+                TcpProbeState.TimedOut => "运行中 · 启动等待超时",
+                TcpProbeState.Unreachable => "运行中 · TCP 不可达",
+                _ => "运行中 · TCP 探测通过" + (probe.ConsecutiveFailures > 0
+                    ? $" · 连续失败 {probe.ConsecutiveFailures}/{command.TcpProbe?.FailureThreshold}" : string.Empty)
+            };
+        }
         if (_reservedCommandIds.Contains(command.Id)) return "等待分组执行";
         if (!_lastResults.TryGetValue(command.Id, out var result)) return "空闲";
         return result.State == CommandRunState.Succeeded
@@ -1246,6 +1262,38 @@ public partial class MainWindow : Window
             : result.State == CommandRunState.Stopped
                 ? $"{(result.WasForceTerminated ? "已强制停止" : "已停止")} · 退出码 {result.ExitCode}"
                 : $"失败 · 退出码 {result.ExitCode}";
+    }
+
+    private void CommandStatus_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TextBlock label) return;
+        _commandStatusLabels.Add(label);
+        if (label.DataContext is CommandDefinition command) label.Text = GetCommandStatusText(command);
+    }
+
+    private void CommandStatus_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is TextBlock label) _commandStatusLabels.Remove(label);
+    }
+
+    private void CommandStatus_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is TextBlock label && e.NewValue is CommandDefinition command) label.Text = GetCommandStatusText(command);
+    }
+
+    private void RefreshProbeDisplay()
+    {
+        var active = (_selectedProject?.Commands ?? []).DistinctBy(command => command.Id)
+            .Where(command => _sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted).ToArray();
+        OverviewRunningCountText.Text = active.Length.ToString();
+        OverviewProbeCountText.Text = $"其中 {active.Count(command => command.Kind == CommandKind.Service && _sessions[command.Id].TcpProbe.State == TcpProbeState.Passed)} 个探测通过";
+        foreach (var label in _commandStatusLabels)
+            if (label.DataContext is CommandDefinition command) label.Text = GetCommandStatusText(command);
+        foreach (var item in _outputCommands) item.StatusText = GetCommandStatusText(item.Command);
+        ProbeBoundaryText.Visibility = _selectedCommand?.TcpProbe is not null && SelectedHistoricalRun is null ? Visibility.Visible : Visibility.Collapsed;
+        if (_selectedCommand is null) return;
+        RunStateText.Text = GetCommandStatusText(_selectedCommand);
+        if (SelectedHistoricalRun is null) OutputRunStateText.Text = RunStateText.Text;
     }
 
     private bool IsCommandBusy(Guid commandId) =>
@@ -1502,7 +1550,7 @@ public partial class MainWindow : Window
         var visibleProjects = imported.Projects.Select(project =>
         {
             var commands = project.Commands.Select(command =>
-                $"    - {command.Name}: {command.Command}{FormatSensitiveVariables(command)}");
+                $"    - {command.Name}: {command.Command}{FormatSensitiveVariables(command)}\n      {FormatProbeConfiguration(command)}");
             var groups = project.Groups.Select(group =>
             {
                 var memberNames = group.CommandIds.Select(id => project.Commands.First(command => command.Id == id).Name);
@@ -1518,7 +1566,7 @@ public partial class MainWindow : Window
                $"新增项目：{newProjects} · 文件夹相同：{matchingProjects}\n" +
                $"新增命令：{newCommands} · 名称冲突：{projectDetails}\n\n" +
                $"{string.Join("\n\n", visibleProjects)}\n\n" +
-               "导入不会自动运行任何命令。同名命令若选择替换，其整套环境变量也会替换本机配置；待填写或不可解密的敏感值可能使该命令暂不可运行。遇到冲突时仍可逐项选择保留、替换或取消。";
+               "导入不会自动运行命令或连接探测端口。同名命令若选择替换，其整套环境变量和 TCP 探测配置也会替换本机配置；未配置探测的导入项会关闭原探测。待填写或不可解密的敏感值可能使该命令暂不可运行。遇到冲突时仍可逐项选择保留、替换或取消。";
     }
 
     private static string FormatSensitiveVariables(CommandDefinition command)
@@ -1528,6 +1576,10 @@ public partial class MainWindow : Window
             .ToArray();
         return sensitive.Length == 0 ? string.Empty : $"\n      敏感变量：{string.Join("、", sensitive)}";
     }
+
+    private static string FormatProbeConfiguration(CommandDefinition command) => command.TcpProbe is { } probe
+        ? $"TCP 探测：[{probe.Address}]:{probe.Port}，间隔 {probe.IntervalSeconds} 秒，连接超时 {probe.ConnectTimeoutSeconds} 秒，启动等待 {probe.StartupTimeoutSeconds} 秒，连续失败阈值 {probe.FailureThreshold}"
+        : "TCP 探测：未配置（替换时将关闭原探测）";
 
     private bool MergeImportedWorkspace(WorkspaceConfiguration imported, List<ProjectDefinition> targetProjects)
     {
@@ -1581,7 +1633,7 @@ public partial class MainWindow : Window
 
                 var existingCommand = existingProject.Commands[existingCommandIndex];
                 var commandChoice = MessageBox.Show(this,
-                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n选择“是”将以导入的整套变量替换本机变量，不沿用旧密文；选择“否”保留本机命令及变量；选择“取消”停止导入。",
+                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n本机{FormatProbeConfiguration(existingCommand)}\n导入{FormatProbeConfiguration(incomingCommand)}\n\n选择“是”将以导入的整套变量和探测配置替换本机配置，不沿用旧密文；选择“否”保留本机命令及全部配置；选择“取消”停止导入。",
                     "命令名称冲突", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
                 if (commandChoice == MessageBoxResult.Cancel) return false;
                 if (commandChoice == MessageBoxResult.Yes)
@@ -1669,6 +1721,7 @@ public partial class MainWindow : Window
         Command = command.Command,
         WorkingDirectory = command.WorkingDirectory,
         Kind = command.Kind,
+        TcpProbe = command.TcpProbe?.Clone(),
         EnvironmentVariables = command.EnvironmentVariables.Select(variable => variable.Clone()).ToList()
     };
 
@@ -2261,10 +2314,10 @@ public partial class MainWindow : Window
     {
         foreach (var command in commands)
         {
-            try { _ = CommandRunEnvironmentResolver.Resolve(command); }
-            catch (CommandEnvironmentException exception)
+            try { TcpProbeConfiguration.ValidateCommand(command); _ = CommandRunEnvironmentResolver.Resolve(command); }
+            catch (Exception exception) when (exception is CommandEnvironmentException or InvalidDataException)
             {
-                MessageBox.Show(this, $"命令“{command.Name}”的环境变量不可用：\n\n{exception.Message}\n\n本次不会启动任何命令。",
+                MessageBox.Show(this, $"命令“{command.Name}”的配置不可用：\n\n{exception.Message}\n\n本次不会启动任何命令。",
                     "命令暂不可运行", MessageBoxButton.OK, MessageBoxImage.Information);
                 return false;
             }
@@ -2283,8 +2336,8 @@ public partial class MainWindow : Window
             return false;
         }
         CommandRunEnvironment runEnvironment;
-        try { runEnvironment = CommandRunEnvironmentResolver.Resolve(command); }
-        catch (CommandEnvironmentException exception)
+        try { TcpProbeConfiguration.ValidateCommand(command); runEnvironment = CommandRunEnvironmentResolver.Resolve(command); }
+        catch (Exception exception) when (exception is CommandEnvironmentException or InvalidDataException)
         {
             error = exception.Message;
             return false;
@@ -2322,7 +2375,7 @@ public partial class MainWindow : Window
                         }
                     }
                     QueueOutput(command.Id, nextVersion, output);
-                }, runEnvironment);
+                }, runEnvironment, command.TcpProbe);
             _runVersions[command.Id] = nextVersion;
             if (logWriter is not null) _runLogWriters[command.Id] = logWriter;
             _lastResults.Remove(command.Id);
@@ -2330,10 +2383,17 @@ public partial class MainWindow : Window
             GetLogs(command.Id).Clear();
             if (_selectedCommand?.Id == command.Id) RenderSelectedOutput(command, scrollToEnd: true);
             _sessions[command.Id] = started;
+            started.TcpProbeChanged += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
+            {
+                // 读取当前快照，不应用排队时的旧结果；旧会话不能刷新新运行。
+                if (_runVersions.GetValueOrDefault(command.Id) == nextVersion &&
+                    _sessions.TryGetValue(command.Id, out var current) && ReferenceEquals(current, started))
+                    RefreshProbeDisplay();
+            }));
             session = started;
             RefreshRunHistory(selectCurrent: true);
             RefreshCommandSelection();
-            _logFinalizations[command.Id] = CompleteRunAsync(command.Id, started, logWriter);
+            _logFinalizations[command.Id] = CompleteRunAsync(command.Id, nextVersion, started, logWriter);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
@@ -2367,7 +2427,7 @@ public partial class MainWindow : Window
         };
     }
 
-    private async Task CompleteRunAsync(Guid commandId, CommandRunSession session, RunLogWriter? logWriter)
+    private async Task CompleteRunAsync(Guid commandId, long version, CommandRunSession session, RunLogWriter? logWriter)
     {
         try
         {
@@ -2377,11 +2437,13 @@ public partial class MainWindow : Window
                 try { _runLogStore.Complete(logWriter, result); }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
-                    _logWarnings[commandId] = $"日志完成写入失败：{exception.Message}";
+                    if (_runVersions.GetValueOrDefault(commandId) == version)
+                        _logWarnings[commandId] = $"日志完成写入失败：{exception.Message}";
                 }
             }
             await Dispatcher.InvokeAsync(() =>
             {
+                if (_runVersions.GetValueOrDefault(commandId) != version) return;
                 if (logWriter is not null && _runLogWriters.TryGetValue(commandId, out var currentWriter) && ReferenceEquals(currentWriter, logWriter))
                     _runLogWriters.Remove(commandId);
                 if (_sessions.TryGetValue(commandId, out var current) && ReferenceEquals(current, session)) _sessions.Remove(commandId);
@@ -2397,11 +2459,13 @@ public partial class MainWindow : Window
                 try { _runLogStore.Complete(logWriter, null); }
                 catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
                 {
-                    _logWarnings[commandId] = $"日志完成写入失败：{failure.Message}";
+                    if (_runVersions.GetValueOrDefault(commandId) == version)
+                        _logWarnings[commandId] = $"日志完成写入失败：{failure.Message}";
                 }
             }
             await Dispatcher.InvokeAsync(() =>
             {
+                if (_runVersions.GetValueOrDefault(commandId) != version) return;
                 RunStateText.Text = "进程异常";
                 RunStateText.ToolTip = exception.Message;
             });
@@ -2439,6 +2503,7 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, $"TalosDesk 无法确认命令已停止。\n\n{exception.Message}", "停止未完成", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+        finally { RefreshCommandSelection(); }
     }
 
     private void CopyCommand_Click(object sender, RoutedEventArgs e)
@@ -2516,6 +2581,7 @@ public partial class MainWindow : Window
     private void ShowSelectedRun()
     {
         if (OutputTextBox is null) return;
+        RefreshProbeDisplay();
         var info = SelectedHistoricalRun;
         if (info is null)
         {

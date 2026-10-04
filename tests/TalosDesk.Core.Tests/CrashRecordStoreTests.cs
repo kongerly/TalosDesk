@@ -187,7 +187,7 @@ public sealed class CrashRecordStoreTests
     }
 
     [TestMethod]
-    public async Task RepositoryExamplesAreValidSchemaThreeWorkspaces()
+    public async Task RepositoryExamplesLoadIntoCurrentSchema()
     {
         var repository = FindRepositoryRoot();
         var examples = Directory.GetFiles(Path.Combine(repository, "examples"), "*.json");
@@ -195,7 +195,7 @@ public sealed class CrashRecordStoreTests
         foreach (var example in examples)
         {
             var workspace = await new WorkspaceStore(example).LoadAsync();
-            Assert.AreEqual(3, workspace.SchemaVersion, example);
+            Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, workspace.SchemaVersion, example);
             Assert.IsNotEmpty(workspace.Projects, example);
         }
     }

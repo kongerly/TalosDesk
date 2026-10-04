@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
+using TalosDesk.Core.Configuration;
 
 namespace TalosDesk.Core.Processes;
 
@@ -35,9 +36,12 @@ public sealed class CommandRunSession : IAsyncDisposable
     private int _outputCount;
     private int _stopRequested;
     private int _forceTerminated;
+    private readonly TcpProbeMonitor? _probe;
+    private int _stopInProgress;
 
     internal CommandRunSession(SafeJobHandle job, SafeProcessHandle process, int processId, StreamReader stdout, StreamReader stderr,
-        EventHandler<CommandOutput>? outputReceived, ICommandStopOperations stopOperations, IReadOnlyList<string> sensitiveValues)
+        EventHandler<CommandOutput>? outputReceived, ICommandStopOperations stopOperations, IReadOnlyList<string> sensitiveValues,
+        TcpProbeConfiguration? tcpProbe = null)
     {
         _job = job;
         _process = process;
@@ -45,10 +49,23 @@ public sealed class CommandRunSession : IAsyncDisposable
         _stopOperations = stopOperations;
         _sensitiveValues = sensitiveValues;
         if (outputReceived is not null) OutputReceived += outputReceived;
+        if (tcpProbe is not null)
+        {
+            _probe = new(tcpProbe, new TcpProbeConnector(), TimeProvider.System);
+            _probe.Changed += (_, snapshot) =>
+            {
+                try { TcpProbeChanged?.Invoke(this, snapshot); }
+                catch { /* 订阅者不能影响进程生命周期。 */ }
+            };
+        }
         _completion = ObserveAsync(stdout, stderr);
     }
 
     public event EventHandler<CommandOutput>? OutputReceived;
+    public event EventHandler<TcpProbeSnapshot>? TcpProbeChanged;
+    public TcpProbeSnapshot TcpProbe => _probe?.Snapshot ?? new(TcpProbeState.NotConfigured, 0, null);
+    public bool IsStopRequested => Volatile.Read(ref _stopRequested) != 0;
+    public bool IsStopping => Volatile.Read(ref _stopInProgress) != 0;
 
     public Task<CommandRunResult> Completion => _completion;
 
@@ -65,6 +82,8 @@ public sealed class CommandRunSession : IAsyncDisposable
             }
 
             Interlocked.Exchange(ref _stopRequested, 1);
+            Interlocked.Exchange(ref _stopInProgress, 1);
+            _probe?.Stop();
             if (!_stopOperations.TrySendCtrlC(_processId))
             {
                 if (_completion.IsCompleted)
@@ -91,6 +110,7 @@ public sealed class CommandRunSession : IAsyncDisposable
         }
         finally
         {
+            Interlocked.Exchange(ref _stopInProgress, 0);
             _stopLock.Release();
         }
     }
@@ -115,6 +135,7 @@ public sealed class CommandRunSession : IAsyncDisposable
             var stderrTask = PumpAsync(stderr, "stderr");
             await WindowsNative.WaitForProcessAsync(_process, Timeout.InfiniteTimeSpan, CancellationToken.None).ConfigureAwait(false);
             await WindowsNative.WaitForCommandGroupExitAsync(_job, Timeout.InfiniteTimeSpan, CancellationToken.None).ConfigureAwait(false);
+            _probe?.Stop();
             await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
 
             var exitCode = WindowsNative.GetExitCode(_process);
@@ -125,6 +146,7 @@ public sealed class CommandRunSession : IAsyncDisposable
         }
         finally
         {
+            if (_probe is not null) await _probe.DisposeAsync().ConfigureAwait(false);
             await _stopLock.WaitAsync().ConfigureAwait(false);
             try
             {

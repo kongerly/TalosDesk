@@ -1,5 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using TalosDesk.Core.Configuration;
 using TalosDesk.Core.Processes;
 
 namespace TalosDesk.Core.Tests;
@@ -9,6 +12,83 @@ namespace TalosDesk.Core.Tests;
 public sealed class CommandRunnerTests
 {
     private readonly CommandRunner _runner = new();
+
+    [TestMethod]
+    public async Task ProbeCanPassAnotherListenerButNeverStopsOrRestartsItsCommand()
+    {
+        using var sandbox = new TemporaryDirectory();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var config = new TcpProbeConfiguration { Port = ((IPEndPoint)listener.LocalEndpoint).Port, IntervalSeconds = 1, FailureThreshold = 1 };
+        var command = new CommandDefinition { Kind = CommandKind.Service };
+        await using var session = _runner.Start(command.Id, "Write-Output 'probe-owned-process'; while ($true) { Start-Sleep -Milliseconds 100 }", sandbox.Path, tcpProbe: config);
+        var taskCompletion = new TaskCompletionSource<CommandRunResult>();
+        var group = CommandGroupExecution.ObserveParallelAsync([
+            new ParallelCommandExecution(command, session.Completion),
+            new ParallelCommandExecution(new CommandDefinition { Kind = CommandKind.Task }, taskCompletion.Task)]);
+        await TcpProbeTests.Until(() => session.TcpProbe.State == TcpProbeState.Passed);
+        listener.Stop();
+        await TcpProbeTests.Until(() => session.TcpProbe.State == TcpProbeState.Unreachable);
+        Assert.IsTrue(_runner.IsRunning(command.Id));
+        Assert.IsFalse(session.Completion.IsCompleted);
+        Assert.IsFalse(group.IsCompleted);
+        Assert.IsFalse(session.IsStopRequested);
+        using var recovered = new TcpListener(IPAddress.Loopback, config.Port);
+        recovered.Start();
+        await TcpProbeTests.Until(() => session.TcpProbe.State == TcpProbeState.Passed);
+        await session.StopAsync();
+        Assert.AreEqual(CommandRunState.Stopped, (await session.Completion).State);
+        Assert.AreEqual(TcpProbeState.Inactive, session.TcpProbe.State);
+        taskCompletion.SetResult(new(CommandRunState.Succeeded, 0, false));
+        Assert.AreEqual(ParallelGroupObservationOutcome.TasksSucceeded, (await group.WaitAsync(TimeSpan.FromSeconds(5))).Outcome);
+    }
+
+    [TestMethod]
+    public async Task StopFailureDisablesProbeAndRestartGetsIndependentCycle()
+    {
+        using var sandbox = new TemporaryDirectory();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var config = new TcpProbeConfiguration { Port = ((IPEndPoint)listener.LocalEndpoint).Port };
+        var runner = new CommandRunner(new FailFirstForceStopOperations());
+        var id = Guid.NewGuid();
+        await using var first = runner.Start(id, "while ($true) { Start-Sleep -Milliseconds 100 }", sandbox.Path, tcpProbe: config);
+        await TcpProbeTests.Until(() => first.TcpProbe.State == TcpProbeState.Passed);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => first.StopAsync());
+        Assert.IsFalse(first.Completion.IsCompleted);
+        Assert.AreEqual(TcpProbeState.Inactive, first.TcpProbe.State);
+        Assert.IsTrue(first.IsStopRequested);
+        await Task.Delay(2200);
+        Assert.AreEqual(TcpProbeState.Inactive, first.TcpProbe.State);
+        await first.StopAsync();
+        await first.Completion;
+        listener.Stop();
+        await using var second = runner.Start(id, "Start-Sleep -Seconds 1; exit 7", sandbox.Path, tcpProbe: config);
+        Assert.AreEqual(TcpProbeState.Waiting, second.TcpProbe.State);
+        Assert.AreEqual(CommandRunState.Failed, (await second.Completion.WaitAsync(TimeSpan.FromSeconds(10))).State);
+        Assert.AreEqual(TcpProbeState.Inactive, second.TcpProbe.State);
+        Assert.AreEqual(TcpProbeState.Inactive, first.TcpProbe.State);
+    }
+
+    [TestMethod]
+    public async Task DelayedOwnedListenerPassesAfterStartupTimeoutAndStopsCleanly()
+    {
+        using var sandbox = new TemporaryDirectory();
+        using var reservation = new TcpListener(IPAddress.Loopback, 0);
+        reservation.Start();
+        var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
+        var config = new TcpProbeConfiguration { Port = port, IntervalSeconds = 1, StartupTimeoutSeconds = 1 };
+        await using var session = _runner.Start(Guid.NewGuid(),
+            $"Start-Sleep -Seconds 2; $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, {port}); $listener.Start(); Write-Output 'listening'; try {{ while ($true) {{ $client = $listener.AcceptTcpClient(); $client.Dispose() }} }} finally {{ $listener.Stop() }}", sandbox.Path, tcpProbe: config);
+        await TcpProbeTests.Until(() => session.TcpProbe.State == TcpProbeState.TimedOut);
+        await TcpProbeTests.Until(() => session.TcpProbe.State == TcpProbeState.Passed);
+        await session.StopAsync();
+        Assert.AreEqual(CommandRunState.Stopped, (await session.Completion).State);
+        Assert.AreEqual(TcpProbeState.Inactive, session.TcpProbe.State);
+        using var connect = new TcpClient();
+        await Assert.ThrowsExactlyAsync<SocketException>(() => connect.ConnectAsync(IPAddress.Loopback, port));
+    }
 
     [TestMethod]
     public async Task RunsFromConfiguredWorkingDirectoryAndCapturesBothStreamsAndExitCode()
@@ -124,8 +204,8 @@ public sealed class CommandRunnerTests
     {
         using var sandbox = new TemporaryDirectory();
         var commandId = Guid.NewGuid();
-        await using var session = _runner.Start(commandId, "while ($true) { Start-Sleep -Seconds 1 }", sandbox.Path);
-        await Task.Delay(500);
+        await using var session = _runner.Start(commandId, "Write-Output 'ctrl-c-ready'; while ($true) { Start-Sleep -Seconds 1 }", sandbox.Path);
+        await TcpProbeTests.Until(() => session.GetRecentOutput().Any(line => line.Text == "ctrl-c-ready"));
         Assert.ThrowsExactly<InvalidOperationException>(() => _runner.Start(commandId, "exit 0", sandbox.Path));
 
         var stopResult = await session.StopAsync().WaitAsync(TimeSpan.FromSeconds(10));
@@ -139,6 +219,11 @@ public sealed class CommandRunnerTests
         var restartedResult = await restarted.Completion.WaitAsync(TimeSpan.FromSeconds(20));
         Assert.AreEqual(CommandRunState.Succeeded, restartedResult.State);
         Assert.IsTrue(restarted.GetRecentOutput().Any(line => line.Text.Contains("restart marker", StringComparison.Ordinal)));
+
+        await using var subsequent = _runner.Start(commandId, "Write-Output 'second-ctrl-c-ready'; while ($true) { Start-Sleep -Seconds 1 }", sandbox.Path);
+        await TcpProbeTests.Until(() => subsequent.GetRecentOutput().Any(line => line.Text == "second-ctrl-c-ready"));
+        Assert.AreEqual(CommandStopResult.StoppedAfterCtrlC, await subsequent.StopAsync());
+        Assert.IsFalse((await subsequent.Completion).WasForceTerminated);
     }
 
     [TestMethod]
