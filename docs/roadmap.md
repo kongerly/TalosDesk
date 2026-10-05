@@ -62,7 +62,7 @@ v0.1.1 是收口已有未发布改动并补隐私保护的预览版，不应对�
 - [x] 盘点未发布功能和现有测试，形成与候选包对应的变更说明；已完成干净 Windows 11 x64 环境验收。
 - [x] 接入最小 Windows CI：还原、Release 构建、全量自动化测试；候选包继续通过 `scripts/Publish.ps1` 生成并验证 SHA-256。
 - [ ] CI 使用独立临时工作区和合成命令，覆盖中文/空格路径、缺失 PowerShell、启动失败、异常退出、Ctrl+C、超时强停及应用异常退出后的归属进程清理。
-- [ ] 记录 runner 的操作系统和 PowerShell 版本。托管 Windows runner 上通过的结果不能代替 Windows 10/11 桌面客户端验收。
+- [x] 记录 runner 的操作系统和 PowerShell 版本。托管 Windows runner 上通过的结果不能代替 Windows 10/11 桌面客户端验收。CI 工作流已设置 45 分钟 `timeout-minutes` 上限，并在测试前断言 `pwsh` 位于 `PATH` 且版本不低于 7.0，版本写入日志。
 
 ### 2. 为敏感值提供明确入口
 

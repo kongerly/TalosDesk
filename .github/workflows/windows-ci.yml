@@ -12,6 +12,7 @@ permissions:
 jobs:
   build-and-test:
     runs-on: windows-2022
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -23,6 +24,17 @@ jobs:
         run: |
           Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
           Write-Host "PowerShell $($PSVersionTable.PSVersion)"
+
+      - name: Verify PowerShell 7 for command tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+          if (-not $pwsh) { throw 'pwsh.exe not found on PATH; command runner tests will fail.' }
+          $version = [version](& pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()')
+          Write-Host "pwsh command: $($pwsh.Source)"
+          Write-Host "pwsh version: $version"
+          if ($version -lt [version]'7.0') { throw "PowerShell 7.0 or later required, found $version" }
 
       - name: Install pinned SDK
         shell: pwsh
