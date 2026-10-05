@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text;
 using TalosDesk.Core.Processes;
 
 namespace TalosDesk.Core.Tests;
@@ -6,6 +8,178 @@ namespace TalosDesk.Core.Tests;
 [DoNotParallelize]
 public sealed class RunLogStoreTests
 {
+    public TestContext TestContext { get; set; } = null!;
+
+    [TestMethod]
+    [DataRow("")]
+    [DataRow("\n")]
+    [DataRow("\r")]
+    [DataRow("\r\n")]
+    [DataRow("甲😀\r\n乙\n\n丙\r丁")]
+    [DataRow("甲😀\r\n乙\n\n丙\r丁\r\n")]
+    public void TailMatchesLineReaderForUtf8AndNewlineBoundaries(string content)
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var path = Path.Combine(writer.Directory, "stdout.log");
+        foreach (var encoding in new[] { new UTF8Encoding(false), new UTF8Encoding(true) })
+        {
+            File.WriteAllText(path, content, encoding);
+            var all = File.ReadLines(path).ToArray();
+            foreach (var limit in new[] { 1, 2, 3, 10_000 })
+                CollectionAssert.AreEqual(all.TakeLast(limit).ToArray(), store.ReadTail(writer.Info, "stdout", limit).ToArray());
+        }
+    }
+
+    [TestMethod]
+    public void TailPreservesLongLinesUnicodeAndCrLfAcrossReadBlocks()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var path = Path.Combine(writer.Directory, "stdout.log");
+        var longLine = new string('中', 20_000) + "😀";
+        // 从 EOF 向前 16 KiB 的块边界恰好落在 CR 与 LF 之间。
+        File.WriteAllText(path, "earlier\r\n" + longLine + "\r\n" + new string('x', 16_382) + "\n", new UTF8Encoding(false));
+        foreach (var limit in new[] { 1, 2, 3, 4 })
+            CollectionAssert.AreEqual(File.ReadLines(path).TakeLast(limit).ToArray(), store.ReadTail(writer.Info, "stdout", limit).ToArray());
+        File.WriteAllText(path, "earlier\n\uFEFF字符😀\n", new UTF8Encoding(false));
+        CollectionAssert.AreEqual(new[] { "\uFEFF字符😀" }, store.ReadTail(writer.Info, "stdout", 1).ToArray());
+    }
+
+    [TestMethod]
+    public void LargeTailReadsOnlyTheEndOfTheFile()
+    {
+        using var sandbox = new Sandbox();
+        ObservedReadStream? observed = null;
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"), path => observed = new ObservedReadStream(path));
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var path = Path.Combine(writer.Directory, "stdout.log");
+        using (var file = File.OpenWrite(path))
+        {
+            var block = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("synthetic-history-line\n", 4096)));
+            while (file.Length < 256L * 1024 * 1024) file.Write(block);
+            file.Write(Encoding.UTF8.GetBytes(string.Join('\n', Enumerable.Range(0, 10).Select(index => $"最后😀-{index}")) + "\n"));
+        }
+        var clock = Stopwatch.StartNew();
+        var tail = store.ReadTail(writer.Info, "stdout", 10);
+        clock.Stop();
+        CollectionAssert.AreEqual(Enumerable.Range(0, 10).Select(index => $"最后😀-{index}").ToArray(), tail.ToArray());
+        Assert.IsLessThanOrEqualTo(32_768L, observed!.BytesRead, "读取量应由文件尾部决定，不能扫描整份历史。");
+        TestContext.WriteLine($"256 MiB 合成文件最后 10 行：{clock.Elapsed.TotalMilliseconds:F3} ms，读取 {observed.BytesRead} 字节；不以耗时作为通过门槛。");
+    }
+
+    [TestMethod]
+    public async Task SlowTailDoesNotBlockWritesCompletionCleanupOrMigration()
+    {
+        using var sandbox = new Sandbox();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"), path => new ObservedReadStream(path, () =>
+        {
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("合成历史读取未释放。");
+        }));
+        store.Initialize();
+        var history = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(history, new CommandOutput(DateTimeOffset.Now, "stdout", "snapshot-history"));
+        store.Complete(history, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var active = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        var read = Task.Run(() => store.ReadTail(history.Info, "stdout"));
+        try
+        {
+            Assert.IsTrue(entered.Wait(TimeSpan.FromSeconds(5)));
+            await Task.Run(() =>
+            {
+                store.Append(active, new CommandOutput(DateTimeOffset.Now, "stderr", "concurrent-write"));
+                Assert.IsFalse(active.Info.WriteFailed);
+                store.ClearHistory();
+                Assert.IsFalse(Directory.Exists(history.Directory));
+                store.Complete(active, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+                store.ChangeLocation(Path.Combine(sandbox.Path, "moved"));
+            }).WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            release.Set();
+            await read.WaitAsync(TimeSpan.FromSeconds(5));
+            store.Complete(active, null);
+        }
+        CollectionAssert.AreEqual(new[] { "snapshot-history" }, read.Result.ToArray());
+    }
+
+    [TestMethod]
+    public void TailExcludesLaterAppendsAndCanCancelBetweenBlocks()
+    {
+        using var sandbox = new Sandbox();
+        using var cancellation = new CancellationTokenSource();
+        var appended = false;
+        var cancelOnRead = false;
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"), path => new ObservedReadStream(path, () =>
+        {
+            if (cancelOnRead) cancellation.Cancel();
+            if (appended) return;
+            File.AppendAllText(path, "later\n");
+            appended = true;
+        }));
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "snapshot"));
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        CollectionAssert.AreEqual(new[] { "snapshot" }, store.ReadTail(writer.Info, "stdout").ToArray());
+        File.WriteAllText(Path.Combine(writer.Directory, "stdout.log"), new string('x', 100_000));
+        cancelOnRead = true;
+        Assert.ThrowsExactly<OperationCanceledException>(() => store.ReadTail(writer.Info, "stdout", cancellationToken: cancellation.Token));
+        Assert.HasCount(0, store.ReadTail(writer.Info, "stderr"));
+        File.Delete(Path.Combine(writer.Directory, "stdout.log"));
+        Assert.HasCount(0, store.ReadTail(writer.Info, "stdout"));
+        Assert.ThrowsExactly<ArgumentException>(() => store.ReadTail(writer.Info, "other"));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => store.ReadTail(writer.Info, "stdout", 0));
+    }
+
+    private sealed class ObservedReadStream(string path, Action? beforeRead = null) : Stream
+    {
+        private readonly FileStream _file = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        internal long BytesRead;
+        public override int Read(Span<byte> buffer)
+        {
+            beforeRead?.Invoke();
+            var read = _file.Read(buffer);
+            BytesRead += read;
+            return read;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            beforeRead?.Invoke();
+            var read = _file.Read(buffer, offset, count);
+            BytesRead += read;
+            return read;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => _file.Length;
+        public override long Position { get => _file.Position; set => _file.Position = value; }
+        public override long Seek(long offset, SeekOrigin origin) => _file.Seek(offset, origin);
+        public override void Flush() => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _file.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
     [TestMethod]
     public void PersistsStreamsAndSettingsAcrossRestartInIsolatedWorkspace()
     {
@@ -19,6 +193,7 @@ public sealed class RunLogStoreTests
         var writer = first.Begin(projectId, commandId, DateTimeOffset.Now);
         first.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "public output"));
         first.Append(writer, new CommandOutput(DateTimeOffset.Now, "stderr", "diagnostic output"));
+        CollectionAssert.AreEqual(new[] { "public output" }, first.ReadTail(writer.Info, "stdout").ToArray());
         first.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
 
         var reopened = new RunLogStore(workspace);

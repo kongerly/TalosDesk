@@ -49,10 +49,18 @@ public sealed class RunLogStore
     private readonly string _workspacePath;
     private readonly string _defaultRootPath;
     private readonly string _locationFilePath;
+    private readonly Func<string, Stream> _openRead;
     private long _storedBytes;
 
     public RunLogStore(string workspacePath)
+        : this(workspacePath, path => new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete, 16_384, FileOptions.RandomAccess))
     {
+    }
+
+    internal RunLogStore(string workspacePath, Func<string, Stream> openRead)
+    {
+        _openRead = openRead;
         _workspacePath = Path.GetFullPath(workspacePath);
         _defaultRootPath = _workspacePath + ".logs";
         _locationFilePath = _workspacePath + ".log-location.json";
@@ -290,24 +298,85 @@ public sealed class RunLogStore
         }
     }
 
-    public IReadOnlyList<string> ReadTail(RunLogInfo info, string stream, int maxLines = 10_000)
+    public IReadOnlyList<string> ReadTail(RunLogInfo info, string stream, int maxLines = 10_000,
+        CancellationToken cancellationToken = default)
     {
         if (stream is not ("stdout" or "stderr")) throw new ArgumentException("Unknown output stream.", nameof(stream));
         if (maxLines < 1) throw new ArgumentOutOfRangeException(nameof(maxLines));
-        lock (_sync)
+        cancellationToken.ThrowIfCancellationRequested();
+        string path;
+        lock (_sync) path = Path.Combine(GetRunDirectory(info), stream + ".log");
+        Stream file;
+        try { file = _openRead(path); }
+        catch (FileNotFoundException) { return []; }
+        catch (DirectoryNotFoundException) { return []; }
+        using (file)
         {
-            var path = Path.Combine(GetRunDirectory(info), stream + ".log");
-            var tail = new Queue<string>(maxLines);
-            if (!File.Exists(path)) return [];
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var reader = new StreamReader(file, Utf8);
+            // 等当前追加完成后固定文件长度，后续追加不进入快照；扫描和解码不占用写入锁。
+            long length;
+            lock (_sync) length = file.Length;
+            var position = length;
+            var start = 0L;
+            var separators = 0;
+            var skipCarriageReturn = false;
+            var buffer = new byte[16_384];
+            while (position > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var count = (int)Math.Min(buffer.Length, position);
+                position -= count;
+                file.Position = position;
+                file.ReadExactly(buffer.AsSpan(0, count));
+                for (var index = count - 1; index >= 0; index--)
+                {
+                    var value = buffer[index];
+                    if (value == '\r' && skipCarriageReturn)
+                    {
+                        skipCarriageReturn = false;
+                        continue;
+                    }
+                    skipCarriageReturn = value == '\n';
+                    if (value is not ((byte)'\r' or (byte)'\n')) continue;
+                    // EOF 的结束符属于最后一行；CRLF 即使跨块也只计一次。
+                    if (position + index == length - 1) continue;
+                    if (++separators != maxLines) continue;
+                    start = position + index + 1;
+                    break;
+                }
+                if (start > 0) break;
+            }
+            file.Position = start;
+            using var snapshot = new LogSnapshotStream(file, length - start, cancellationToken);
+            using var reader = new StreamReader(snapshot, Utf8, detectEncodingFromByteOrderMarks: start == 0);
+            var tail = new List<string>();
             while (reader.ReadLine() is { } line)
             {
-                if (tail.Count == maxLines) tail.Dequeue();
-                tail.Enqueue(line);
+                cancellationToken.ThrowIfCancellationRequested();
+                tail.Add(line);
             }
             return tail.ToArray();
         }
+    }
+
+    private sealed class LogSnapshotStream(Stream file, long remaining, CancellationToken cancellationToken) : Stream
+    {
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = file.Read(buffer, offset, (int)Math.Min(count, remaining));
+            remaining -= read;
+            return read;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     public void ClearHistory()

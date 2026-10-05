@@ -44,6 +44,8 @@ public partial class MainWindow : Window
     private string? _browserWarning;
     private readonly CommandRunner _runner = new();
     private readonly RunLogStore _runLogStore;
+    private readonly Func<RunLogInfo, string, CancellationToken, IReadOnlyList<string>> _readLogTail;
+    private CancellationTokenSource? _historyReadCancellation;
     private bool _logStoreAvailable;
     private string? _logInitError;
     private readonly Dictionary<Guid, RunLogWriter> _runLogWriters = [];
@@ -121,7 +123,8 @@ public partial class MainWindow : Window
         DiagnosticSettingsStore? diagnosticSettingsStore = null,
         AppDiagnosticsController? diagnosticsController = null,
         ITrayIcon? trayIcon = null,
-        IMainWindowExitInteraction? exitInteraction = null)
+        IMainWindowExitInteraction? exitInteraction = null,
+        Func<RunLogInfo, string, CancellationToken, IReadOnlyList<string>>? readLogTail = null)
     {
         _store = store;
         _windowSettingsStore = new WindowSettingsStore(store.FilePath);
@@ -134,9 +137,11 @@ public partial class MainWindow : Window
         _diagnosticsController = diagnosticsController;
         _updateCoordinator = updateCoordinator ?? CreateUpdateCoordinator();
         _runLogStore = new RunLogStore(store.FilePath);
+        _readLogTail = readLogTail ?? ((info, stream, token) => _runLogStore.ReadTail(info, stream, cancellationToken: token));
         _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
         _exitInteraction = exitInteraction ?? new MainWindowExitInteraction();
         InitializeComponent();
+        Closed += (_, _) => CancelHistoryRead();
         WindowPlacementController.Attach(this, _windowSettingsStore);
         _trayController = new TrayIconController(this, _profileLabel, trayIcon ?? new WindowsTrayIcon());
         if (!string.IsNullOrWhiteSpace(profileLabel))
@@ -2555,6 +2560,7 @@ public partial class MainWindow : Window
     private void RefreshRunHistory(bool selectCurrent)
     {
         if (RunHistoryComboBox is null) return;
+        CancelHistoryRead();
         var selectedRunId = selectCurrent ? null : SelectedHistoricalRun?.RunId;
         _syncingRunHistory = true;
         try
@@ -2563,6 +2569,7 @@ public partial class MainWindow : Window
             if (_selectedProject is null || _selectedCommand is null)
             {
                 RunHistoryComboBox.SelectedItem = null;
+                ShowSelectedRun();
                 return;
             }
             _runHistory.Add(new RunHistoryItem("当前显示", null));
@@ -2590,14 +2597,24 @@ public partial class MainWindow : Window
         if (!_syncingRunHistory) ShowSelectedRun();
     }
 
-    private void ShowSelectedRun()
+    private void CancelHistoryRead()
+    {
+        _historyReadCancellation?.Cancel();
+        _historyReadCancellation = null;
+    }
+
+    private async void ShowSelectedRun()
     {
         if (OutputTextBox is null) return;
+        CancelHistoryRead();
         RefreshProbeDisplay();
         var info = SelectedHistoricalRun;
         if (info is null)
         {
             RenderSelectedOutput(_selectedCommand, scrollToEnd: true);
+            EmptyOutputHint.Text = _selectedCommand is null ? "选择左侧命令以查看输出。" : "这条命令尚无输出。";
+            EmptyOutputHint.Visibility = _selectedCommand is null || GetLogs(_selectedCommand.Id).Count == 0
+                ? Visibility.Visible : Visibility.Collapsed;
             ClearOutputButton.IsEnabled = _selectedCommand is not null;
             if (_selectedCommand is not null)
             {
@@ -2608,26 +2625,49 @@ public partial class MainWindow : Window
             }
             return;
         }
+        var cancellation = new CancellationTokenSource();
+        var token = cancellation.Token;
+        _historyReadCancellation = cancellation;
+        var stream = HistoryStreamComboBox.SelectedIndex == 1 ? "stderr" : "stdout";
+        RenderSelectedOutput(null);
+        EmptyOutputHint.Text = "正在读取历史日志…";
+        EmptyOutputHint.Visibility = Visibility.Visible;
+        OutputRunStateText.Text = GetRunStateLabel(info.State);
+        RunStartedText.Text = $"开始时间：{info.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+        ClearOutputButton.IsEnabled = false;
+        LogStatusText.Text = info.Truncated ? "该批次日志已达到容量上限，后续输出未保存。" :
+            info.WriteFailed ? "该批次日志写入失败，内容不完整。" : string.Empty;
         try
         {
-            var stream = HistoryStreamComboBox.SelectedIndex == 1 ? "stderr" : "stdout";
-            var lines = _runLogStore.ReadTail(info, stream);
+            var output = await Task.Run(() =>
+            {
+                var lines = _readLogTail(info, stream, token);
+                return (Text: string.Join(Environment.NewLine, lines), IsEmpty: lines.Count == 0);
+            }, token);
+            // 切换批次、通道、命令或关闭窗口后，旧结果和旧错误均不得更新界面。
+            if (!ReferenceEquals(_historyReadCancellation, cancellation) || token.IsCancellationRequested) return;
             _syncingOutputText = true;
-            OutputTextBox.Text = string.Join(Environment.NewLine, lines);
-            OutputTextBox.ScrollToEnd();
-            EmptyOutputHint.Text = lines.Count == 0 ? "该批次的此输出通道没有内容。" : string.Empty;
-            EmptyOutputHint.Visibility = lines.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            OutputRunStateText.Text = GetRunStateLabel(info.State);
-            RunStartedText.Text = $"开始时间：{info.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
-            LogStatusText.Text = info.Truncated ? "该批次日志已达到容量上限，后续输出未保存。" :
-                info.WriteFailed ? "该批次日志写入失败，内容不完整。" : string.Empty;
-            ClearOutputButton.IsEnabled = false;
+            try
+            {
+                OutputTextBox.Text = output.Text;
+                OutputTextBox.ScrollToEnd();
+                EmptyOutputHint.Text = output.IsEmpty ? "该批次的此输出通道没有内容。" : string.Empty;
+                EmptyOutputHint.Visibility = output.IsEmpty ? Visibility.Visible : Visibility.Collapsed;
+            }
+            finally { _syncingOutputText = false; }
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            if (!ReferenceEquals(_historyReadCancellation, cancellation) || token.IsCancellationRequested) return;
+            EmptyOutputHint.Text = "该批次的此输出通道读取失败。";
             LogStatusText.Text = $"无法读取历史日志：{exception.Message}";
         }
-        finally { _syncingOutputText = false; }
+        finally
+        {
+            if (ReferenceEquals(_historyReadCancellation, cancellation)) _historyReadCancellation = null;
+            cancellation.Dispose();
+        }
     }
 
     private void SaveLogSettings_Click(object sender, RoutedEventArgs e)

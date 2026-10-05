@@ -24,7 +24,7 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 ## 桌面回归独立执行
 
-`MainWindowIntegrationTests` 现在提供七个独立测试结果，可按方法名筛选；各套内部已有断言继续保留：
+`MainWindowIntegrationTests` 现在提供八个独立测试结果，可按方法名筛选；各套内部已有断言继续保留：
 
 | 测试方法 | 覆盖内容 |
 | --- | --- |
@@ -34,16 +34,17 @@ $workspace = Join-Path $testRoot "workspace.json"
 | `WindowLayoutAndSettingsSurviveResizeAndReopen` | 页面与弹窗布局、窗口状态保存与恢复 |
 | `TcpProbeStatesFollowDesktopCommandLifecycle` | 探测编辑、状态、输出与项目汇总 |
 | `ParallelGroupsKeepWatchingServicesAndOnlyCleanUpTheirOwnExecution` | 纯服务及混合分组持续监视、失败清理和后续会话隔离 |
+| `HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults` | 历史后台读取、慢读取期间界面响应、切换与关闭后的旧结果隔离 |
 | `UpdateStatesDoNotBlockDesktopCommandAndOutputFlows` | 更新失败、限流、挂起期间的运行、重启、停止、输出和分组 |
 
-例如，单独执行布局回归或执行全部七套并输出独立 TRX 结果：
+例如，单独执行布局回归或执行全部八套并输出独立 TRX 结果：
 
 ```powershell
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests.WindowLayoutAndSettingsSurviveResizeAndReopen"
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests" --logger "trx;LogFileName=desktop.trx" --results-directory artifacts/tests/desktop
 ```
 
-七套保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
+八套保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
 
 普通断言失败且清理成功后，宿主仍可执行下一套。清理失败、窗口残留或外层超时会使宿主不可用，后续测试直接失败并说明原因，不继续投递。共享 STA 线程卡死无法在进程内安全恢复；这时关闭宿主也可能超时，需要结束该次测试运行，不按名称结束其他系统进程。正常清理先关闭窗口、停止归属命令并完成日志收尾，再删除独立临时目录。
 
@@ -54,6 +55,16 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/Talo
 工作区旁的 `*.update-settings.json`、`*.update-cache.json` 与其他本机配置一样由 `.gitignore` 忽略，任意目录内均适用；普通 JSON 示例仍可纳入版本控制。忽略规则不会删除或改写已有旁文件。
 
 2026-10-04 桌面回归拆分检查：仅导出本次暂存源码到独立目录验证，完整自动化测试 173 通过（Core 144、App 29），0 失败、0 跳过，其中六套桌面回归及四项宿主回归分别报告通过；Release 构建 0 警告、0 错误。该快照不包含另行开发的同时分组改动。结果保存在 artifacts/tests/desktop-split/commit/。忽略规则已验证根目录及嵌套路径匹配，普通 JSON 不被误忽略；原有两个更新旁文件仍保留。未启用真实托盘 API 检查，未执行真实鼠标、多屏或 Windows DPI 人工验收，未运行 scripts/Publish.ps1，未修改版本或制作发布候选包。共享 STA 卡死仍需结束该次测试运行。
+
+## 历史日志尾部读取回归
+
+`RunLogStoreTests` 对比标准逐行读取结果，覆盖空文件、UTF-8 BOM、中文与 emoji、LF/CR/CRLF、空行、末行无换行、超长行和跨 16 KiB 块的 CRLF。256 MiB 合成日志测试检查最后 10 行和实际读取字节数，保证读取只覆盖尾部；计时只记录本机结果，不用固定毫秒数作为通过门槛。可控的慢读取测试在持有已打开句柄时验证其他批次追加、完成、清理和迁移仍能完成，另检查文件长度快照、取消、缺失文件与参数校验。
+
+`LogHistoryRegression` 在共用 STA 宿主和隔离工作区中挂起历史读取，确认实际读取运行在后台、Dispatcher 能响应、界面显示加载提示，再按相反顺序返回结果或错误，检查通道、批次、命令、项目切换和关闭后的旧回调被忽略。另检查空通道、完整性警告、当前读取失败，以及慢读取期间通过实际按钮运行合成任务后实时输出仍保留。既有更新回归改为等待历史加载完成再检查 stderr。
+
+这些自动化检查不替代慢盘或网络盘实测、人工鼠标键盘操作及最终发布包验收。包含少量超长行的日志仍需读取这些行的全部字节，WPF 显示文本时的排版也仍在界面线程执行。
+
+2026-10-05 历史读取源码修复检查：日志 Core 测试 32 项和新增 STA 桌面回归通过；最终完整自动化测试 204 通过（Core 173、App 31），0 失败、0 跳过，Release 构建 0 警告、0 错误，`git diff --check` 通过。最终全量测试中，256 MiB 合成日志最后 10 行读取 16,514 字节，本机单次耗时 1.022 ms；该数值不代表慢盘的性能保证。通过仓库锁定 SDK 执行 `test TalosDesk.slnx --no-restore --configuration Release --logger trx` 和 `build TalosDesk.slnx --no-restore --configuration Release`，独立 TRX 结果位于 `artifacts/tests/log-tail/final/`。未执行慢盘/网络盘、人工鼠标键盘或最终发布包验收，未运行 `scripts/Publish.ps1`，未修改版本或制作候选包；源码提交与推送按用户明确授权执行。
 
 ## 损坏日志容量与清理回归
 

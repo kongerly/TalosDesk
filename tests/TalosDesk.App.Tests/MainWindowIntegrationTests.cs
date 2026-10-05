@@ -48,6 +48,10 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(ParallelGroupsKeepWatchingServicesAndOnlyCleanUpTheirOwnExecution), ParallelGroupRegression.Run, () => ParallelGroupRegression.Stage);
 
     [TestMethod]
+    public void HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults() =>
+        _host.Run(nameof(HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults), LogHistoryRegression.Run, () => LogHistoryRegression.Stage);
+
+    [TestMethod]
     public void UpdateStatesDoNotBlockDesktopCommandAndOutputFlows()
     {
         var progress = new ProgressState();
@@ -281,6 +285,10 @@ public sealed class MainWindowIntegrationTests
                         if (history.Items.Count < 2) return;
                         history.SelectedIndex = 1;
                         ((ComboBox)window.FindName("HistoryStreamComboBox")).SelectedIndex = 1;
+                        phase = 81;
+                    }
+                    else if (phase == 81 && output.Text.Contains("update-regression-stderr", StringComparison.Ordinal))
+                    {
                         StringAssert.Contains(output.Text, "update-regression-stderr");
                         ((Button)window.FindName("GroupsPageButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         RunGroup(window, 0);
