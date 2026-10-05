@@ -24,7 +24,7 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 ## 桌面回归独立执行
 
-`MainWindowIntegrationTests` 现在提供九个独立测试结果，可按方法名筛选；各套内部已有断言继续保留：
+`MainWindowIntegrationTests` 现在提供十个独立测试结果，可按方法名筛选；各套内部已有断言继续保留：
 
 | 测试方法 | 覆盖内容 |
 | --- | --- |
@@ -36,16 +36,17 @@ $workspace = Join-Path $testRoot "workspace.json"
 | `ParallelGroupsKeepWatchingServicesAndOnlyCleanUpTheirOwnExecution` | 纯服务及混合分组持续监视、失败清理和后续会话隔离 |
 | `HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults` | 历史后台读取、慢读取期间界面响应、切换与关闭后的旧结果隔离 |
 | `WorkspaceSavesPreserveExternalChangesAndTrackTheirOwnRevision` | 保存前后外部修改、保存摘要归属、编辑回滚与重新加载恢复 |
+| `StaleWorkspaceChecksDoNotDisableSaving` | 激活摘要检查跨越保存或重载后的旧结果失效，真实外部变化仍被拒绝 |
 | `UpdateStatesDoNotBlockDesktopCommandAndOutputFlows` | 更新失败、限流、挂起期间的运行、重启、停止、输出和分组 |
 
-例如，单独执行布局回归或执行全部九套并输出独立 TRX 结果：
+例如，单独执行布局回归或执行全部十套并输出独立 TRX 结果：
 
 ```powershell
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests.WindowLayoutAndSettingsSurviveResizeAndReopen"
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests" --logger "trx;LogFileName=desktop.trx" --results-directory artifacts/tests/desktop
 ```
 
-九套保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
+十套保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
 
 普通断言失败且清理成功后，宿主仍可执行下一套。清理失败、窗口残留或外层超时会使宿主不可用，后续测试直接失败并说明原因，不继续投递。共享 STA 线程卡死无法在进程内安全恢复；这时关闭宿主也可能超时，需要结束该次测试运行，不按名称结束其他系统进程。正常清理先关闭窗口、停止归属命令并完成日志收尾，再删除独立临时目录。
 
@@ -63,7 +64,11 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/Talo
 
 `WorkspaceSaveRegression` 共用现有 STA 宿主，使用真实项目编辑按钮与隔离工作区，检查正常保存、两个提交边界的外部替换、旧编辑回滚、禁用后不重复保存或提示，以及重新加载外部版本后恢复保存。外部替换由同步回调模拟，不依赖概率性的线程调度；这些回归不证明已有文件最后校验与替换之间对任意外部进程完全原子，也不替代真实编辑器、网络盘或人工桌面验收。
 
+`StaleWorkspaceChecksDoNotDisableSaving` 使用延迟摘要读取替身，先挂起一次激活检查，再成功保存或重载工作区，最后返回此前读取的旧摘要。检查迟到结果不会禁用保存；修改进行中收到不同摘要也不会干扰该次操作，空闲且基线未改变时的真实外部删除仍会禁用保存。读取替身只控制激活检查，实际保存继续调用带预期摘要的存储入口。该回归在增加基线核对前确定性失败，用于覆盖普通机器与 CI 的调度差异。
+
 2026-10-05 外部修改源码修复检查：临时恢复旧桌面保存流程后，受控的保存后外部替换回归因摘要误归属而失败；恢复修复后，核心保存及 STA 桌面回归通过。使用仓库锁定 SDK 的完整自动化测试 217 通过（Core 185、App 32），0 失败、0 跳过；Release 构建 0 警告、0 错误，`git diff --check` 通过。旧流程失败记录位于 `artifacts/tests/workspace-save/red/`，Core/App 最终独立 TRX 位于 `artifacts/tests/workspace-save/final/`。未执行真实外部编辑器并发、网络盘、人工鼠标键盘或最终发布包验收，未运行 `scripts/Publish.ps1`，未修改版本或制作候选包；源码提交与推送按用户明确授权执行。已有目标的最后校验与替换之间仍保留设计说明中的极短竞争窗口。
+
+2026-10-05 激活检查 CI 修复：提交 `ea1a75b` 的 [Windows CI](https://github.com/kongerly/TalosDesk/actions/runs/37307344163) 为 Core 185 通过、App 31 通过及 1 失败，失败时提交前的外部修改回调尚未执行。可控延迟回归在旧判断中确定性复现本机保存成功后的摘要误判；增加读取前后基线与修改状态核对后，两项保存相关桌面回归通过。使用与 CI 相同的 Release 构建及 `--no-build --no-restore` 全量测试入口，本机 218 通过（Core 185、App 33），0 失败、0 跳过；构建 0 警告、0 错误，`git diff --check` 通过。失败复现及最终 TRX 位于 `artifacts/tests/workspace-save-ci/`。远端结果按具体提交独立核对；本次不改版本、不制作候选包，未运行 `scripts/Publish.ps1` 或真实外部编辑器、网络盘与人工桌面验收。源码提交与推送按用户已有授权执行。
 
 ## 历史日志尾部读取回归
 

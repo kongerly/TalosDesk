@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private enum MainPage { Overview, Commands, Groups, Output, About }
 
     private readonly WorkspaceStore _store;
+    private readonly Func<Task<WorkspaceRevision>> _readWorkspaceRevision;
     private readonly WindowSettingsStore _windowSettingsStore;
     private readonly TrayIconController _trayController;
     private readonly IMainWindowExitInteraction _exitInteraction;
@@ -124,9 +125,11 @@ public partial class MainWindow : Window
         AppDiagnosticsController? diagnosticsController = null,
         ITrayIcon? trayIcon = null,
         IMainWindowExitInteraction? exitInteraction = null,
-        Func<RunLogInfo, string, CancellationToken, IReadOnlyList<string>>? readLogTail = null)
+        Func<RunLogInfo, string, CancellationToken, IReadOnlyList<string>>? readLogTail = null,
+        Func<Task<WorkspaceRevision>>? readWorkspaceRevision = null)
     {
         _store = store;
+        _readWorkspaceRevision = readWorkspaceRevision ?? (() => _store.GetRevisionAsync());
         _windowSettingsStore = new WindowSettingsStore(store.FilePath);
         _updateStateStore = new UpdateStateStore(store.FilePath);
         _buildInfo = buildInfo ?? ApplicationBuildInfo.Read(typeof(App).Assembly);
@@ -2903,9 +2906,11 @@ public partial class MainWindow : Window
 
     private async Task<bool> EnsureWorkspaceUnchangedAsync(bool showDialog)
     {
-        if (_workspaceRevision is null) return true;
-        var currentRevision = await _store.GetRevisionAsync();
-        if (currentRevision == _workspaceRevision.Value) return true;
+        if (_workspaceRevision is not { } expectedRevision) return true;
+        var currentRevision = await _readWorkspaceRevision();
+        // 激活检查可能跨越本机保存或重载，旧读取结果不能与更新后的基线比较。
+        if (_workspaceChangeInProgress || _workspaceRevision != expectedRevision) return _canSave;
+        if (currentRevision == expectedRevision) return true;
 
         return ReportExternalWorkspaceChange(showDialog);
     }

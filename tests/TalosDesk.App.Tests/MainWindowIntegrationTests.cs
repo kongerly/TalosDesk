@@ -56,6 +56,10 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(WorkspaceSavesPreserveExternalChangesAndTrackTheirOwnRevision), WorkspaceSaveRegression.Run, () => WorkspaceSaveRegression.Stage);
 
     [TestMethod]
+    public void StaleWorkspaceChecksDoNotDisableSaving() =>
+        _host.Run(nameof(StaleWorkspaceChecksDoNotDisableSaving), WorkspaceSaveRegression.RunStaleChecks, () => WorkspaceSaveRegression.Stage);
+
+    [TestMethod]
     public void UpdateStatesDoNotBlockDesktopCommandAndOutputFlows()
     {
         var progress = new ProgressState();

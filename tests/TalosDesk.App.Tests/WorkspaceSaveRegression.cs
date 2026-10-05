@@ -18,6 +18,99 @@ internal static class WorkspaceSaveRegression
         RunScenario(afterCommit: false);
     }
 
+    internal static void RunStaleChecks()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "TalosDesk.WorkspaceSaveTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "workspace.json");
+        var store = new WorkspaceStore(path);
+        store.SaveAsync(Configuration("原始版本")).GetAwaiter().GetResult();
+        TaskCompletionSource<WorkspaceRevision>? deferredRead = null;
+        Task<bool>? pendingCheck = null;
+        var icon = new TestTrayIcon();
+        var window = new MainWindow(store, "隔离迟到摘要回归", null, null, null, trayIcon: icon,
+            readWorkspaceRevision: () => deferredRead?.Task ?? store.GetRevisionAsync());
+        var projectLoads = 0;
+        window.Projects.CollectionChanged += (_, args) => projectLoads += args.NewItems?.Count ?? 0;
+        DesktopTestHost.RunWithCleanup(() =>
+        {
+            Stage = "等待启动重载与激活检查完成";
+            window.Show();
+            Wait(() => projectLoads >= 2 && !Field<bool>(window, "_workspaceChangeInProgress") &&
+                !Field<bool>(window, "_checkingWorkspaceRevision") && Find<Button>(window, "ManualUpdateCheckButton").IsEnabled);
+
+            Stage = "本机保存成功后返回此前读取的旧摘要";
+            var previous = Field<WorkspaceRevision>(window, "_workspaceRevision");
+            StartCheck();
+            EditProject(window, "本机新版本", expectConflict: false);
+            CompleteCheck(previous, expectedResult: true);
+            Assert.IsTrue(Find<Button>(window, "EditProjectButton").IsEnabled);
+
+            Stage = "修改进行中返回与旧版本不同的摘要";
+            var savedBytes = File.ReadAllBytes(path);
+            StartCheck();
+            Assert.IsTrue((bool)Invoke(window, "BeginWorkspaceChange")!);
+            try
+            {
+                File.Delete(path);
+                CompleteCheck(WorkspaceRevision.Missing, expectedResult: true);
+                Assert.IsTrue(Field<bool>(window, "_canSave"));
+            }
+            finally
+            {
+                File.WriteAllBytes(path, savedBytes);
+                Invoke(window, "EndWorkspaceChange");
+            }
+
+            Stage = "重新加载外部版本后返回旧摘要";
+            previous = Field<WorkspaceRevision>(window, "_workspaceRevision");
+            StartCheck();
+            new WorkspaceStore(path).SaveAsync(Configuration("外部版本")).GetAwaiter().GetResult();
+            var reload = window.ReloadWorkspaceForSecondaryLaunchAsync();
+            Wait(() => reload.IsCompleted);
+            reload.GetAwaiter().GetResult();
+            CompleteCheck(previous, expectedResult: true);
+            Assert.AreEqual("外部版本", window.Projects.Single().Name);
+
+            Stage = "没有保存或重载时仍检测真实外部删除";
+            StartCheck();
+            File.Delete(path);
+            CompleteCheck(WorkspaceRevision.Missing, expectedResult: false);
+            Assert.IsFalse(Field<bool>(window, "_canSave"));
+            Assert.IsFalse(Find<Button>(window, "EditProjectButton").IsEnabled);
+        }, () =>
+        {
+            deferredRead?.TrySetResult(Field<WorkspaceRevision>(window, "_workspaceRevision"));
+            if (pendingCheck is not null) Wait(() => pendingCheck.IsCompleted);
+            SetField(window, "_checkingWorkspaceRevision", false);
+            window.Close();
+            Wait(() => icon.DisposeCount == 1);
+            Directory.Delete(root, true);
+        });
+
+        WorkspaceConfiguration Configuration(string name) => new() { Projects = [new() { Name = name, Directory = root }] };
+
+        void StartCheck()
+        {
+            // 与 Activated 入口一样防止重入，保留一次真实异步检查，并控制其完成时机。
+            Assert.IsFalse(Field<bool>(window, "_checkingWorkspaceRevision"));
+            SetField(window, "_checkingWorkspaceRevision", true);
+            deferredRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            pendingCheck = (Task<bool>)Invoke(window, "EnsureWorkspaceUnchangedAsync", false)!;
+            Assert.IsFalse(pendingCheck.IsCompleted);
+        }
+
+        void CompleteCheck(WorkspaceRevision revision, bool expectedResult)
+        {
+            deferredRead!.SetResult(revision);
+            Wait(() => pendingCheck!.IsCompleted);
+            var result = pendingCheck!.GetAwaiter().GetResult();
+            deferredRead = null;
+            SetField(window, "_checkingWorkspaceRevision", false);
+            Assert.AreEqual(expectedResult, result);
+        }
+    }
+
     private static void RunScenario(bool afterCommit)
     {
         var root = Path.Combine(Path.GetTempPath(), "TalosDesk.WorkspaceSaveTests", Guid.NewGuid().ToString("N"));
@@ -151,6 +244,12 @@ internal static class WorkspaceSaveRegression
 
     private static T Field<T>(object target, string name) =>
         (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target)!;
+
+    private static void SetField(object target, string name, object value) =>
+        target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
+
+    private static object? Invoke(object target, string name, params object[] arguments) =>
+        target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(target, arguments);
 
     private static Task<bool> Save(MainWindow window) =>
         (Task<bool>)typeof(MainWindow).GetMethod("SaveWorkspaceAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!;
