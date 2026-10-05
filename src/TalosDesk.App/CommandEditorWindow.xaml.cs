@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using Microsoft.Win32;
@@ -30,11 +31,11 @@ public partial class CommandEditorWindow : Window
         if (existing.TcpProbe is { } probe)
         {
             ProbeAddressBox.SelectedIndex = probe.Address == "::1" ? 1 : 0;
-            ProbePortBox.Text = probe.Port.ToString();
-            ProbeIntervalBox.Text = probe.IntervalSeconds.ToString();
-            ProbeConnectTimeoutBox.Text = probe.ConnectTimeoutSeconds.ToString();
-            ProbeStartupTimeoutBox.Text = probe.StartupTimeoutSeconds.ToString();
-            ProbeFailureThresholdBox.Text = probe.FailureThreshold.ToString();
+            ProbePortBox.Text = probe.Port.ToString(CultureInfo.InvariantCulture);
+            ProbeIntervalBox.Text = probe.IntervalSeconds.ToString(CultureInfo.InvariantCulture);
+            ProbeConnectTimeoutBox.Text = probe.ConnectTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
+            ProbeStartupTimeoutBox.Text = probe.StartupTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
+            ProbeFailureThresholdBox.Text = probe.FailureThreshold.ToString(CultureInfo.InvariantCulture);
             ProbeEnabledBox.IsChecked = true;
         }
     }
@@ -56,7 +57,8 @@ public partial class CommandEditorWindow : Window
     private TcpProbeConfiguration? ReadProbe(CommandKind kind)
     {
         if (kind != CommandKind.Service || ProbeEnabledBox.IsChecked != true) return null;
-        static int Number(string value) => int.TryParse(value, out var number) ? number : -1;
+        static int Number(string value) =>
+            int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : -1;
         var probe = new TcpProbeConfiguration
         {
             Address = ProbeAddressBox.SelectedIndex == 1 ? "::1" : "127.0.0.1",

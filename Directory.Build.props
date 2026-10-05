@@ -14,4 +14,14 @@
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
+
+  <!--
+    P2-16 工程规范：警告即错误。
+    具体规则集写在仓库根 .editorconfig，属性只在 Directory.Build.props 声明一次。
+    .editorconfig 在构建的展开阶段最后生效，因此可以逐条覆盖这里的严重级别。
+  -->
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
 </Project>

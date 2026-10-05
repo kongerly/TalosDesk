@@ -3,20 +3,26 @@ namespace TalosDesk.Core.Processes;
 internal sealed record PendingCommandOutput(Guid CommandId, long RunVersion, CommandOutput Output);
 
 /// <summary>Bounds output waiting for a view without blocking the process output readers.</summary>
-internal sealed class BoundedOutputInbox(int perCommandCapacity)
+internal sealed class BoundedOutputInbox
 {
+    private readonly int _perCommandCapacity;
     private readonly object _sync = new();
     private readonly Dictionary<Guid, Queue<PendingCommandOutput>> _buffers = [];
     private readonly Queue<Guid> _readyCommands = new();
     private readonly HashSet<Guid> _readySet = [];
 
+    public BoundedOutputInbox(int perCommandCapacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(perCommandCapacity, 1);
+        _perCommandCapacity = perCommandCapacity;
+    }
+
     public void Enqueue(Guid commandId, long runVersion, CommandOutput output)
     {
-        if (perCommandCapacity < 1) throw new ArgumentOutOfRangeException(nameof(perCommandCapacity));
         lock (_sync)
         {
             if (!_buffers.TryGetValue(commandId, out var buffer)) _buffers[commandId] = buffer = new Queue<PendingCommandOutput>();
-            if (buffer.Count == perCommandCapacity) buffer.Dequeue();
+            if (buffer.Count == _perCommandCapacity) buffer.Dequeue();
             buffer.Enqueue(new PendingCommandOutput(commandId, runVersion, output));
             if (_readySet.Add(commandId)) _readyCommands.Enqueue(commandId);
         }
@@ -24,7 +30,7 @@ internal sealed class BoundedOutputInbox(int perCommandCapacity)
 
     public IReadOnlyList<PendingCommandOutput> Take(int maxCount)
     {
-        if (maxCount < 1) throw new ArgumentOutOfRangeException(nameof(maxCount));
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
         var batch = new List<PendingCommandOutput>(maxCount);
         lock (_sync)
         {

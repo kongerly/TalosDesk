@@ -301,7 +301,7 @@ public sealed class CrashRecordStore
         }
     }
 
-    private CrashReadResult ReadCore(string path)
+    private static CrashReadResult ReadCore(string path)
     {
         try
         {

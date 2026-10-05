@@ -89,7 +89,7 @@ internal sealed class CommandCompletionProvider
             .ToArray();
     }
 
-    private IReadOnlyList<CommandCompletionItem> CompleteEnvironmentVariables(
+    private List<CommandCompletionItem> CompleteEnvironmentVariables(
         CompletionToken token,
         CancellationToken cancellationToken)
     {
@@ -110,10 +110,10 @@ internal sealed class CommandCompletionProvider
             .DistinctBy(item => item.InsertText, StringComparer.OrdinalIgnoreCase)
             .OrderBy(item => item.InsertText, StringComparer.OrdinalIgnoreCase)
             .Take(MaximumResults)
-            .ToArray();
+            .ToList();
     }
 
-    private IReadOnlyList<CommandCompletionItem> CompleteCommands(
+    private List<CommandCompletionItem> CompleteCommands(
         CompletionToken token,
         string workingDirectory,
         CancellationToken cancellationToken)
@@ -171,7 +171,7 @@ internal sealed class CommandCompletionProvider
         return commands;
     }
 
-    private static IReadOnlyList<CommandCompletionItem> CompletePaths(
+    private static List<CommandCompletionItem> CompletePaths(
         CompletionToken token,
         string workingDirectory,
         CancellationToken cancellationToken)

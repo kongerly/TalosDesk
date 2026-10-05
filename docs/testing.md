@@ -11,6 +11,14 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 测试结束后先关闭应用并确认合成命令已经退出，再删除这个明确的临时目录。不要把 `%LOCALAPPDATA%\TalosDesk\workspace.json` 用于自动化。
 
+## 工程规范护栏：警告即错误
+
+仓库根 `.editorconfig` 统一缩进、换行、UTF-8 和命名约定（私有字段 `_camelCase`，其余成员 `PascalCase`），并逐条登记分析器严重级别；`Directory.Build.props` 只声明一次 `TreatWarningsAsErrors` 与 `EnforceCodeStyleInBuild`。`.editorconfig` 在展开阶段最后生效，可以逐条覆盖严重级别，因此例外必须连同理由写在文件内，不做隐式忽略。
+
+验证护栏本身是否生效时，用一个临时源文件引入可空性违规（例如对 `string?` 字段取 `.Length`），确认 `dotnet build` 以 `CS8602` 失败，再删除该文件。改动前基线为 Release 0 警告、218 项测试通过，因此不需要预期中的“存量修复”批次。
+
+2026-10-06 护栏检查：改动后 Release 全量重建 0 警告、0 错误，完整自动化测试 218 通过（Core 185、App 33），0 失败、0 跳过，`git diff --check` 通过。故意引入的可空性违规按预期使构建失败。存量修复共 14 处，其中 `CommandEditorWindow` 的探测参数改为固定区域写入并同步以固定区域解析，消除了原先“写入与解析区域不一致”的往返缺陷；数量与日期显示使用 `CurrentCulture`，保持各区域原有行为。`DesktopTestHost` 的清理失败改为收集后随正文失败一并上报，不再从 `finally` 抛出，宿主不可用仍只由清理失败触发。未启用 `AnalysisLevel=latest-recommended`，未运行 `scripts/Publish.ps1`，未修改版本或制作候选包；未执行人工鼠标键盘、多屏或真实 DPI 验收。
+
 ## 自动化层次
 
 1. 相关 Core 测试验证纯逻辑、存储失败和边界条件。

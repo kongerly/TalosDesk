@@ -32,7 +32,7 @@ public sealed class GitHubReleaseClient : IDisposable
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _timeProvider = timeProvider;
         _ownsClient = ownsClient;
-        if (requestBudget <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(requestBudget));
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(requestBudget, TimeSpan.Zero);
         _requestBudget = requestBudget;
     }
 
@@ -140,7 +140,7 @@ public sealed class GitHubReleaseClient : IDisposable
         return request;
     }
 
-    private async Task<byte[]> ReadBoundedAsync(HttpContent content, long bytesAlreadyRead, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadBoundedAsync(HttpContent content, long bytesAlreadyRead, CancellationToken cancellationToken)
     {
         await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var buffer = new MemoryStream();

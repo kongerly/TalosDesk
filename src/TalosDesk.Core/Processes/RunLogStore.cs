@@ -302,7 +302,7 @@ public sealed class RunLogStore
         CancellationToken cancellationToken = default)
     {
         if (stream is not ("stdout" or "stderr")) throw new ArgumentException("Unknown output stream.", nameof(stream));
-        if (maxLines < 1) throw new ArgumentOutOfRangeException(nameof(maxLines));
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxLines, 1);
         cancellationToken.ThrowIfCancellationRequested();
         string path;
         lock (_sync) path = Path.Combine(GetRunDirectory(info), stream + ".log");

@@ -34,7 +34,7 @@ internal sealed class StreamingOutputRedactor
             for (var offset = 0; offset < input.Length; offset += MaximumChunkLength)
             {
                 var length = Math.Min(MaximumChunkLength, input.Length - offset);
-                result.Append(Process(_pending + input.Substring(offset, length), final: false));
+                result.Append(Process(string.Concat(_pending, input.AsSpan(offset, length)), final: false));
                 if (_failed) return OmittedMarker;
             }
             return result.ToString();

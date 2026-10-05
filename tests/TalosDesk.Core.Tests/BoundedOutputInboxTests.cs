@@ -66,5 +66,6 @@ public sealed class BoundedOutputInboxTests
         }
     }
 
-    private static CommandOutput Output(int value) => new(DateTimeOffset.UtcNow, "stdout", value.ToString());
+    private static CommandOutput Output(int value) =>
+        new(DateTimeOffset.UtcNow, "stdout", value.ToString(System.Globalization.CultureInfo.InvariantCulture));
 }

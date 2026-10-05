@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -230,8 +231,8 @@ public partial class MainWindow : Window
                 LogStatusText.Text = _logInitError;
             }
             UpdateLogPathDisplay();
-            LogLimitMbTextBox.Text = (_runLogStore.Settings.MaxBytes / (1024 * 1024)).ToString();
-            LogRetentionDaysTextBox.Text = _runLogStore.Settings.RetentionDays.ToString();
+            LogLimitMbTextBox.Text = (_runLogStore.Settings.MaxBytes / (1024 * 1024)).ToString(CultureInfo.InvariantCulture);
+            LogRetentionDaysTextBox.Text = _runLogStore.Settings.RetentionDays.ToString(CultureInfo.InvariantCulture);
             var snapshot = await _store.LoadSnapshotAsync();
             var configuration = snapshot.Configuration;
             _workspaceRevision = snapshot.Revision;
@@ -497,7 +498,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task ObserveStartupUpdateCheckAsync(UpdateCheckCoordinator coordinator)
+    private static async Task ObserveStartupUpdateCheckAsync(UpdateCheckCoordinator coordinator)
     {
         try { await coordinator.NotifyStartupReadyAsync(); }
         catch (ObjectDisposedException) { }
@@ -582,7 +583,7 @@ public partial class MainWindow : Window
     };
 
     private static string FormatUpdateTime(DateTimeOffset? time) =>
-        time is null ? "无" : time.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz");
+        time is null ? "无" : time.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.CurrentCulture);
 
     private static string FormatHistoricalResult(UpdateHistoricalResult? result) => result?.Phase switch
     {
@@ -1170,10 +1171,12 @@ public partial class MainWindow : Window
         CommandsProjectText.Text = _selectedProject?.Name ?? "选择项目以查看命令";
         GroupsProjectText.Text = _selectedProject?.Name ?? "选择项目以查看分组";
         OutputProjectText.Text = _selectedProject?.Name ?? "选择项目以查看输出";
-        CommandCountText.Text = _selectedProject?.Commands.Count.ToString() ?? "0";
+        CommandCountText.Text = _selectedProject?.Commands.Count.ToString(CultureInfo.CurrentCulture) ?? "0";
         OverviewRunningCountText.Text = (_selectedProject?.Commands.Count(item =>
-            _sessions.TryGetValue(item.Id, out var active) && !active.Completion.IsCompleted) ?? 0).ToString();
-        OverviewFinishedCountText.Text = (_selectedProject?.Commands.Count(item => _lastResults.ContainsKey(item.Id)) ?? 0).ToString();
+            _sessions.TryGetValue(item.Id, out var active) && !active.Completion.IsCompleted) ?? 0)
+            .ToString(CultureInfo.CurrentCulture);
+        OverviewFinishedCountText.Text = (_selectedProject?.Commands.Count(item => _lastResults.ContainsKey(item.Id)) ?? 0)
+            .ToString(CultureInfo.CurrentCulture);
         foreach (var item in _outputCommands) item.StatusText = GetCommandStatusText(item.Command);
         SelectedCommandName.Text = command?.Name ?? "请选择命令";
         RunStartedText.Text = SelectedHistoricalRun is { } selectedRun
@@ -1293,7 +1296,7 @@ public partial class MainWindow : Window
     {
         var active = (_selectedProject?.Commands ?? []).DistinctBy(command => command.Id)
             .Where(command => _sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted).ToArray();
-        OverviewRunningCountText.Text = active.Length.ToString();
+        OverviewRunningCountText.Text = active.Length.ToString(CultureInfo.CurrentCulture);
         OverviewProbeCountText.Text = $"其中 {active.Count(command => command.Kind == CommandKind.Service && _sessions[command.Id].TcpProbe.State == TcpProbeState.Passed)} 个探测通过";
         foreach (var label in _commandStatusLabels)
             if (label.DataContext is CommandDefinition command) label.Text = GetCommandStatusText(command);

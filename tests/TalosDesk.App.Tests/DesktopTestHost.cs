@@ -55,6 +55,7 @@ internal sealed class DesktopTestHost : IDisposable
         var operation = dispatcher.BeginInvoke(new Action(() =>
         {
             Exception? failure = null;
+            Exception? cleanupFailure = null;
             var previousContext = SynchronizationContext.Current;
             _current = this;
             try
@@ -67,19 +68,21 @@ internal sealed class DesktopTestHost : IDisposable
             {
                 try
                 {
+                    // 清理失败不从 finally 抛出：先收集，再连同正文失败一起交给 completed。
+                    // RunWithCleanup 已自行聚合并按原堆栈重抛，这里不再二次包装。
                     if (_application is not null && _application.Windows.Count != 0)
-                        throw new InvalidOperationException($"回归结束后仍有 {_application.Windows.Count} 个窗口未关闭。");
+                        cleanupFailure = new InvalidOperationException($"回归结束后仍有 {_application.Windows.Count} 个窗口未关闭。");
                     if (dispatcher.HasShutdownStarted)
-                        throw new InvalidOperationException("回归关闭了共享 Dispatcher。");
+                        cleanupFailure = Combine(cleanupFailure, new InvalidOperationException("回归关闭了共享 Dispatcher。"));
                 }
-                catch (Exception exception)
+                finally
                 {
-                    MarkUnavailable($"{name} 清理失败：{exception}");
-                    failure = failure is null ? exception : new AggregateException(failure, exception);
+                    SynchronizationContext.SetSynchronizationContext(previousContext);
+                    _current = null;
                 }
-                SynchronizationContext.SetSynchronizationContext(previousContext);
-                _current = null;
-                completed.TrySetResult(failure);
+                // 只有清理失败才判定宿主不可用；普通断言失败后宿主仍可执行下一套。
+                if (cleanupFailure is not null) MarkUnavailable($"{name} 清理失败：{cleanupFailure}");
+                completed.TrySetResult(failure ?? cleanupFailure);
             }
         }));
 
@@ -116,6 +119,10 @@ internal sealed class DesktopTestHost : IDisposable
     }
 
     private void MarkUnavailable(string reason) => Interlocked.CompareExchange(ref _unavailable, reason, null);
+
+    // 合并正文与清理两处失败；保留已有失败时按聚合异常附加，不再从 finally 抛出。
+    private static Exception? Combine(Exception? existing, Exception additional) =>
+        existing is null ? additional : new AggregateException(existing, additional);
 
     public void Dispose()
     {

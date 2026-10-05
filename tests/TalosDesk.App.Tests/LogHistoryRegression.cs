@@ -34,7 +34,8 @@ internal static class LogHistoryRegression
                 Assert.AreNotEqual(uiThreadId, Environment.CurrentManagedThreadId, "磁盘历史读取必须在后台执行。");
                 var request = new ReadRequest(info.RunId, stream, token);
                 requests.Enqueue(request);
-                try { return request.Result.Task.WaitAsync(TimeSpan.FromSeconds(30)).GetAwaiter().GetResult(); }
+                // 合成读取不需要取消传播：故意传入 CancellationToken.None 表示该测试不参与取消。
+                try { return request.Result.Task.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None).GetAwaiter().GetResult(); }
                 catch (TimeoutException) { throw new IOException("合成读取未及时释放。"); }
             });
         var projectLoads = 0;

@@ -39,7 +39,7 @@ public sealed class ApplicationBuildInfoTests
         Assert.AreEqual("0.1.1", info.Version);
     }
 
-    private static Assembly CreateAssembly(string version, params string[] channels)
+    private static AssemblyBuilder CreateAssembly(string version, params string[] channels)
     {
         var assembly = AssemblyBuilder.DefineDynamicAssembly(
             new AssemblyName("TalosDesk.BuildInfoTest." + Guid.NewGuid().ToString("N")),

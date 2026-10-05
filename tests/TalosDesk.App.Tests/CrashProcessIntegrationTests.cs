@@ -28,7 +28,7 @@ public sealed class CrashProcessIntegrationTests
         await host.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(25));
         Assert.AreNotEqual(0, host.ExitCode);
         Assert.IsTrue(File.Exists(pidFile), "宿主未启动归属命令。");
-        var targetPid = int.Parse(await File.ReadAllTextAsync(pidFile));
+        var targetPid = int.Parse(await File.ReadAllTextAsync(pidFile), System.Globalization.CultureInfo.InvariantCulture);
         Assert.IsTrue(SpinWait.SpinUntil(() => HasExited(targetPid), TimeSpan.FromSeconds(10)),
             "宿主异常退出后，归属 Job 中的目标进程仍未退出。");
 

@@ -119,6 +119,8 @@ pwsh -NoProfile -File .\scripts\Publish.ps1
 
 脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.3.0-preview.1-win-x64.zip` 及对应 SHA-256 文件。
 
+构建按警告即错误处理：`.editorconfig` 登记编码、换行、缩进、命名和分析器严重级别，`Directory.Build.props` 声明 `TreatWarningsAsErrors`。新增警告会使构建失败；需要例外时在 `.editorconfig` 中写明理由，不做静默忽略。
+
 ## 手工升级
 
 1. 从“关于与更新”页打开官方发布页，下载完整便携包及对应 SHA-256 文件并核对校验值。

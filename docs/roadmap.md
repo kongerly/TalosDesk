@@ -392,3 +392,16 @@ T01 本地实施及 T02–T05 按上述范围完成；T06 已完成本机候选�
 - [x] 检测工作区被外部程序改写并停止旧窗口保存，避免内存中的旧配置覆盖新内容。
 - [x] 按项目、命令和运行批次保存 stdout/stderr；每工作区可设置容量与期限、查看历史批次并清理日志，隔离测试不使用正式工作区。
 - [x] 用户可选择日志父文件夹并迁移当前工作区历史日志，也可恢复默认位置；位置选择不随工作区导入导出。
+- [x] 建立 `.editorconfig` 与警告即错误护栏：Release 构建 0 警告由构建设置判定，不再依赖人工检查。
+
+## P2-16 工程规范：.editorconfig 与警告即错误
+
+**背景**：项目文档多处记录“Release 构建 0 警告”，但仓库此前没有 `.editorconfig`，`Directory.Build.props` 也没有 `TreatWarningsAsErrors`，指标只靠人工自觉维护。
+
+**当前状态（2026-10-06）**：已完成。仓库根新增 `.editorconfig`，`Directory.Build.props` 声明 `TreatWarningsAsErrors` 与 `EnforceCodeStyleInBuild`。
+
+- 改动前基线为 Release 0 警告、218 项测试通过；`latest-recommended` 会额外产生 55 处去重后的警告，因此未整体启用该分析级别，而是按规则逐条登记严重级别。
+- `CA1305`（区域性相关格式化）按错误处理，并同步修复了命令编辑器探测参数“写入用固定区域、解析用当前区域”导致的往返不一致；数量与日期显示保持原有区域行为。
+- 显式例外并在 `.editorconfig` 内写明理由：`CA1001`（存储类型改可释放会波及约 70 处构造与生命周期）、`CA1036`（`SemanticVersion` 补比较运算符属公开 API 变更）、`CA1838` 与 `CA2101`（P/Invoke 封送为有意设计）、`CA2020`（托盘按版本 4 语义解析）。
+- `CA1861` 需要 `AnalysisMode` 才会在构建中启用，本次未启用分析模式，登记为 `suggestion` 而不阻断构建。
+- 未启用 `AnalysisLevel=latest-recommended`；若后续启用，应先按本节同样的方式逐条处理例外。
