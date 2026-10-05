@@ -52,6 +52,10 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults), LogHistoryRegression.Run, () => LogHistoryRegression.Stage);
 
     [TestMethod]
+    public void WorkspaceSavesPreserveExternalChangesAndTrackTheirOwnRevision() =>
+        _host.Run(nameof(WorkspaceSavesPreserveExternalChangesAndTrackTheirOwnRevision), WorkspaceSaveRegression.Run, () => WorkspaceSaveRegression.Stage);
+
+    [TestMethod]
     public void UpdateStatesDoNotBlockDesktopCommandAndOutputFlows()
     {
         var progress = new ProgressState();

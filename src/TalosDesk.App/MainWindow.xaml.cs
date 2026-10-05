@@ -2879,16 +2879,18 @@ public partial class MainWindow : Window
 
     private async Task<bool> SaveWorkspaceAsync()
     {
-        if (!_canSave) return false;
+        if (!_canSave || _workspaceRevision is not { } expectedRevision) return false;
         SaveStatusText.Text = "正在保存…";
         try
         {
-            if (!await EnsureWorkspaceUnchangedAsync(showDialog: true)) return false;
-            await _store.SaveAsync(new WorkspaceConfiguration { Projects = Projects.ToList() });
-            _workspaceRevision = await _store.GetRevisionAsync();
+            _workspaceRevision = await _store.SaveAsync(new WorkspaceConfiguration { Projects = Projects.ToList() }, expectedRevision);
             _saveFailed = false;
             SaveStatusText.Text = "已保存到本机";
             return true;
+        }
+        catch (WorkspaceChangedException)
+        {
+            return ReportExternalWorkspaceChange(showDialog: true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -2905,6 +2907,11 @@ public partial class MainWindow : Window
         var currentRevision = await _store.GetRevisionAsync();
         if (currentRevision == _workspaceRevision.Value) return true;
 
+        return ReportExternalWorkspaceChange(showDialog);
+    }
+
+    private bool ReportExternalWorkspaceChange(bool showDialog)
+    {
         _canSave = false;
         _saveFailed = true;
         SaveStatusText.Text = "外部配置已变更";

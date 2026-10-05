@@ -14,10 +14,20 @@ public sealed class WorkspaceStore
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private readonly Action? _beforeCommit;
+    private readonly Action? _afterCommit;
 
     public WorkspaceStore(string? filePath = null)
+        : this(filePath, null, null)
+    {
+    }
+
+    // 隔离回归可在提交边界安排外部修改，生产入口不注入回调。
+    internal WorkspaceStore(string? filePath, Action? beforeCommit, Action? afterCommit)
     {
         FilePath = Path.GetFullPath(filePath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TalosDesk", "workspace.json"));
+        _beforeCommit = beforeCommit;
+        _afterCommit = afterCommit;
     }
 
     public string FilePath { get; }
@@ -94,14 +104,23 @@ public sealed class WorkspaceStore
         };
     }
 
-    public async Task SaveAsync(WorkspaceConfiguration configuration, CancellationToken cancellationToken = default)
+    public Task<WorkspaceRevision> SaveAsync(WorkspaceConfiguration configuration, CancellationToken cancellationToken = default) =>
+        SaveCoreAsync(configuration, null, cancellationToken);
+
+    public Task<WorkspaceRevision> SaveAsync(WorkspaceConfiguration configuration, WorkspaceRevision expectedRevision,
+        CancellationToken cancellationToken = default) => SaveCoreAsync(configuration, expectedRevision, cancellationToken);
+
+    private async Task<WorkspaceRevision> SaveCoreAsync(WorkspaceConfiguration configuration, WorkspaceRevision? expectedRevision,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         PrepareForWrite(configuration);
         await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await WriteAtomicallyAsync(FilePath, configuration, cancellationToken).ConfigureAwait(false);
+            var revision = await WriteAtomicallyAsync(FilePath, configuration, cancellationToken, expectedRevision, _beforeCommit).ConfigureAwait(false);
+            _afterCommit?.Invoke();
+            return revision;
         }
         finally
         {
@@ -117,8 +136,12 @@ public sealed class WorkspaceStore
         NormalizeAndValidate(configuration);
     }
 
-    private static async Task WriteAtomicallyAsync(string filePath, WorkspaceConfiguration configuration, CancellationToken cancellationToken)
+    private static async Task<WorkspaceRevision> WriteAtomicallyAsync(string filePath, WorkspaceConfiguration configuration,
+        CancellationToken cancellationToken, WorkspaceRevision? expectedRevision = null, Action? beforeCommit = null)
     {
+        // 写入与返回摘要共用同一份字节，不能在替换后把外部版本误认为自己的保存结果。
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(configuration, JsonOptions);
+        var revision = new WorkspaceRevision(true, Convert.ToHexString(SHA256.HashData(bytes)));
         var fullPath = Path.GetFullPath(filePath);
         var directory = Path.GetDirectoryName(fullPath) ?? throw new InvalidOperationException("The workspace path has no parent directory.");
         Directory.CreateDirectory(directory);
@@ -127,16 +150,44 @@ public sealed class WorkspaceStore
         {
             await using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 16_384, useAsync: true))
             {
-                await JsonSerializer.SerializeAsync(stream, configuration, JsonOptions, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            File.Move(temporaryPath, fullPath, overwrite: true);
+            beforeCommit?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
+            // 完成临时文件后才校验；校验与替换之间不再异步等待或调度界面回调。
+            if (expectedRevision is { } expected && ReadRevisionForCommit(fullPath) != expected)
+                throw new WorkspaceChangedException();
+
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                // 首次保存不覆盖刚由外部创建的文件，即使它出现于最后一次校验之后。
+                File.Move(temporaryPath, fullPath, overwrite: expectedRevision?.Exists != false);
+            }
+            catch (IOException) when (expectedRevision?.Exists == false && File.Exists(fullPath))
+            {
+                throw new WorkspaceChangedException();
+            }
+            return revision;
         }
         finally
         {
             if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
         }
+    }
+
+    private static WorkspaceRevision ReadRevisionForCommit(string filePath)
+    {
+        try
+        {
+            // 摘要读取期间拒绝写入和替换，句柄关闭后立即提交同目录临时文件。
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return new WorkspaceRevision(true, Convert.ToHexString(SHA256.HashData(stream)));
+        }
+        catch (FileNotFoundException) { return WorkspaceRevision.Missing; }
+        catch (DirectoryNotFoundException) { return WorkspaceRevision.Missing; }
     }
 
     private static WorkspaceConfiguration DeserializeAndNormalize(byte[] bytes)

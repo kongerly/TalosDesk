@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using TalosDesk.Core.Configuration;
 
@@ -578,7 +579,139 @@ public sealed class WorkspaceStoreTests
     }
 
     [TestMethod]
-    public async Task FailedSavePreservesExistingWorkspaceAndRemovesTemporaryFile()
+    public async Task GuardedSavesReturnTheRevisionOfTheExactWrittenBytes()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var path = Path.Combine(sandbox.Path, "工作区.json");
+        var store = new WorkspaceStore(path);
+        var configuration = new WorkspaceConfiguration
+        {
+            SchemaVersion = 1,
+            Projects = [new() { Name = "中文项目 🌱", Directory = sandbox.Path }]
+        };
+
+        var first = await store.SaveAsync(configuration, WorkspaceRevision.Missing);
+        Assert.AreEqual(Revision(await File.ReadAllBytesAsync(path)), first);
+        Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, (await store.LoadAsync()).SchemaVersion);
+
+        configuration.Projects[0].Name = "修改后";
+        var second = await store.SaveAsync(configuration, first);
+        Assert.AreNotEqual(first, second);
+        Assert.AreEqual(Revision(await File.ReadAllBytesAsync(path)), second);
+        Assert.HasCount(0, Directory.GetFiles(sandbox.Path, "*.tmp"));
+    }
+
+    [TestMethod]
+    public async Task ExternalReplacementAfterCommitDoesNotBecomeTheSavedRevision()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var path = Path.Combine(sandbox.Path, "workspace.json");
+        var externalPath = Path.Combine(sandbox.Path, "external.json");
+        await new WorkspaceStore(externalPath).SaveAsync(new()
+        {
+            Projects = [new() { Name = "外部版本", Directory = sandbox.Path }]
+        });
+        var externalBytes = await File.ReadAllBytesAsync(externalPath);
+        byte[]? committedBytes = null;
+        var store = new WorkspaceStore(path, null, () =>
+        {
+            committedBytes = File.ReadAllBytes(path);
+            File.Move(externalPath, path, overwrite: true);
+        });
+
+        var saved = await store.SaveAsync(new(), WorkspaceRevision.Missing);
+        Assert.IsNotNull(committedBytes);
+        Assert.AreEqual(Revision(committedBytes), saved);
+        Assert.AreNotEqual(await store.GetRevisionAsync(), saved);
+
+        await Assert.ThrowsExactlyAsync<WorkspaceChangedException>(() => store.SaveAsync(new(), saved));
+        CollectionAssert.AreEqual(externalBytes, await File.ReadAllBytesAsync(path));
+        Assert.HasCount(0, Directory.GetFiles(sandbox.Path, "*.tmp"));
+    }
+
+    [TestMethod]
+    [DataRow("rewrite")]
+    [DataRow("replace")]
+    [DataRow("delete")]
+    [DataRow("create")]
+    public async Task GuardedSaveChecksForExternalChangesAfterPreparingTemporaryFile(string operation)
+    {
+        using var sandbox = new TemporaryDirectory();
+        var path = Path.Combine(sandbox.Path, "workspace.json");
+        var initialStore = new WorkspaceStore(path);
+        var expected = operation == "create" ? WorkspaceRevision.Missing : await initialStore.SaveAsync(new());
+        var externalPath = Path.Combine(sandbox.Path, "external.json");
+        await new WorkspaceStore(externalPath).SaveAsync(new()
+        {
+            Projects = [new() { Name = "外部版本", Directory = sandbox.Path }]
+        });
+        var externalBytes = await File.ReadAllBytesAsync(externalPath);
+        var prepared = false;
+        var store = new WorkspaceStore(path, () =>
+        {
+            // 外部修改发生于临时 JSON 已完整写入后，不能靠保存入口的一次检查通过用例。
+            var temporaryPath = Directory.GetFiles(sandbox.Path, "workspace.json.*.tmp").Single();
+            using var document = JsonDocument.Parse(File.ReadAllBytes(temporaryPath));
+            prepared = true;
+            if (operation == "delete") File.Delete(path);
+            else if (operation == "replace") File.Move(externalPath, path, overwrite: true);
+            else File.WriteAllBytes(path, externalBytes);
+        }, null);
+
+        await Assert.ThrowsExactlyAsync<WorkspaceChangedException>(() => store.SaveAsync(new(), expected));
+        Assert.IsTrue(prepared);
+        if (operation == "delete") Assert.IsFalse(File.Exists(path), "保存不能重建外部已删除的工作区。");
+        else CollectionAssert.AreEqual(externalBytes, await File.ReadAllBytesAsync(path));
+        Assert.HasCount(0, Directory.GetFiles(sandbox.Path, "*.tmp"));
+    }
+
+    [TestMethod]
+    public async Task ConcurrentGuardedSavesRejectTheStaleRevision()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var store = new WorkspaceStore(Path.Combine(sandbox.Path, "workspace.json"));
+        var expected = await store.SaveAsync(new());
+        var first = store.SaveAsync(new()
+        {
+            Projects = [new() { Name = "First", Directory = sandbox.Path }]
+        }, expected);
+        var second = store.SaveAsync(new()
+        {
+            Projects = [new() { Name = "Second", Directory = sandbox.Path }]
+        }, expected);
+
+        await Assert.ThrowsExactlyAsync<WorkspaceChangedException>(() => Task.WhenAll(first, second));
+        var saves = new[] { first, second };
+        Assert.HasCount(1, saves.Where(task => task.IsCompletedSuccessfully));
+        Assert.HasCount(1, saves.Where(task => task.IsFaulted));
+        Assert.AreEqual(saves.Single(task => task.IsCompletedSuccessfully).Result, await store.GetRevisionAsync());
+        Assert.HasCount(0, Directory.GetFiles(sandbox.Path, "*.tmp"));
+    }
+
+    [TestMethod]
+    public async Task CancellationAfterPreparingTemporaryFilePreservesExistingWorkspace()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var path = Path.Combine(sandbox.Path, "workspace.json");
+        var original = await new WorkspaceStore(path).SaveAsync(new());
+        var originalBytes = await File.ReadAllBytesAsync(path);
+        using var cancellation = new CancellationTokenSource();
+        var store = new WorkspaceStore(path, cancellation.Cancel, null);
+
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => store.SaveAsync(new()
+        {
+            Projects = [new() { Name = "取消的版本", Directory = sandbox.Path }]
+        }, original, cancellation.Token));
+        CollectionAssert.AreEqual(originalBytes, await File.ReadAllBytesAsync(path));
+        Assert.HasCount(0, Directory.GetFiles(sandbox.Path, "*.tmp"));
+    }
+
+    private static WorkspaceRevision Revision(byte[] bytes) => new(true, Convert.ToHexString(SHA256.HashData(bytes)));
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task FailedSavePreservesExistingWorkspaceAndRemovesTemporaryFile(bool guarded)
     {
         var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -586,7 +719,7 @@ public sealed class WorkspaceStoreTests
         {
             var path = Path.Combine(directory, "workspace.json");
             var store = new WorkspaceStore(path);
-            await store.SaveAsync(new WorkspaceConfiguration
+            var revision = await store.SaveAsync(new WorkspaceConfiguration
             {
                 Projects = [new ProjectDefinition { Name = "Original", Directory = Path.Combine(directory, "original") }]
             });
@@ -597,10 +730,12 @@ public sealed class WorkspaceStoreTests
                 Exception? saveError = null;
                 try
                 {
-                    await store.SaveAsync(new WorkspaceConfiguration
+                    var replacement = new WorkspaceConfiguration
                     {
                         Projects = [new ProjectDefinition { Name = "Replacement", Directory = Path.Combine(directory, "replacement") }]
-                    });
+                    };
+                    if (guarded) await store.SaveAsync(replacement, revision);
+                    else await store.SaveAsync(replacement);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
