@@ -44,9 +44,9 @@ DPAPI `CurrentUser` 密文仅适用于当前 Windows 用户，不能作为跨账
 2026-09-29 本机候选检查结果：
 
 - Windows 11 x64（10.0.26200）、PowerShell 7.6.5、仓库锁定的 .NET SDK 10.0.401 和 Windows Desktop Runtime 10.0.12 环境检查通过。
-- `scripts/Publish.ps1` 完整执行还原、Release 构建、79 项自动化测试和自包含发布；构建为 0 警告、0 错误，测试为 79 通过、0 失败、0 跳过。
-- 生成 `TalosDesk-v0.1.1-win-x64.zip`，大小 76,802,925 字节，SHA-256 为 `fa14d3ff38c2858ccef620770fcaa9d6fb87dfc269d4c5bbdbf51a6de1c94334`。校验文件与重新计算结果一致。
-- ZIP 共 479 个条目，必需的程序、README 和许可文件齐全；未发现工作区、日志、测试结果或 PDB 文件。程序文件版本为 0.1.1.0，产品版本为 0.1.1，签名状态为未签名，与说明一致。
+- `scripts/Publish.ps1` 完整执行还原、Release 构建、完整自动化测试和自包含发布；构建 0 警告、0 错误，测试 0 失败、0 跳过。当次的用例通过数量见[变更记录归档](changelog/implementation-log-v0.1.1-to-v0.2.0.md#t06-本地候选包验收记录2026-09-29)。
+- 生成 `TalosDesk-v0.1.1-win-x64.zip`；校验值以 [`v0.1.1` 发布附件](https://github.com/kongerly/TalosDesk/releases/tag/v0.1.1)随附的 `.sha256` 文件为准，本说明不重复记录易变的大小与摘要。
+- ZIP 必需的程序、README 和许可文件齐全；未发现工作区、日志、测试结果或 PDB 文件。程序文件版本为 0.1.1.0，产品版本为 0.1.1，签名状态为未签名，与说明一致。
 - 从发布目录使用全新隔离工作区启动候选程序，进程进入可响应状态，并按确认的 PID 和可执行路径停止。
 - 功能提交 `f328b30` 和发布准备提交 `d5d3066` 的 Windows CI 均已通过。
 

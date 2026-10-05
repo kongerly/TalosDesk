@@ -37,10 +37,10 @@
 
 候选版本为 `0.3.0-preview.1`，不是已完成全部客户端验收的稳定发布。环境：Windows 11 x64（内核版本 `10.0.26200.0`）、PowerShell `7.6.5`；使用仓库固定的 .NET SDK `10.0.401`、运行时 `10.0.12`。
 
-- 执行 `scripts/Publish.ps1`，完成 restore、Release build、全量 test 和 self-contained publish。Core **134** 项、App **20** 项，共 **154** 项通过，失败与跳过均为 0；Release 构建 0 警告、0 错误。
+- 执行 `scripts/Publish.ps1`，完成 restore、Release build、全量 test 和 self-contained publish。Release 构建 0 警告、0 错误，测试 0 失败、0 跳过。当次的 Core/App 用例通过数量见[变更记录归档](changelog/implementation-log-v0.1.1-to-v0.2.0.md)。
 - 探测单测使用可控时间及故意忽略取消的连接替身，覆盖启动期限、阈值、恢复和旧结果迟到；真实网络集成使用临时 IPv4/IPv6 监听器和归属明确的延迟启动 PowerShell 服务。
 - WPF 集成覆盖编辑配置、预览不连接、失联与恢复、重启、项目去重、跨项目切换、输出选择保留和历史批次隔离。布局回归检查 800 × 520 及宽布局，并检查编辑器底部按钮可达。
-- 最终包桌面检查后补充 300 行日志的内容、选择与滚动位置断言。首次断言读取了尚未应用的 WPF 滚动偏移，修正为等待目标偏移后再验证；随后 Core 134 项及 App 20 项通过。执行命令为 `scripts/With-Sdk.ps1 test TalosDesk.slnx --configuration Release --no-restore`，修正 App 测试后重跑 `scripts/With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --no-restore`。这次补充只修改测试与验收文档，未修改候选包程序代码。
+- 最终包桌面检查后补充了大量日志行的内容、选择与滚动位置断言。首次断言读取了尚未应用的 WPF 滚动偏移，修正为等待目标偏移后再验证；修正后全量测试通过。执行命令为 `scripts/With-Sdk.ps1 test TalosDesk.slnx --configuration Release --no-restore`，修正 App 测试后重跑 `scripts/With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --no-restore`。这次补充只修改测试与验收文档，未修改候选包程序代码。
 - 验收中修复了窄布局选择器的只读状态绑定，以及连续运行后 Ctrl+C 被继承忽略的问题；加入连续正常停止测试，完整发布脚本在修复后通过。
 
 从最终 ZIP 解压到独立临时目录，所有启动均显式指定临时工作区与验收标识。未使用用户真实项目或工作区。最终包交互结果：
@@ -64,10 +64,6 @@
 
 异常关闭验证的是强制结束宿主，未模拟系统断电；日志失败验证的是目录初始化失败，未在最终包中模拟磁盘写满。验收进程已退出。
 
-包：`artifacts/TalosDesk-v0.3.0-preview.1-win-x64.zip`，**76,876,508 字节，479 个条目**。产品版本与候选版本一致；校验文件与再次计算结果一致：
-
-```text
-2915e0cc976728fe4642bfc71d9663a4dea68688ac65cea0e5e3e21ecc2093b8
-```
+包：`artifacts/TalosDesk-v0.3.0-preview.1-win-x64.zip`，由 `scripts/Publish.ps1` 在上条记录的执行中生成。产品版本与候选版本一致。候选 ZIP 的大小、条目数和 SHA-256 是当次打包的结果，不写入文档；需要核对时按 `scripts/Publish.ps1` 输出读取，或在打标签后核对[发布附件](https://github.com/kongerly/TalosDesk/releases)与随附的 `.sha256` 文件。
 
 包内检查未发现工作区、日志、PDB 或测试宿主；包含运行时及许可材料。未签名。未勾选项仍待验证，尤其本机隔离目录不等同于干净 Windows 11 客户端。源码与验收进度纳入版本控制；候选 ZIP、测试工作区和本机缓存不入库，尚未打标签或公开发布。

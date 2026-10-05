@@ -133,12 +133,13 @@ pwsh -NoProfile -File .\scripts\Publish.ps1
 
 - [设计说明](docs/design.md)
 - [隐私说明](docs/privacy.md)：本机数据位置、明文与加密边界、保留和联网行为。
-- [开发与发布路线图](docs/roadmap.md)：当前分支收口与隐私保护、更新分发、就绪检查，以及后续多 Shell 的范围和验收条件。
+- [开发与发布路线图](docs/roadmap.md)：当前版本状态、下一步任务，以及后续多 Shell 的范围和验收条件。
 - [v0.1.1 发布说明](docs/release-v0.1.1.md)
 - [v0.2.0 发布说明](docs/release-v0.2.0.md)
 - [v0.3.0 候选版说明](docs/release-v0.3.0.md)
 - [贡献指南](CONTRIBUTING.md)与[隔离测试说明](docs/testing.md)
 - [常见问题](docs/faq.md)与[示例工作区](examples)
+- [变更记录](docs/changelog/README.md)：已归档的逐批实施记录与各次检查结果数字。
 - [v0.1.0 发布说明](docs/release-v0.1.0.md)
 
 TalosDesk 使用 [MIT License](LICENSE)。发布包包含的 .NET 运行时许可信息随包提供。
