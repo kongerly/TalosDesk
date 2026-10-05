@@ -1,12 +1,18 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace TalosDesk.Core.Configuration;
 
 public sealed class WorkspaceStore
 {
     public const int CurrentSchemaVersion = 4;
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    // Disallow 让未知字段（拼错的 "TcpProbee"、旧版本残留键）不再被静默丢弃；只影响读取，序列化不受影响。
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+    };
     private readonly SemaphoreSlim _saveGate = new(1, 1);
 
     public WorkspaceStore(string? filePath = null)
@@ -135,15 +141,63 @@ public sealed class WorkspaceStore
 
     private static WorkspaceConfiguration DeserializeAndNormalize(byte[] bytes)
     {
-        var configuration = JsonSerializer.Deserialize<WorkspaceConfiguration>(bytes, JsonOptions);
-        if (configuration is not null)
+        JsonDocument document;
+        try
         {
-            using var document = JsonDocument.Parse(bytes);
+            document = JsonDocument.Parse(bytes);
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("The TalosDesk workspace file is not valid JSON.", exception);
+        }
+
+        using (document)
+        {
+            RejectDuplicateMembers(document.RootElement);
+            var configuration = Deserialize(bytes);
             if (configuration.SchemaVersion >= 3) ValidateSchemaThreeShape(document.RootElement);
             ValidateProbeShape(document.RootElement, configuration.SchemaVersion);
+            NormalizeAndValidate(configuration);
+            return configuration;
         }
-        NormalizeAndValidate(configuration);
-        return configuration!;
+    }
+
+    private static WorkspaceConfiguration Deserialize(byte[] bytes)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<WorkspaceConfiguration>(bytes, JsonOptions)
+                ?? throw new InvalidDataException("The TalosDesk workspace file is empty or uses an unsupported schema version.");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException(
+                "The TalosDesk workspace JSON contains an unsupported field name, value type or duplicate definition.", exception);
+        }
+    }
+
+    /// <summary>
+    /// JsonSerializer 对重复键采用"后者覆盖前者"，但第二个 "Projects"、"Kind" 或 "Commands"
+    /// 恰恰是必须拒绝的配置失败模式，因此在整个文档上统一按层拒绝重复成员。
+    /// </summary>
+    private static void RejectDuplicateMembers(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var members = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!members.Add(property.Name))
+                        throw new InvalidDataException($"The TalosDesk workspace contains the duplicate field '{property.Name}'.");
+                    RejectDuplicateMembers(property.Value);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray()) RejectDuplicateMembers(item);
+                break;
+        }
     }
 
     private static void ValidateProbeShape(JsonElement root, int schema)
