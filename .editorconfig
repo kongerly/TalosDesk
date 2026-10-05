@@ -1,0 +1,147 @@
+# TalosDesk 统一编辑器与分析器配置
+# 目标：Release 构建 0 警告；改动是否合规由构建设置判定，不依赖编辑器插件。
+# 命名沿用现有代码风格：私有字段 _camelCase，其余成员 PascalCase。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,jsonc,xaml,xaml.csproj,csproj,props,targets,slnx,yml,yaml,md}]
+indent_size = 2
+
+[*.{md,yml,yaml}]
+trim_trailing_whitespace = false
+
+[*.md]
+max_line_length = off
+
+[*.{ps1,psm1,psd1}]
+indent_size = 2
+
+[*.bat]
+end_of_line = crlf
+
+[*.cs]
+indent_size = 4
+
+# 语言约定
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+
+# 可空性：四个项目均开启 Nullable，这是本仓库最需要守住的一类警告
+dotnet_diagnostic.CS8600.severity = warning
+dotnet_diagnostic.CS8601.severity = warning
+dotnet_diagnostic.CS8602.severity = warning
+dotnet_diagnostic.CS8603.severity = warning
+dotnet_diagnostic.CS8604.severity = warning
+dotnet_diagnostic.CS8618.severity = warning
+dotnet_diagnostic.CS8619.severity = warning
+dotnet_diagnostic.CS8620.severity = warning
+dotnet_diagnostic.CS8625.severity = warning
+dotnet_diagnostic.CS8629.severity = warning
+dotnet_diagnostic.CS8632.severity = warning
+
+# 命名规则
+dotnet_naming_rule.private_fields_underscore_camel_case.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore_camel_case.style = underscore_camel_case
+dotnet_naming_rule.private_fields_underscore_camel_case.severity = warning
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_fields.required_modifiers =
+
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+
+dotnet_naming_rule.types_pascal_case.symbols = types
+dotnet_naming_rule.types_pascal_case.style = pascal_case
+dotnet_naming_rule.types_pascal_case.severity = warning
+
+dotnet_naming_symbols.types.applicable_kinds = class,struct,interface,enum,delegate
+dotnet_naming_symbols.types.applicable_accessibilities = *
+
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+dotnet_naming_rule.members_pascal_case.symbols = members
+dotnet_naming_rule.members_pascal_case.style = pascal_case
+dotnet_naming_rule.members_pascal_case.severity = warning
+
+dotnet_naming_symbols.members.applicable_kinds = method,property,event
+dotnet_naming_symbols.members.applicable_accessibilities = *
+
+dotnet_naming_rule.parameters_camel_case.symbols = parameters
+dotnet_naming_rule.parameters_camel_case.style = camel_case
+dotnet_naming_rule.parameters_camel_case.severity = warning
+
+dotnet_naming_symbols.parameters.applicable_kinds = parameter
+dotnet_naming_symbols.parameters.applicable_accessibilities = *
+
+dotnet_naming_style.camel_case.capitalization = camel_case
+
+dotnet_naming_rule.constants_pascal_case.symbols = constants
+dotnet_naming_rule.constants_pascal_case.style = pascal_case
+dotnet_naming_rule.constants_pascal_case.severity = warning
+
+dotnet_naming_symbols.constants.applicable_kinds = field,property
+dotnet_naming_symbols.constants.required_modifiers = const,readonly
+
+dotnet_style_readonly_field = true:suggestion
+dotnet_style_prefer_using_expression = true:suggestion
+dotnet_style_require_accessors = true:suggestion
+csharp_prefer_braces = true:suggestion
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_before_members_in_lambda_expressions = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_prefer_switch_expression = false:suggestion
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = false:suggestion
+csharp_style_var_elsewhere = false:suggestion
+csharp_style_expression_bodied_methods = false:silent
+csharp_style_expression_bodied_properties = false:silent
+csharp_style_expression_bodied_accessors = false:silent
+
+# 可靠性与正确性分析：本次承诺范围，按错误处理
+dotnet_diagnostic.CA1001.severity = error
+dotnet_diagnostic.CA1036.severity = error
+dotnet_diagnostic.CA1305.severity = error
+dotnet_diagnostic.CA1512.severity = error
+dotnet_diagnostic.CA1822.severity = error
+dotnet_diagnostic.CA1845.severity = error
+dotnet_diagnostic.CA1859.severity = error
+dotnet_diagnostic.CA2016.severity = error
+dotnet_diagnostic.CA2208.severity = error
+dotnet_diagnostic.CA2219.severity = error
+
+# 显式例外（逐条记录理由，避免被静默忽略；改回 error 即重新纳入守护）：
+# CA1001：WorkspaceStore / UpdateStateStore 以 SemaphoreSlim 作为写入闸门。改为可释放类型
+#   会改变应用与测试共约 70 处构造与生命周期，属于独立迭代，不在本项范围内。
+# CA1036：SemanticVersion 是值语义的版本标识，只使用 CompareTo 与 Equals，不提供比较运算符；
+#   补运算符属于公开 API 变更，需要单独的兼容性与测试评审。
+# CA1838 / CA2101：WindowsNative 的 StringBuilder 与字符串参数封送为有意设计，
+#   改写需要单独的迁移和真实桌面验收。
+# CA2020：WindowsTrayIcon 按 NOTIFYICONVERSION_4 语义解析 lParam，未选中溢出行为为预期。
+dotnet_diagnostic.CA1001.severity = none
+dotnet_diagnostic.CA1036.severity = none
+dotnet_diagnostic.CA1838.severity = none
+dotnet_diagnostic.CA2101.severity = none
+dotnet_diagnostic.CA2020.severity = none
+
+# CA1861 需要 AnalysisMode 支持才会在构建中启用；本次未启用分析模式，
+# 因此只登记约定并保持 suggestion，不阻断构建。
+dotnet_diagnostic.CA1861.severity = suggestion
