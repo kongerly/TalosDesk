@@ -140,6 +140,142 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    [DataRow("{")]
+    [DataRow(null)]
+    [DataRow("null")]
+    [DataRow("{}")]
+    public void RotatesUnreadableHistoryBeforeTruncatingAnActiveRun(string? metadata)
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var projectId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+        var old = store.Begin(projectId, commandId, DateTimeOffset.Now.AddMinutes(-2));
+        store.Append(old, new CommandOutput(DateTimeOffset.Now, "stdout", new string('a', 700_000)));
+        store.Complete(old, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        ReplaceMetadata(old, metadata);
+
+        var reopened = new RunLogStore(workspace);
+        reopened.Initialize();
+        Assert.IsTrue(Directory.Exists(old.Directory));
+        Assert.HasCount(0, reopened.GetRuns(projectId, commandId));
+        var current = reopened.Begin(projectId, commandId, DateTimeOffset.Now);
+        try
+        {
+            reopened.Append(current, new CommandOutput(DateTimeOffset.Now, "stderr", new string('b', 700_000)));
+            Assert.IsFalse(Directory.Exists(old.Directory), "损坏历史必须参与容量轮转。");
+            Assert.IsFalse(current.Info.Truncated);
+            Assert.IsLessThanOrEqualTo(reopened.Settings.MaxBytes, GetBatchBytes(reopened));
+            reopened.Append(current, new CommandOutput(DateTimeOffset.Now, "stdout", new string('c', 700_000)));
+            Assert.IsTrue(current.Info.Truncated, "只剩运行中批次时必须提示截断。");
+            Assert.AreEqual(0L, new FileInfo(Path.Combine(current.Directory, "stdout.log")).Length);
+            Assert.IsLessThanOrEqualTo(reopened.Settings.MaxBytes, GetBatchBytes(reopened));
+        }
+        finally { reopened.Complete(current, new CommandRunResult(CommandRunState.Succeeded, 0, false)); }
+        Assert.IsTrue(reopened.GetRuns(projectId, commandId).Single().Truncated);
+    }
+
+    [TestMethod]
+    [DataRow("{")]
+    [DataRow(null)]
+    [DataRow("null")]
+    [DataRow("{}")]
+    public void ClearHistoryRemovesUnreadableBatchesAndPreservesActiveDirectories(string? metadata)
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var projectId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+        var old = store.Begin(projectId, commandId, DateTimeOffset.Now.AddMinutes(-2));
+        store.Append(old, new CommandOutput(DateTimeOffset.Now, "stdout", "damaged history"));
+        store.Complete(old, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        ReplaceMetadata(old, metadata);
+        var active = store.Begin(projectId, commandId, DateTimeOffset.Now);
+        try
+        {
+            ReplaceMetadata(active, metadata);
+            store.ClearHistory();
+            Assert.IsFalse(Directory.Exists(old.Directory));
+            Assert.IsTrue(Directory.Exists(active.Directory), "运行中批次不依赖元数据解析结果保护。");
+            store.Append(active, new CommandOutput(DateTimeOffset.Now, "stdout", "still active"));
+            Assert.IsFalse(active.Info.WriteFailed);
+        }
+        finally { store.Complete(active, new CommandRunResult(CommandRunState.Succeeded, 0, false)); }
+        store.ClearHistory();
+        Assert.IsFalse(Directory.Exists(active.Directory));
+        Assert.IsTrue(File.Exists(Path.Combine(store.RootPath, "settings.json")));
+    }
+
+    [TestMethod]
+    public void CapacityRecountAfterWriteFailureIncludesUnreadableActiveBatch()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var first = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        var second = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        try
+        {
+            store.Append(first, new CommandOutput(DateTimeOffset.Now, "stdout", new string('a', 700_000)));
+            ReplaceMetadata(first, "{");
+            first.Stdout.Dispose();
+            store.Append(first, new CommandOutput(DateTimeOffset.Now, "stdout", "write failure"));
+            Assert.IsTrue(first.Info.WriteFailed);
+            store.Append(second, new CommandOutput(DateTimeOffset.Now, "stderr", new string('b', 400_000)));
+            Assert.IsTrue(second.Info.Truncated, "写入失败后的容量重算不能漏掉损坏批次。");
+            Assert.AreEqual(0L, new FileInfo(Path.Combine(second.Directory, "stderr.log")).Length);
+            Assert.IsTrue(Directory.Exists(first.Directory));
+            Assert.IsTrue(Directory.Exists(second.Directory));
+            Assert.IsLessThanOrEqualTo(store.Settings.MaxBytes, GetBatchBytes(store));
+        }
+        finally
+        {
+            store.Complete(first, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+            store.Complete(second, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        }
+    }
+
+    [TestMethod]
+    [DataRow("{")]
+    [DataRow(null)]
+    public void UnreadableHistoryUsesDirectoryTimestampForRetention(string? metadata)
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        var old = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Complete(old, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        ReplaceMetadata(old, metadata);
+        var recent = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Complete(recent, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        ReplaceMetadata(recent, metadata);
+        Directory.SetLastWriteTimeUtc(old.Directory, DateTime.UtcNow.AddDays(-35));
+        Directory.SetLastWriteTimeUtc(recent.Directory, DateTime.UtcNow.AddDays(-5));
+
+        var reopened = new RunLogStore(workspace);
+        reopened.Initialize();
+        Assert.IsFalse(Directory.Exists(old.Directory));
+        Assert.IsTrue(Directory.Exists(recent.Directory));
+        var active = reopened.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        try
+        {
+            ReplaceMetadata(active, metadata);
+            Directory.SetLastWriteTimeUtc(active.Directory, DateTime.UtcNow.AddDays(-35));
+            reopened.UpdateSettings(new RunLogSettings(1024 * 1024, 1));
+            Assert.IsFalse(Directory.Exists(recent.Directory));
+            Assert.IsTrue(Directory.Exists(active.Directory));
+        }
+        finally { reopened.Complete(active, new CommandRunResult(CommandRunState.Succeeded, 0, false)); }
+    }
+
+    [TestMethod]
     public void ExpiresOldRunsAndPreservesActiveRunsDuringClear()
     {
         using var sandbox = new Sandbox();
@@ -265,6 +401,18 @@ public sealed class RunLogStoreTests
         Assert.AreEqual("Stopped", run.State);
         Assert.IsTrue(store.ReadTail(run, "stdout").Contains("started-marker"));
     }
+
+    private static void ReplaceMetadata(RunLogWriter writer, string? metadata)
+    {
+        var path = Path.Combine(writer.Directory, "run.json");
+        if (metadata is null) File.Delete(path);
+        else File.WriteAllText(path, metadata);
+    }
+
+    private static long GetBatchBytes(RunLogStore store) =>
+        Directory.EnumerateFiles(store.RootPath, "*", SearchOption.AllDirectories)
+            .Where(path => Path.GetFileName(path) != "settings.json")
+            .Sum(path => new FileInfo(path).Length);
 
     private sealed class Sandbox : IDisposable
     {

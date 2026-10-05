@@ -2733,7 +2733,7 @@ public partial class MainWindow : Window
 
     private void ClearHistory_Click(object sender, RoutedEventArgs e)
     {
-        if (AppMessageDialog.Show(this, "清理此工作区所有已结束批次的日志吗？运行中的日志会保留。", "清理历史日志",
+        if (AppMessageDialog.Show(this, "清理此工作区所有未运行批次的日志吗？元数据损坏或缺失的批次也会清理，运行中的日志会保留。", "清理历史日志",
             MessageBoxButton.YesNo, MessageBoxImage.Warning, primaryText: "清理") != MessageBoxResult.Yes) return;
         try
         {

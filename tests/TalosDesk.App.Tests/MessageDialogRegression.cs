@@ -41,6 +41,7 @@ internal static class MessageDialogRegression
             CheckLayout(window);
             CheckEditorValidation(window);
             CheckImportChoices(window, root);
+            CheckDamagedLogHistory(window);
             CheckDeletion(window, store);
             CheckExitInteraction(window);
             CheckRunningExit(root);
@@ -232,6 +233,49 @@ internal static class MessageDialogRegression
             _ => "CancelActionButton"
         });
     };
+
+    private static void CheckDamagedLogHistory(MainWindow window)
+    {
+        Stage = "损坏日志的清理确认、取消与运行中保护";
+        Find<ListBox>(window, "ProjectList").SelectedIndex = 0;
+        Click(window, "CommandsPageButton");
+        Find<ListBox>(window, "CommandList").SelectedIndex = 0;
+        Click(window, "OutputPageButton");
+        Find<Expander>(window, "LogSettingsExpander").IsExpanded = true;
+        var logs = (RunLogStore)typeof(MainWindow).GetField("_runLogStore", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+        var project = window.Projects.Single();
+        var command = project.Commands.Single();
+        var old = logs.Begin(project.Id, command.Id, DateTimeOffset.Now.AddMinutes(-2));
+        logs.Append(old, new CommandOutput(DateTimeOffset.Now, "stdout", "damaged history"));
+        logs.Complete(old, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var oldDirectory = GetDirectory(old);
+        File.WriteAllText(Path.Combine(oldDirectory, "run.json"), "{");
+        var active = logs.Begin(project.Id, command.Id, DateTimeOffset.Now);
+        var activeDirectory = GetDirectory(active);
+        try
+        {
+            File.WriteAllText(Path.Combine(activeDirectory, "run.json"), "{");
+            Respond(() => { Click(window, "ClearHistoryButton"); return true; }, dialog =>
+            {
+                StringAssert.Contains(Find<TextBox>(dialog, "MessageBox").Text, "元数据损坏或缺失的批次也会清理");
+                Assert.IsTrue(Find<Button>(dialog, "CancelActionButton").IsKeyboardFocused);
+                Press(dialog, Key.Escape);
+            });
+            Assert.IsTrue(Directory.Exists(oldDirectory));
+            Assert.IsTrue(Directory.Exists(activeDirectory));
+            Respond(() => { Click(window, "ClearHistoryButton"); return true; }, dialog => Click(dialog, "PrimaryActionButton"));
+            Assert.IsFalse(Directory.Exists(oldDirectory));
+            Assert.IsTrue(Directory.Exists(activeDirectory));
+            Assert.AreEqual("已清理历史日志。", Find<TextBlock>(window, "LogStatusText").Text);
+            Assert.HasCount(1, Find<ComboBox>(window, "RunHistoryComboBox").Items);
+            logs.Append(active, new CommandOutput(DateTimeOffset.Now, "stdout", "still active"));
+            Assert.IsFalse(active.Info.WriteFailed);
+        }
+        finally { logs.Complete(active, new CommandRunResult(CommandRunState.Succeeded, 0, false)); }
+
+        string GetDirectory(RunLogWriter writer) => Path.Combine(logs.RootPath, writer.Info.ProjectId.ToString("N"),
+            writer.Info.CommandId.ToString("N"), writer.Info.RunId.ToString("N"));
+    }
 
     private static void CheckDeletion(MainWindow window, WorkspaceStore store)
     {

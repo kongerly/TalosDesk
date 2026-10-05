@@ -314,9 +314,9 @@ public sealed class RunLogStore
     {
         lock (_sync)
         {
-            foreach (var (info, directory) in EnumerateRuns())
+            foreach (var (runId, directory) in EnumerateRunDirectories())
             {
-                if (!_active.Contains(info.RunId)) System.IO.Directory.Delete(directory, true);
+                if (!_active.Contains(runId)) System.IO.Directory.Delete(directory, true);
             }
             _storedBytes = CalculateStoredBytes();
         }
@@ -324,19 +324,42 @@ public sealed class RunLogStore
 
     private void Prune(DateTimeOffset now, long requiredBytes = 0)
     {
-        var completed = EnumerateRuns().Where(item => !_active.Contains(item.Info.RunId))
-            .OrderBy(item => item.Info.StartedAt).ToArray();
-        foreach (var (info, directory) in completed)
+        var completed = EnumerateRunDirectories().Where(item => !_active.Contains(item.RunId))
+            .Select(item => (item.Directory, StartedAt: TryReadInfo(item.Directory)?.StartedAt
+                ?? new DateTimeOffset(System.IO.Directory.GetLastWriteTimeUtc(item.Directory))))
+            .OrderBy(item => item.StartedAt).ToArray();
+        foreach (var (directory, startedAt) in completed)
         {
-            if (info.StartedAt < now.AddDays(-Settings.RetentionDays) || _storedBytes + requiredBytes > Settings.MaxBytes)
+            if (startedAt < now.AddDays(-Settings.RetentionDays) || _storedBytes + requiredBytes > Settings.MaxBytes)
             {
-                _storedBytes -= GetDirectoryBytes(directory);
+                var deletedBytes = GetDirectoryBytes(directory);
                 System.IO.Directory.Delete(directory, true);
+                _storedBytes -= deletedBytes;
             }
         }
     }
 
     private IEnumerable<(RunLogInfo Info, string Directory)> EnumerateRuns()
+    {
+        foreach (var (_, directory) in EnumerateRunDirectories())
+        {
+            if (TryReadInfo(directory) is { } info) yield return (info, directory);
+        }
+    }
+
+    private RunLogInfo? TryReadInfo(string directory)
+    {
+        try
+        {
+            var info = JsonSerializer.Deserialize<RunLogInfo>(File.ReadAllText(Path.Combine(directory, MetadataFile)));
+            return info is not null && info.RunId != Guid.Empty && Path.GetFullPath(directory) == GetRunDirectory(info)
+                ? info : null;
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException) { return null; }
+    }
+
+    // 批次目录独立于元数据枚举，损坏或缺失的 run.json 不能绕过容量和清理规则。
+    private IEnumerable<(Guid RunId, string Directory)> EnumerateRunDirectories()
     {
         if (!System.IO.Directory.Exists(RootPath)) yield break;
         foreach (var projectDirectory in System.IO.Directory.EnumerateDirectories(RootPath))
@@ -348,13 +371,7 @@ public sealed class RunLogStore
                 foreach (var directory in System.IO.Directory.EnumerateDirectories(commandDirectory))
                 {
                     if (!IsSafeGuidDirectory(directory)) continue;
-                    var metadataPath = Path.Combine(directory, MetadataFile);
-                    if (!File.Exists(metadataPath)) continue;
-                    RunLogInfo? info;
-                    try { info = JsonSerializer.Deserialize<RunLogInfo>(File.ReadAllText(metadataPath)); }
-                    catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException) { continue; }
-                    if (info is not null && info.RunId != Guid.Empty && Path.GetFullPath(directory) == GetRunDirectory(info))
-                        yield return (info, directory);
+                    yield return (Guid.ParseExact(Path.GetFileName(directory), "N"), directory);
                 }
             }
         }
@@ -367,7 +384,7 @@ public sealed class RunLogStore
     private string GetRunDirectory(RunLogInfo info) => Path.Combine(RootPath,
         info.ProjectId.ToString("N"), info.CommandId.ToString("N"), info.RunId.ToString("N"));
 
-    private long CalculateStoredBytes() => EnumerateRuns().Sum(item => GetDirectoryBytes(item.Directory));
+    private long CalculateStoredBytes() => EnumerateRunDirectories().Sum(item => GetDirectoryBytes(item.Directory));
 
     private static long GetDirectoryBytes(string directory) => System.IO.Directory.EnumerateFiles(directory).Sum(path => new FileInfo(path).Length);
 

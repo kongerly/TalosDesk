@@ -475,7 +475,7 @@
                                     <Button x:Name="ResetLogFolderButton" Content="恢复默认位置" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ResetLogFolder_Click" />
                                 </WrapPanel>
                                 <TextBlock x:Name="LogPathText" FontSize="10" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="选择新位置会创建本工作区专属目录、迁移历史并清理旧目录。日志以明文保存，可能包含令牌；可在此清理已结束批次，或关闭应用后手工删除实际目录。历史输出在此显示最近 10,000 行。" FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                                <TextBlock Text="选择新位置会创建本工作区专属目录、迁移历史并清理旧目录。日志以明文保存，可能包含令牌；可在此清理未运行批次（包括元数据损坏或缺失的批次），或关闭应用后手工删除实际目录。历史输出在此显示最近 10,000 行。" FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             </StackPanel>
                             </Expander>
