@@ -456,11 +456,12 @@ public sealed class WorkspaceStoreTests
         {
             Assert.AreNotEqual(valid, json, description);
             await File.WriteAllTextAsync(path, json);
+            var digest = await Sha256Async(path);
             var loadError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => new WorkspaceStore(path).LoadAsync());
             StringAssert.Contains(loadError.Message, "unsupported field name");
             var importError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.ReadFileAsync(path));
             StringAssert.Contains(importError.Message, "unsupported field name");
-            Assert.AreEqual(json, await File.ReadAllTextAsync(path), description);
+            Assert.AreEqual(digest, await Sha256Async(path), description);
         }
     }
 
@@ -490,11 +491,12 @@ public sealed class WorkspaceStoreTests
         {
             Assert.AreNotEqual(valid, json, description);
             await File.WriteAllTextAsync(path, json);
+            var digest = await Sha256Async(path);
             var loadError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => new WorkspaceStore(path).LoadAsync());
             StringAssert.Contains(loadError.Message, "duplicate field");
             var importError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.ReadFileAsync(path));
             StringAssert.Contains(importError.Message, "duplicate field");
-            Assert.AreEqual(json, await File.ReadAllTextAsync(path), description);
+            Assert.AreEqual(digest, await Sha256Async(path), description);
         }
     }
 
@@ -511,6 +513,7 @@ public sealed class WorkspaceStoreTests
     {
         using var sandbox = new TemporaryDirectory();
         var path = Path.Combine(sandbox.Path, "malformed.json");
+        // Json 解析错误必须保留 JsonException 作为内部异常：上层据此区分损坏 JSON 与语义拒绝。
         var cases = new (string Json, bool ExpectsJsonMessage)[]
         {
             ("{", true),
@@ -527,10 +530,81 @@ public sealed class WorkspaceStoreTests
             await File.WriteAllTextAsync(path, json);
             var loadError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => new WorkspaceStore(path).LoadAsync());
             var importError = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.ReadFileAsync(path));
-            if (expectsJsonMessage) StringAssert.Contains(loadError.Message, "JSON");
+            if (expectsJsonMessage)
+            {
+                StringAssert.Contains(loadError.Message, "JSON");
+                Assert.IsInstanceOfType<JsonException>(loadError.InnerException);
+            }
+
             StringAssert.Contains(importError.Message, loadError.Message);
             Assert.AreEqual(json, await File.ReadAllTextAsync(path));
         }
+    }
+
+    [TestMethod]
+    [DataRow("")]
+    [DataRow("   ")]
+    [DataRow("\r\n\t")]
+    public async Task RejectsEmptyAndWhitespaceWorkspaceFilesWithoutRewriting(string content)
+    {
+        using var sandbox = new TemporaryDirectory();
+        var path = Path.Combine(sandbox.Path, "empty.json");
+        // 空文件同样不得被读取路径改写，也不得留下临时文件。
+        await AssertRejectedAndFileUnchanged(path, content, "空白文件必须被拒绝且原文件不变");
+    }
+
+    /// <summary>
+    /// 读取与导入共用一条契约：任何拒绝都不改写原文件。逐个拒绝用例都经由同一 helper 断言 SHA-256 未变，
+    /// 避免"用户以为改了、其实没生效"或读取失败被悄悄改写成另一份配置。
+    /// </summary>
+    [TestMethod]
+    public async Task EveryRejectionKeepsTheOriginalFileByteForByte()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var valid = await File.ReadAllTextAsync(await WriteValidWorkspace(sandbox.Path));
+        var path = Path.Combine(sandbox.Path, "rejected.json");
+        var cases = new (string Description, string Json)[]
+        {
+            ("unknown-root", Replace(valid, "\"SchemaVersion\": 4", "\"SchemaVersion\": 4, \"Foo\": 1")),
+            ("unknown-project", Replace(valid, "\"Groups\": [", "\"Nickname\": \"x\", \"Groups\": [")),
+            ("unknown-command", Replace(valid, "\"Kind\": 1", "\"Commnad\": \"x\", \"Kind\": 1")),
+            ("unknown-group", Replace(valid, "\"CommandIds\": [", "\"Note\": \"x\", \"CommandIds\": [")),
+            ("unknown-probe", Replace(valid, "\"TcpProbe\": {", "\"TcpProbe\": { \"TcpProbee\": 1,")),
+            ("duplicate-root-projects", Replace(valid, "\"Projects\": [", "\"Projects\": [],\n  \"Projects\": [")),
+            ("duplicate-command-kind", Replace(valid, "\"Kind\": 1", "\"Kind\": 0, \"Kind\": 1")),
+            ("duplicate-probe", Replace(valid, "\"Port\": 12345", "\"Port\": 12345, \"Port\": 12345")),
+            ("duplicate-variable", Replace(valid, "{ \"Name\": \"A\", \"IsSensitive\": false, \"Value\": \"\" }",
+                "{ \"Name\": \"A\", \"IsSensitive\": false, \"Value\": \"\", \"Value\": \"\" }")),
+            ("truncated", valid[..40]),
+            ("empty", string.Empty),
+            ("null-literal", "null")
+        };
+
+        foreach (var (description, json) in cases)
+        {
+            await AssertRejectedAndFileUnchanged(path, json, description);
+        }
+    }
+
+    /// <summary>
+    /// 读取与导入的拒绝场景共用同一断言：SHA-256 未变即原文件未被改写。
+    /// </summary>
+    private static async Task AssertRejectedAndFileUnchanged(string path, string json, string description = "")
+    {
+        await File.WriteAllTextAsync(path, json);
+        var digest = await Sha256Async(path);
+
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => new WorkspaceStore(path).LoadAsync());
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.ReadFileAsync(path));
+
+        Assert.AreEqual(digest, await Sha256Async(path), description);
+        Assert.HasCount(0, Directory.GetFiles(System.IO.Path.GetDirectoryName(path)!, "*.tmp"), description);
+    }
+
+    private static async Task<string> Sha256Async(string path)
+    {
+        using var stream = System.IO.File.OpenRead(path);
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream));
     }
 
     private static async Task<string> WriteValidWorkspace(string directory)
