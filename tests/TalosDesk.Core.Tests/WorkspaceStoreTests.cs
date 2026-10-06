@@ -706,6 +706,79 @@ public sealed class WorkspaceStoreTests
         Assert.HasCount(0, Directory.GetFiles(sandbox.Path, "*.tmp"));
     }
 
+    [TestMethod]
+    public async Task FailedSaveLeavesTheCallersObjectUnnormalized()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var path = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new WorkspaceStore(path);
+        await store.SaveAsync(new());
+        var bytesBeforeFailedSave = await File.ReadAllBytesAsync(path);
+
+        // 桌面传入的是 UI 绑定的那批实例；写盘失败不能把它们升级成内存与磁盘分叉的 schema 4。
+        var command = new CommandDefinition { Name = "Check", Command = "Write-Output 'ok'", WorkingDirectory = sandbox.Path };
+        var callerOwned = new WorkspaceConfiguration
+        {
+            SchemaVersion = 2,
+            Projects =
+            [
+                new ProjectDefinition
+                {
+                    Name = "旧版项目",
+                    Directory = sandbox.Path,
+                    Commands = [command],
+                    Groups = [new CommandGroupDefinition { Name = "旧分组", CommandIds = [command.Id] }]
+                }
+            ]
+        };
+        using (var lockedFile = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Exception? saveError = null;
+            try { await store.SaveAsync(callerOwned); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { saveError = exception; }
+            Assert.IsNotNull(saveError, "Replacing a locked workspace must fail.");
+        }
+
+        Assert.AreEqual(2, callerOwned.SchemaVersion, "保存失败不能改写调用方对象的 SchemaVersion。");
+        Assert.HasCount(1, callerOwned.Projects[0].Groups, "保存失败不能清空调用方对象的 Groups。");
+        Assert.AreEqual("旧分组", callerOwned.Projects[0].Groups[0].Name);
+        Assert.AreSame(command, callerOwned.Projects[0].Commands[0], "保存入口不得替换调用方持有的实例。");
+        CollectionAssert.AreEqual(bytesBeforeFailedSave, await File.ReadAllBytesAsync(path), "写盘失败必须保留磁盘原内容。");
+        Assert.HasCount(0, Directory.GetFiles(sandbox.Path, "*.tmp"));
+    }
+
+    [TestMethod]
+    public async Task SuccessfulSaveUpgradesTheFileWithoutTouchingTheCallersObject()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var path = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new WorkspaceStore(path);
+        var command = new CommandDefinition { Name = "Check", Command = "Write-Output 'ok'", WorkingDirectory = sandbox.Path };
+        var callerOwned = new WorkspaceConfiguration
+        {
+            SchemaVersion = 1,
+            Projects =
+            [
+                new ProjectDefinition
+                {
+                    Name = "旧版项目",
+                    Directory = sandbox.Path,
+                    Commands = [command],
+                    Groups = [new CommandGroupDefinition { Name = "旧分组", CommandIds = [command.Id] }]
+                }
+            ]
+        };
+
+        await store.SaveAsync(callerOwned);
+
+        var saved = await store.LoadAsync();
+        Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, saved.SchemaVersion, "写入磁盘的内容仍需升级到 schema 4。");
+        Assert.HasCount(0, saved.Projects[0].Groups, "旧工作区保存时按既有规则清空 Groups。");
+        Assert.AreEqual(1, callerOwned.SchemaVersion, "成功保存同样不得改写调用方对象。");
+        Assert.HasCount(1, callerOwned.Projects[0].Groups);
+        Assert.AreEqual(command.Id, saved.Projects[0].Commands[0].Id, "深复制必须保留命令 ID。");
+    }
+
     private static WorkspaceRevision Revision(byte[] bytes) => new(true, Convert.ToHexString(SHA256.HashData(bytes)));
 
     [TestMethod]

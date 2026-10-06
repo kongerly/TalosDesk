@@ -70,8 +70,7 @@ public sealed class WorkspaceStore
     public static WorkspaceConfiguration CreateExportProjection(WorkspaceConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        var clone = JsonSerializer.Deserialize<WorkspaceConfiguration>(JsonSerializer.SerializeToUtf8Bytes(configuration, JsonOptions), JsonOptions)
-            ?? throw new InvalidDataException("The TalosDesk workspace is empty.");
+        var clone = DeepClone(configuration);
         PrepareForWrite(clone);
         return new WorkspaceConfiguration
         {
@@ -114,17 +113,38 @@ public sealed class WorkspaceStore
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        PrepareForWrite(configuration);
+        // PrepareForWrite 会升级 SchemaVersion 并清空旧版 Groups，必须在门内作用于副本：
+        // 写盘失败时调用方（桌面传的是 UI 绑定对象）不能已变成规范化后的版本而与磁盘分叉。
         await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var revision = await WriteAtomicallyAsync(FilePath, configuration, cancellationToken, expectedRevision, _beforeCommit).ConfigureAwait(false);
+            var snapshot = DeepClone(configuration);
+            PrepareForWrite(snapshot);
+            var revision = await WriteAtomicallyAsync(FilePath, snapshot, cancellationToken, expectedRevision, _beforeCommit).ConfigureAwait(false);
             _afterCommit?.Invoke();
             return revision;
         }
         finally
         {
             _saveGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 保存入口只读取调用方对象。桌面传入的是 UI 绑定的那批实例，写入失败时内存已升级而磁盘未升级
+    /// 属于最难复现的分叉，因此这里用 JSON 往返复制一份再规范化。
+    /// </summary>
+    private static WorkspaceConfiguration DeepClone(WorkspaceConfiguration configuration)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<WorkspaceConfiguration>(JsonSerializer.SerializeToUtf8Bytes(configuration, JsonOptions), JsonOptions)
+                ?? throw new InvalidDataException("The TalosDesk workspace is empty.");
+        }
+        catch (JsonException exception)
+        {
+            // 复制只经过内存对象，失败说明调用方对象本身无法表达为合法工作区。
+            throw new InvalidDataException("The TalosDesk workspace cannot be copied for writing.", exception);
         }
     }
 
