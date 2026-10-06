@@ -61,7 +61,23 @@ public sealed class WorkspaceStore
         return DeserializeAndNormalize(bytes);
     }
 
-    public static async Task WriteExportFileAsync(string filePath, WorkspaceConfiguration configuration, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// 导出到当前工作区之外的任意路径。与本实例 <see cref="FilePath"/> 指向同一文件的别名
+    /// （尤其是路径经过目录联接或符号链接时）会在写入前被拒绝，界面无需再自行比较路径字符串。
+    /// </summary>
+    public async Task WriteExportFileAsync(string filePath, WorkspaceConfiguration configuration, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        if (WorkspaceFileIdentity.IsSameFile(FilePath, filePath))
+            throw new InvalidDataException("不能以当前工作区文件作为导出目标。");
+        await WriteExportToPathAsync(filePath, configuration, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 不带工作区上下文的导出，用于只关心投影和原子写入的调用方。调用方若与本机工作区共享身份，
+    /// 不会得到 <see cref="FilePath"/> 层面的保护。
+    /// </summary>
+    public static async Task WriteExportToPathAsync(string filePath, WorkspaceConfiguration configuration, CancellationToken cancellationToken = default)
     {
         var export = CreateExportProjection(configuration);
         await WriteAtomicallyAsync(filePath, export, cancellationToken).ConfigureAwait(false);

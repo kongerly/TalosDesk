@@ -1455,20 +1455,19 @@ public partial class MainWindow : Window
         };
         if (picker.ShowDialog(this) != true) return;
 
-        if (string.Equals(Path.GetFullPath(picker.FileName), _store.FilePath, StringComparison.OrdinalIgnoreCase))
-        {
-            AppMessageDialog.Show(this, "不能将导出文件保存到当前工作区路径。请选择其他位置。", "导出位置无效", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
         var tracksWorkspaceChange = _sequentialGroupCancellations.Count == 0;
         if (tracksWorkspaceChange && !BeginWorkspaceChange()) return;
         try
         {
-            await WorkspaceStore.WriteExportFileAsync(picker.FileName, new WorkspaceConfiguration { Projects = Projects.ToList() });
+            // 目标校验由存储层完成：它能识别目录联接和符号链接等别名，界面不再只比较路径字符串。
+            await _store.WriteExportFileAsync(picker.FileName, new WorkspaceConfiguration { Projects = Projects.ToList() });
             SaveStatusText.Text = "工作区已导出";
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (InvalidDataException exception)
+        {
+            AppMessageDialog.Show(this, $"TalosDesk 无法导出此工作区。\n\n{exception.Message}", "导出位置无效", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             AppMessageDialog.Show(this, $"TalosDesk 无法导出此工作区。\n\n{exception.Message}", "导出失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }

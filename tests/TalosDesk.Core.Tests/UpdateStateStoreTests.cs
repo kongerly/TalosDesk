@@ -127,7 +127,7 @@ public sealed class UpdateStateStoreTests
         await sidecars.SaveCacheAsync(new UpdateCache { Pages = [new UpdateCachePage(GitHubReleaseClient.InitialRequestUri, null, null, [Release("0.2.0")])] });
         var export = Path.Combine(sandbox.Path, "export.json");
 
-        await WorkspaceStore.WriteExportFileAsync(export, new WorkspaceConfiguration());
+        await WorkspaceStore.WriteExportToPathAsync(export, new WorkspaceConfiguration());
 
         var text = await File.ReadAllTextAsync(export);
         Assert.IsFalse(text.Contains("AutomaticCheckEnabled", StringComparison.Ordinal));

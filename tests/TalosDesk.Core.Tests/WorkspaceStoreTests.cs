@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using TalosDesk.Core.Configuration;
@@ -65,14 +66,14 @@ public sealed class WorkspaceStoreTests
             var project = new ProjectDefinition { Name = "Sample", Directory = directory, Commands = [command] };
             var configuration = new WorkspaceConfiguration { Projects = [project] };
             await store.SaveAsync(configuration);
-            await WorkspaceStore.WriteExportFileAsync(exportPath, configuration);
+            await store.WriteExportFileAsync(exportPath, configuration);
             var workspaceBytes = await File.ReadAllBytesAsync(store.FilePath);
             var exportBytes = await File.ReadAllBytesAsync(exportPath);
             if (emptyProjectId) project.Id = Guid.Empty;
             else command.Id = Guid.Empty;
 
             await Assert.ThrowsExactlyAsync<InvalidDataException>(() => store.SaveAsync(configuration));
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(exportPath, configuration));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => store.WriteExportFileAsync(exportPath, configuration));
 
             CollectionAssert.AreEqual(workspaceBytes, await File.ReadAllBytesAsync(store.FilePath));
             CollectionAssert.AreEqual(exportBytes, await File.ReadAllBytesAsync(exportPath));
@@ -213,13 +214,13 @@ public sealed class WorkspaceStoreTests
             var path = Path.Combine(directory, "invalid-group.json");
 
             project.Groups = [new CommandGroupDefinition { Name = "Broken", CommandIds = [Guid.NewGuid()] }];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportToPathAsync(path, new WorkspaceConfiguration { Projects = [project] }));
 
             project.Groups = [new CommandGroupDefinition { Name = "Repeated", CommandIds = [service.Id, service.Id] }];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportToPathAsync(path, new WorkspaceConfiguration { Projects = [project] }));
 
             project.Groups = [new CommandGroupDefinition { Name = "Sequence", ExecutionMode = CommandGroupExecutionMode.Sequential, CommandIds = [service.Id] }];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportToPathAsync(path, new WorkspaceConfiguration { Projects = [project] }));
 
             var duplicateGroupId = Guid.NewGuid();
             project.Groups =
@@ -227,14 +228,14 @@ public sealed class WorkspaceStoreTests
                 new CommandGroupDefinition { Id = duplicateGroupId, Name = "First", CommandIds = [service.Id] },
                 new CommandGroupDefinition { Id = duplicateGroupId, Name = "Second", CommandIds = [] }
             ];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportToPathAsync(path, new WorkspaceConfiguration { Projects = [project] }));
 
             project.Groups =
             [
                 new CommandGroupDefinition { Name = "Duplicate", CommandIds = [service.Id] },
                 new CommandGroupDefinition { Name = "duplicate", CommandIds = [] }
             ];
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(path, new WorkspaceConfiguration { Projects = [project] }));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportToPathAsync(path, new WorkspaceConfiguration { Projects = [project] }));
         }
         finally
         {
@@ -338,7 +339,7 @@ public sealed class WorkspaceStoreTests
                 }]
             };
 
-            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportFileAsync(Path.Combine(directory, "duplicate.json"), duplicate));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => WorkspaceStore.WriteExportToPathAsync(Path.Combine(directory, "duplicate.json"), duplicate));
         }
         finally
         {
@@ -650,6 +651,91 @@ public sealed class WorkspaceStoreTests
         public string Path { get; }
 
         public void Dispose() => Directory.Delete(Path, recursive: true);
+    }
+
+    /// <summary>
+    /// 导出目标保护必须落在存储层，并且能识别同一文件的别名。
+    /// 界面原来的 Path.GetFullPath 字符串比较挡不住链接：路径文本不同，但写入的是同一个工作区文件。
+    /// </summary>
+    [TestMethod]
+    public async Task ExportRejectsLinkAliasesOfTheWorkspaceThatPlainPathComparisonAccepts()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var workspaceDirectory = Path.Combine(sandbox.Path, "store");
+        var aliasDirectory = Path.Combine(sandbox.Path, "alias");
+        Directory.CreateDirectory(workspaceDirectory);
+        var workspacePath = Path.Combine(workspaceDirectory, "workspace.json");
+        var store = new WorkspaceStore(workspacePath);
+        await store.SaveAsync(new WorkspaceConfiguration());
+
+        // 前置条件：目录链接给出不同的路径文本，旧的字符串比较看不到它与工作区是同一个文件。
+        var viaAlias = Path.Combine(aliasDirectory, "workspace.json");
+        Assert.AreNotEqual(Path.GetFullPath(viaAlias), store.FilePath, "前置条件：旧检查无法发现目录链接。");
+        Assert.IsTrue(CreateDirectoryLink(aliasDirectory, workspaceDirectory), "前置条件：当前环境可以创建目录链接。");
+        try
+        {
+            await AssertExportRejectedAndWorkspaceUnchanged(store, viaAlias);
+        }
+        finally
+        {
+            // 递归删除会跟随链接进入被指向的目录，必须先摘掉链接本身。
+            Directory.Delete(aliasDirectory);
+        }
+
+        // 普通新文件仍然允许导出。
+        var legal = Path.Combine(sandbox.Path, "export.talosdesk.json");
+        await store.WriteExportFileAsync(legal, new WorkspaceConfiguration());
+        Assert.IsTrue(File.Exists(legal));
+    }
+
+    /// <summary>
+    /// 直接以工作区路径导出必须继续被拒绝，工作区文件逐字节不变；`.`/`..` 与大小写等拼写变体同样被拒。
+    /// </summary>
+    [TestMethod]
+    public async Task ExportRejectsTheWorkspaceItselfAndKeepsItByteForByte()
+    {
+        using var sandbox = new TemporaryDirectory();
+        var workspacePath = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new WorkspaceStore(workspacePath);
+        await store.SaveAsync(new WorkspaceConfiguration());
+
+        await AssertExportRejectedAndWorkspaceUnchanged(store, workspacePath);
+
+        // 路径拼写变体：分段、相对写法与大小写在比较前一律展开为同一路径。
+        await AssertExportRejectedAndWorkspaceUnchanged(store, Path.Combine(sandbox.Path, ".", "workspace.json"));
+        await AssertExportRejectedAndWorkspaceUnchanged(store, Path.Combine(sandbox.Path, "store", "..", "workspace.json"));
+        await AssertExportRejectedAndWorkspaceUnchanged(store, workspacePath.ToUpperInvariant());
+    }
+
+    private static async Task AssertExportRejectedAndWorkspaceUnchanged(WorkspaceStore store, string target)
+    {
+        var before = await Sha256Async(store.FilePath);
+        var error = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => store.WriteExportFileAsync(target, new WorkspaceConfiguration()));
+        StringAssert.Contains(error.Message, "导出目标");
+        Assert.AreEqual(before, await Sha256Async(store.FilePath), $"导出到 '{target}' 不得改动工作区文件。");
+        Assert.HasCount(0, Directory.GetFiles(Path.GetDirectoryName(store.FilePath)!, "*.tmp"));
+    }
+
+    /// <summary>
+    /// 优先创建目录符号链接；未启用 SeCreateSymbolicLinkPrivilege 时退回目录联接。
+    /// 两者都是 NTFS 重解析点，`Directory.ResolveLinkTarget` 对其一视同仁，正是本用例要覆盖的情形。
+    /// </summary>
+    private static bool CreateDirectoryLink(string link, string target)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            // 继续尝试目录联接。
+        }
+
+        var result = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true });
+        if (result is null) return false;
+        result.WaitForExit();
+        return result.ExitCode == 0;
     }
 
     [TestMethod]

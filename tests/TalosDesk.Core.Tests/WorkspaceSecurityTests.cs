@@ -57,7 +57,7 @@ public sealed class WorkspaceSecurityTests
         Assert.AreEqual(protectedValue, loadedVariables[1].ProtectedValue);
         Assert.AreEqual(loaded.Projects[0].Groups[0].CommandIds[0], projection.Projects[0].Groups[0].CommandIds[0]);
 
-        await WorkspaceStore.WriteExportFileAsync(exportPath, loaded);
+        await store.WriteExportFileAsync(exportPath, loaded);
         var exportText = await File.ReadAllTextAsync(exportPath);
         Assert.IsFalse(exportText.Contains(secret, StringComparison.Ordinal));
         Assert.IsFalse(exportText.Contains(protectedValue, StringComparison.Ordinal));
@@ -156,7 +156,7 @@ public sealed class WorkspaceSecurityTests
         using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             Exception? failure = null;
-            try { await WorkspaceStore.WriteExportFileAsync(path, CreateWorkspace(sandbox.Path, [])); }
+            try { await WorkspaceStore.WriteExportToPathAsync(path, CreateWorkspace(sandbox.Path, [])); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { failure = exception; }
             Assert.IsNotNull(failure, "Replacing a locked export must fail.");
         }
