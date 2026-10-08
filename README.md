@@ -2,9 +2,9 @@
 
 TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令，一键运行，并集中查看状态和输出。
 
-当前源码为 `v0.3.0-preview.1` 本地候选版，已公开稳定版仍为 `v0.2.0`。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包，并包含可关闭的更新检查和按工作区隔离的本地崩溃诊断。候选版实际验收范围见 [v0.3.0 验收清单](docs/acceptance-v0.3.0.md)。
+当前版本为 `v0.3.0` 稳定版。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包，新增服务 TCP 探测与项目汇总，并包含可关闭的更新检查和按工作区隔离的本地崩溃诊断。实际验证与未执行项见 [v0.3.0 验收清单](docs/acceptance-v0.3.0.md)。
 
-当前仓库源码已补充最小化到系统托盘；已发布的 `v0.2.0` 便携包尚不包含此改动。
+`v0.3.0` 同时包含最小化到系统托盘、窗口恢复、窄窗口适配及工作区保存保护改进。
 
 ## 主要功能
 
@@ -39,11 +39,11 @@ TalosDesk 只停止由当前应用实例启动并确认归属的进程，不会�
 
 ## 系统要求
 
-- Windows 11 x64。其他 Windows 版本可能可以运行，但 v0.2.0 不作兼容承诺。
+- Windows 11 x64。其他 Windows 版本可能可以运行，但 v0.3.0 不作兼容承诺。
 - [PowerShell 7](https://learn.microsoft.com/powershell/) 已安装，并且 `pwsh.exe` 位于应用启动时继承的 `PATH` 中。
 - 被运行项目需要的 Go、Python、uv 等工具需自行安装。
 
-便携包已经包含 .NET 10 和 Windows Desktop 运行时，不要求安装 .NET SDK。解压全部文件后运行 `TalosDesk.App.exe`。v0.2.0 未进行代码签名，Windows 可能显示信誉或安全提示。
+便携包已经包含 .NET 10 和 Windows Desktop 运行时，不要求安装 .NET SDK。解压全部文件后运行 `TalosDesk.App.exe`。v0.3.0 未进行代码签名，Windows 可能显示信誉或安全提示。
 
 ## 配置与隐私
 
@@ -119,7 +119,7 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration
 pwsh -NoProfile -File .\scripts\Publish.ps1
 ```
 
-脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.3.0-preview.1-win-x64.zip` 及对应 SHA-256 文件。
+脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.3.0-win-x64.zip` 及对应 SHA-256 文件。
 
 构建按警告即错误处理：`.editorconfig` 登记编码、换行、缩进、命名和分析器严重级别，`Directory.Build.props` 声明 `TreatWarningsAsErrors`。新增警告会使构建失败；需要例外时在 `.editorconfig` 中写明理由，不做静默忽略。
 
@@ -138,7 +138,7 @@ pwsh -NoProfile -File .\scripts\Publish.ps1
 - [开发与发布路线图](docs/roadmap.md)：当前版本状态、下一步任务，以及后续多 Shell 的范围和验收条件。
 - [v0.1.1 发布说明](docs/release-v0.1.1.md)
 - [v0.2.0 发布说明](docs/release-v0.2.0.md)
-- [v0.3.0 候选版说明](docs/release-v0.3.0.md)
+- [v0.3.0 发布说明](docs/release-v0.3.0.md)
 - [贡献指南](CONTRIBUTING.md)与[隔离测试说明](docs/testing.md)
 - [常见问题](docs/faq.md)与[示例工作区](examples)
 - [变更记录](docs/changelog/README.md)：已归档的逐批实施记录与各次检查结果数字。
