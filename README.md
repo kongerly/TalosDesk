@@ -2,9 +2,11 @@
 
 TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令，一键运行，并集中查看状态和输出。
 
+[下载稳定版](https://github.com/kongerly/TalosDesk/releases/download/v0.3.0/TalosDesk-v0.3.0-win-x64.zip) · [一键演示](#一键演示可选) · [2 分钟演示](#2-分钟演示) · [示例工作区](examples/README.md) · [从源码构建](#从源码构建)
+
 当前版本为 `v0.3.0` 稳定版。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包，新增服务 TCP 探测与项目汇总，并包含可关闭的更新检查和按工作区隔离的本地崩溃诊断。实际验证与未执行项见 [v0.3.0 验收清单](docs/acceptance-v0.3.0.md)。
 
-当前开发源码已接入尚未发布的服务有限自动重启和 schema 5，应用版本号暂保留 `v0.3.0`；它不属于已发布稳定包的功能，也未生成新候选包。验证范围见[实施记录](docs/auto-restart-v0.3.x.md)。
+当前源码与本地候选版本为 `v0.3.1-rc.1 / Preview`，包含服务有限自动重启和 schema 5，尚未正式发布；已发布稳定包仍为 `v0.3.0`。本轮证据与未执行项见[候选验收记录](docs/acceptance-v0.3.1-rc.1.md)，实现范围见[实施记录](docs/auto-restart-v0.3.x.md)。
 
 `v0.3.0` 同时包含最小化到系统托盘、窗口恢复、窄窗口适配及工作区保存保护改进。
 
@@ -15,7 +17,7 @@ TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令�
 - 运行、停止、重启、复制、删除和排序命令；可双击命令卡片编辑，并直接拖动调整顺序。
 - 勾选多条命令批量启动，并在不同项目之间切换而不中止任务。
 - 服务命令可选开启本机 TCP 探测：等待监听、探测通过、启动等待超时和运行中不可达分别显示；项目概览统计运行中命令及其中探测通过的数量。
-- 开发源码：服务可选择非零退出后自动重启，默认关闭；仅独立运行（含勾选批量）生效，每轮最多追加 3 次，分别等待 2、4、8 秒。运行时长和 TCP 通过不重置次数；停止、确认退出及配置失效会取消等待。分组运行不启用恢复。
+- v0.3.1 候选：服务可选择非零退出后自动重启，默认关闭；仅独立运行（含勾选批量）生效，每轮最多追加 3 次，分别等待 2、4、8 秒。运行时长和 TCP 通过不重置次数；停止、确认退出及配置失效会取消等待。分组运行不启用恢复。
 - 在项目内创建可复用的命令分组，并选择同时执行或按顺序执行。
 - 分别以纯文本显示标准输出、诊断输出（stderr）、开始时间、状态和退出结果；PowerShell ANSI 样式在捕获前关闭。输出区可像终端一样拖选任意字符或跨行范围，使用 `Ctrl+C` 或右键复制，使用 `Ctrl+A` 选择全部。
 - 按项目、命令和运行批次保存 stdout/stderr，可在输出页查看历史批次、调整保留上限并清理已结束批次。
@@ -26,27 +28,87 @@ TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令�
 - 最小化后收起到 Windows 右下角系统托盘，命令与日志继续运行；左键单击图标恢复，右键菜单可显示主窗口或退出。右上角“×”仍为退出，有运行中任务时先确认。
 - 正常关闭时自动记住主窗口大小、位置、所在屏幕和最大化状态，下次打开自动恢复，无需手动保存；主界面及编辑弹窗随可用空间调整，内容较多时可滚动访问。
 
-典型流程：
+## 安装
+
+### 系统要求
+
+- Windows 11 x64。其他 Windows 版本可能可以运行，但 v0.3.0 不作兼容承诺。
+- [PowerShell 7](https://learn.microsoft.com/powershell/) 已安装，并且 `pwsh.exe` 位于应用启动时继承的 `PATH` 中。
+- 被运行项目需要的 Go、Python、uv 等工具需自行安装。
+
+### 下载与启动
+
+稳定版以自包含便携包发布，包内已经包含 .NET 10 和 Windows Desktop 运行时，不要求安装 .NET SDK。
+
+1. 从 [v0.3.0 发布页](https://github.com/kongerly/TalosDesk/releases/tag/v0.3.0) 下载 `TalosDesk-v0.3.0-win-x64.zip` 和同名 `.sha256` 文件；也可直接下载 [ZIP](https://github.com/kongerly/TalosDesk/releases/download/v0.3.0/TalosDesk-v0.3.0-win-x64.zip) 与 [校验文件](https://github.com/kongerly/TalosDesk/releases/download/v0.3.0/TalosDesk-v0.3.0-win-x64.sha256)。
+2. 在 PowerShell 7 中核对 SHA-256：
+
+   ```powershell
+   (Get-FileHash .\TalosDesk-v0.3.0-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+   Get-Content .\TalosDesk-v0.3.0-win-x64.sha256
+   ```
+
+   第一行输出应与校验文件开头的哈希一致。
+3. 解压全部文件并启动：
+
+   ```powershell
+   Expand-Archive .\TalosDesk-v0.3.0-win-x64.zip -DestinationPath .\TalosDesk
+   .\TalosDesk\TalosDesk.App.exe
+   ```
+
+4. 首次启动会在 `%LOCALAPPDATA%\TalosDesk\workspace.json` 建立本机工作区。需要隔离演示时，可显式指定工作区：
+
+   ```powershell
+   .\TalosDesk\TalosDesk.App.exe --workspace "$env:TEMP\TalosDesk-Demo\workspace.json" --profile-label "演示"
+   ```
+
+5. v0.3.0 未进行代码签名，Windows 可能显示信誉或安全提示。请只从官方 Releases 下载并核对校验值。
+
+## 使用
+
+### 2 分钟演示
+
+下面的演示使用仓库中的合成命令，不依赖具体项目，也不会安装依赖。导入总是先显示预览，确认后只保存配置，不会自动运行命令。
+
+1. 启动 TalosDesk，点击“导入”。
+2. 选择 [基础任务示例 JSON](https://raw.githubusercontent.com/kongerly/TalosDesk/v0.3.0/examples/basic-tasks.json)。在预览中确认项目、命令和替换范围后保存。
+3. 在左侧选择“基础任务示例”，点击“编辑项目”，把项目目录改成任意已存在的本地目录；工作目录会随项目目录自动迁移。
+4. 在“命令管理”中选择“成功任务”并点击“运行”，在“运行输出”中应看到 `sample-success`。
+5. 在“命令管理”中选择“失败任务”并点击“运行”，应看到诊断输出 `sample-failure` 和退出码 `2`。这用于确认失败状态不会被误报为成功。
+6. 如需演示长运行服务，导入 [服务停止示例 JSON](https://raw.githubusercontent.com/kongerly/TalosDesk/v0.3.0/examples/service-stop.json)，更新目录后运行“合成长运行服务”，确认输出持续出现，再点击“停止”。
+
+更多示例与逐步说明见 [示例工作区](examples/README.md)。
+
+### 一键演示（可选）
+
+在源码仓库根目录执行以下命令，可以直接打开一个使用合成命令的隔离演示工作区：
+
+```powershell
+pwsh -NoProfile -File .\examples\demo\Start-Demo.ps1 -ApplicationPath .\TalosDesk\TalosDesk.App.exe
+```
+
+如果使用源码构建，把 `-ApplicationPath` 改为 `.\src\TalosDesk.App\bin\Release\net10.0-windows\TalosDesk.App.exe`。
+
+脚本会创建 `%TEMP%\TalosDesk-Demo-<随机 ID>`，填入成功任务、失败任务、长运行服务和顺序分组，然后打开应用。它不会导入正式工作区，也不会自动运行任何命令；请按界面中的“运行”和“停止”完成演示。关闭应用后可删除脚本打印的临时目录。
+
+脚本源文件见 [Start-Demo.ps1](examples/demo/Start-Demo.ps1)。
+
+### 日常流程
 
 ```text
 选择项目 → 选择单条命令或命令分组 → 运行 → 查看输出和结果 → 按需停止或重启
 ```
+
+- “任务”用于会结束的构建、测试和脚本；“服务”用于持续运行的进程，可选 TCP 探测和自动重启。
+- 在“命令管理”中选择命令后点击“运行”；勾选多条命令可批量启动；分组支持同时执行或按成功顺序执行。
+- “运行输出”分别显示 stdout 和 stderr，并保存历史批次。切换项目或页面不会停止正在运行的任务。
+- 关闭窗口或从托盘退出时，TalosDesk 只停止本次应用启动且能确认归属的进程，不会按进程名称结束其他终端中的程序。
 
 工具目录不必包含源码。例如，可以把 `llama-server.exe` 所在目录添加为项目，再添加服务命令：
 
 ```powershell
 .\llama-server.exe -m "D:\Models\your-model.gguf"
 ```
-
-TalosDesk 只停止由当前应用实例启动并确认归属的进程，不会按进程名称结束其他终端中运行的程序。
-
-## 系统要求
-
-- Windows 11 x64。其他 Windows 版本可能可以运行，但 v0.3.0 不作兼容承诺。
-- [PowerShell 7](https://learn.microsoft.com/powershell/) 已安装，并且 `pwsh.exe` 位于应用启动时继承的 `PATH` 中。
-- 被运行项目需要的 Go、Python、uv 等工具需自行安装。
-
-便携包已经包含 .NET 10 和 Windows Desktop 运行时，不要求安装 .NET SDK。解压全部文件后运行 `TalosDesk.App.exe`。v0.3.0 未进行代码签名，Windows 可能显示信誉或安全提示。
 
 ## 配置与隐私
 
@@ -122,7 +184,7 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration
 pwsh -NoProfile -File .\scripts\Publish.ps1
 ```
 
-脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.3.0-win-x64.zip` 及对应 SHA-256 文件。
+脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.3.1-rc.1-win-x64.zip` 及对应 SHA-256 文件。当前固定 SDK 为 `10.0.402`，自包含运行时为 `10.0.13`；本地打包不等于正式发布。
 
 构建按警告即错误处理：`.editorconfig` 登记编码、换行、缩进、命名和分析器严重级别，`Directory.Build.props` 声明 `TreatWarningsAsErrors`。新增警告会使构建失败；需要例外时在 `.editorconfig` 中写明理由，不做静默忽略。
 
@@ -137,14 +199,15 @@ pwsh -NoProfile -File .\scripts\Publish.ps1
 ## 文档与许可
 
 - [设计说明](docs/design.md)
-- [v0.3.x 有限自动重启策略与实施记录](docs/auto-restart-v0.3.x.md)：schema 5、导入预览与桌面状态、占用和退出已接入；包含实际检查及未执行的候选包验收。
+- [v0.3.x 有限自动重启策略与实施记录](docs/auto-restart-v0.3.x.md)：schema 5、导入预览与桌面状态、占用和退出。
+- [v0.3.1-rc.1 候选验收记录](docs/acceptance-v0.3.1-rc.1.md)：本机候选、最终包证据与未执行项。
 - [隐私说明](docs/privacy.md)：本机数据位置、明文与加密边界、保留和联网行为。
 - [开发与发布路线图](docs/roadmap.md)：当前版本状态、下一步任务，以及后续多 Shell 的范围和验收条件。
 - [v0.1.1 发布说明](docs/release-v0.1.1.md)
 - [v0.2.0 发布说明](docs/release-v0.2.0.md)
 - [v0.3.0 发布说明](docs/release-v0.3.0.md)
 - [贡献指南](CONTRIBUTING.md)与[隔离测试说明](docs/testing.md)
-- [常见问题](docs/faq.md)与[示例工作区](examples)
+- [常见问题](docs/faq.md)与[示例工作区及一键演示](examples/README.md)
 - [变更记录](docs/changelog/README.md)：已归档的逐批实施记录与各次检查结果数字。
 - [v0.1.0 发布说明](docs/release-v0.1.0.md)
 

@@ -14,5 +14,5 @@ AvalonEdit 以 MIT License 发布，版权与完整许可文本以其软件包�
 `LICENSE` 文件为准。
 
 敏感环境变量的本机保护使用 Microsoft 的
-[System.Security.Cryptography.ProtectedData 10.0.12](https://www.nuget.org/packages/System.Security.Cryptography.ProtectedData/10.0.12)。
+[System.Security.Cryptography.ProtectedData 10.0.13](https://www.nuget.org/packages/System.Security.Cryptography.ProtectedData/10.0.13)。
 该软件包以 MIT License 发布；版权与完整许可文本以软件包及上游仓库为准。

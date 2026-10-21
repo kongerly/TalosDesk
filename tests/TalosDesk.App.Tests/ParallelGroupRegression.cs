@@ -79,9 +79,13 @@ internal static class ParallelGroupRegression
             if (retry != RetryMode.None)
             {
                 Stage = $"混合分组 / {retry} / 建立新会话";
-                var stop = originalPeer.StopAsync();
+                var recovery = (CommandRecoveryCoordinator)typeof(MainWindow)
+                    .GetField("_recovery", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+                var stop = recovery.StopAsync(peer.Id, originalPeer);
                 Wait(() => stop.IsCompleted && originalPeer.Completion.IsCompleted);
                 stop.GetAwaiter().GetResult();
+                // 进程完成后仍须等待日志与协调器收尾，才能按新一轮请求再次启动。
+                Wait(() => !recovery.IsBusy(peer.Id));
                 if (retry == RetryMode.ManualRestart)
                     Start(window, project, peer);
                 else

@@ -26,7 +26,7 @@ pwsh -NoProfile -File scripts/With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosD
 pwsh -NoProfile -File scripts/With-Sdk.ps1 test TalosDesk.slnx --no-restore --logger "trx;LogFilePrefix=recovery-batch" --results-directory artifacts/tests/recovery-batch
 ```
 
-截图包含等待、800×520 窄窗口等待及耗尽后的历史输出，需检查状态换行与停止/重启入口；这是 WPF 自动化操作链与渲染检查，不能替代最终包、真实鼠标、多屏/DPI 或干净客户端。新 schema 与桌面接入的实际结果及未执行项见[策略实施记录](auto-restart-v0.3.x.md#第二批配置与桌面实施及实际检查)。本批不生成候选包，不执行 Release 或 `scripts/Publish.ps1`；此前用户跳过的 v0.3.0 补充实机验收继续保留未执行。
+截图包含等待、800×520 窄窗口等待及耗尽后的历史输出，需检查状态换行与停止/重启入口；这是 WPF 自动化操作链与渲染检查，不能替代最终包、真实鼠标、多屏/DPI 或干净客户端。新 schema 与桌面接入的实际结果及未执行项见[策略实施记录](auto-restart-v0.3.x.md#第二批配置与桌面实施及实际检查)。后续 v0.3.1-rc.1 的 Release、发布脚本和最终包检查单独见[候选验收记录](acceptance-v0.3.1-rc.1.md)；用户跳过的 v0.3.0 补充实机验收继续保留未执行。
 
 ## 工程规范护栏：警告即错误
 

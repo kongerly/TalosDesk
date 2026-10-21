@@ -8,13 +8,13 @@ namespace TalosDesk.App.Tests;
 public sealed class ApplicationBuildInfoTests
 {
     [TestMethod]
-    public void AppAssemblyCarriesValidStableMetadata()
+    public void AppAssemblyCarriesValidCandidateMetadata()
     {
         var info = ApplicationBuildInfo.Read(typeof(App).Assembly);
 
         Assert.IsTrue(info.IsValid);
-        Assert.AreEqual("0.3.0", info.Version);
-        Assert.AreEqual(ReleaseChannel.Stable, info.Channel);
+        Assert.AreEqual("0.3.1-rc.1", info.Version);
+        Assert.AreEqual(ReleaseChannel.Preview, info.Channel);
     }
 
     [TestMethod]
