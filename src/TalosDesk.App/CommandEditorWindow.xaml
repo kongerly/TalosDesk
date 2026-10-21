@@ -65,6 +65,8 @@
                     <StackPanel Width="110" Margin="0,0,10,8"><TextBlock Text="连续失败阈值" /><TextBox x:Name="ProbeFailureThresholdBox" Text="3" /></StackPanel>
                 </WrapPanel>
                 <TextBlock Text="TCP 可连接不代表业务健康，也不能确认监听者属于该命令。超时后仍持续探测；探测失败不会自动停止或重启服务。" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,8" />
+                <CheckBox x:Name="AutoRestartEnabledBox" Content="服务非零退出后有限自动重启" Margin="0,14,0,6" />
+                <TextBlock Text="默认关闭；最多追加 3 次，分别等待 2、4、8 秒。仅独立运行生效，分组运行不生效。保存为任务将移除启用项；停止或退出会取消等待。" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" />
                 <TextBlock Text="环境变量" Style="{StaticResource FieldLabel}" Margin="0,15,0,0" />
                 <ListBox x:Name="EnvironmentList" Height="125" SelectionChanged="EnvironmentList_SelectionChanged"
                          AutomationProperties.AutomationId="CommandEnvironmentList" />

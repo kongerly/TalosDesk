@@ -128,7 +128,7 @@ public sealed class TcpProbeTests
             Assert.AreEqual(json, await File.ReadAllTextAsync(store.FilePath));
             Assert.IsNull(loaded.Projects[0].Commands[0].TcpProbe);
             await store.SaveAsync(loaded);
-            Assert.AreEqual(4, JsonNode.Parse(await File.ReadAllTextAsync(store.FilePath))!["SchemaVersion"]!.GetValue<int>());
+            Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, JsonNode.Parse(await File.ReadAllTextAsync(store.FilePath))!["SchemaVersion"]!.GetValue<int>());
         }
         await store.SaveAsync(workspace);
         var reloaded = await store.LoadAsync();
@@ -153,7 +153,7 @@ public sealed class TcpProbeTests
         var valid = JsonSerializer.Serialize(Workspace(sandbox.Path));
         var cases = new List<string>
         {
-            valid.Replace("\"SchemaVersion\":4", "\"SchemaVersion\":3"),
+            valid.Replace("\"SchemaVersion\":5", "\"SchemaVersion\":3"),
             valid.Replace("\"Kind\":1", "\"Kind\":0"),
             valid.Replace("\"Port\":12345", "\"Port\":0"),
             valid.Replace("\"Port\":12345", "\"Port\":65536"),

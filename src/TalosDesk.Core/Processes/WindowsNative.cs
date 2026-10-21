@@ -132,19 +132,24 @@ internal static class WindowsNative
             stderr = null;
             return result;
         }
-        catch
+        catch (Exception exception)
         {
+            FailedCommandOwnership? unresolved = null;
             if (processCreated)
             {
+                var ownership = new FailedCommandOwnership(job!, process!, processAssigned);
                 try
                 {
-                    if (processAssigned && job is not null) TerminateJob(job, 1);
-                    else if (process is not null) TerminateProcess(process, 1);
+                    ownership.StopAsync().GetAwaiter().GetResult();
                 }
                 catch
                 {
-                    // Keep the original startup error. Closing the kill-on-close job below remains a final cleanup attempt.
+                    // 回滚不能确认退出时保留句柄与故障占用，而不是关闭 Job 后假定清理成功。
+                    unresolved = ownership;
                 }
+                _ = ownership.Completion.Exception;
+                process = null;
+                job = null;
             }
 
             DisposeQuietly(stdout);
@@ -156,6 +161,7 @@ internal static class WindowsNative
             DisposeQuietly(thread);
             DisposeQuietly(process);
             DisposeQuietly(job);
+            if (unresolved is not null) throw new CommandCreationException(unresolved, exception);
             throw;
         }
         finally
@@ -225,6 +231,7 @@ internal static class WindowsNative
     }
 
     public static void TerminateJob(SafeJobHandle job) => TerminateJob(job, 1);
+    internal static void TerminateCreatedProcess(SafeProcessHandle process) => TerminateProcess(process, 1);
 
     public static int GetExitCode(SafeProcessHandle process)
     {

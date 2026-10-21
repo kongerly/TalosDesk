@@ -72,7 +72,7 @@ public sealed class WorkspaceSecurityTests
     }
 
     [TestMethod]
-    public async Task LegacySchemaTwoReadDoesNotRewriteAndSaveMigratesToFour()
+    public async Task LegacySchemaTwoReadDoesNotRewriteAndSaveMigratesToCurrent()
     {
         using var sandbox = new TemporaryDirectory();
         var path = Path.Combine(sandbox.Path, "legacy.json");
@@ -85,12 +85,12 @@ public sealed class WorkspaceSecurityTests
         var store = new WorkspaceStore(path);
 
         var loaded = await store.LoadAsync();
-        Assert.AreEqual(4, loaded.SchemaVersion);
+        Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, loaded.SchemaVersion);
         Assert.HasCount(0, loaded.Projects[0].Commands[0].EnvironmentVariables);
         CollectionAssert.AreEqual(originalBytes, await File.ReadAllBytesAsync(path));
         await store.SaveAsync(loaded);
         var savedNode = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
-        Assert.AreEqual(4, (int)savedNode["SchemaVersion"]!);
+        Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, (int)savedNode["SchemaVersion"]!);
         Assert.IsNotNull(savedNode["Projects"]![0]!["Commands"]![0]!["EnvironmentVariables"]);
         Assert.AreEqual(old.Projects[0].Groups[0].CommandIds[0], loaded.Projects[0].Groups[0].CommandIds[0]);
     }

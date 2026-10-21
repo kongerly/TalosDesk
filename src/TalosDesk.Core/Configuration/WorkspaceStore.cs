@@ -6,7 +6,7 @@ namespace TalosDesk.Core.Configuration;
 
 public sealed class WorkspaceStore
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
     // Disallow 让未知字段（拼错的 "TcpProbee"、旧版本残留键）不再被静默丢弃；只影响读取，序列化不受影响。
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -103,6 +103,7 @@ public sealed class WorkspaceStore
                     Command = command.Command,
                     WorkingDirectory = command.WorkingDirectory,
                     Kind = command.Kind,
+                    AutoRestartEnabled = command.AutoRestartEnabled,
                     TcpProbe = command.TcpProbe?.Clone(),
                     EnvironmentVariables = command.EnvironmentVariables.Select(variable => variable.IsSensitive
                         ? new CommandEnvironmentVariable { Name = variable.Name, IsSensitive = true, ValueState = "Required" }
@@ -167,7 +168,7 @@ public sealed class WorkspaceStore
     private static void PrepareForWrite(WorkspaceConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        if (configuration.SchemaVersion is not (1 or 2 or 3 or CurrentSchemaVersion))
+        if (configuration.SchemaVersion is not (1 or 2 or 3 or 4 or CurrentSchemaVersion))
             throw new InvalidDataException("The TalosDesk workspace uses an unsupported schema version.");
         NormalizeAndValidate(configuration);
     }
@@ -244,6 +245,7 @@ public sealed class WorkspaceStore
             var configuration = Deserialize(bytes);
             if (configuration.SchemaVersion >= 3) ValidateSchemaThreeShape(document.RootElement);
             ValidateProbeShape(document.RootElement, configuration.SchemaVersion);
+            ValidateRecoveryShape(document.RootElement, configuration.SchemaVersion);
             NormalizeAndValidate(configuration);
             return configuration;
         }
@@ -300,7 +302,7 @@ public sealed class WorkspaceStore
                 if (probes.Length > 1) throw new InvalidDataException("TCP 探测字段重复。");
                 if (probes.Length == 0 || probes[0].Value.ValueKind == JsonValueKind.Null) continue;
                 var probe = probes[0].Value;
-                if (schema != CurrentSchemaVersion || probe.ValueKind != JsonValueKind.Object)
+                if (schema is not (4 or 5) || probe.ValueKind != JsonValueKind.Object)
                     throw new InvalidDataException("非空 TCP 探测配置要求 schema 4。");
                 var fields = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var property in probe.EnumerateObject())
@@ -313,6 +315,19 @@ public sealed class WorkspaceStore
                 }
                 if (fields.Count != 6) throw new InvalidDataException("TCP 探测缺少必需字段。");
             }
+        }
+    }
+
+    private static void ValidateRecoveryShape(JsonElement root, int schema)
+    {
+        if (!root.TryGetProperty("Projects", out var projects) || projects.ValueKind != JsonValueKind.Array) return;
+        foreach (var project in projects.EnumerateArray())
+        {
+            if (project.ValueKind != JsonValueKind.Object || !project.TryGetProperty("Commands", out var commands) || commands.ValueKind != JsonValueKind.Array) continue;
+            foreach (var command in commands.EnumerateArray())
+                if (command.ValueKind == JsonValueKind.Object && command.TryGetProperty("AutoRestartEnabled", out var enabled) &&
+                    (schema != 5 || enabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False)))
+                    throw new InvalidDataException("自动重启开关要求 schema 5 的布尔值。");
         }
     }
 
@@ -371,16 +386,20 @@ public sealed class WorkspaceStore
 
     private static void NormalizeAndValidate(WorkspaceConfiguration? configuration)
     {
-        if (configuration is null || configuration.SchemaVersion is not (1 or 2 or 3 or CurrentSchemaVersion) || configuration.Projects is null)
+        if (configuration is null || configuration.SchemaVersion is not (1 or 2 or 3 or 4 or CurrentSchemaVersion) || configuration.Projects is null)
         {
             throw new InvalidDataException("The TalosDesk workspace file is empty or uses an unsupported schema version.");
         }
 
         var legacyWorkspace = configuration.SchemaVersion == 1;
-        if (configuration.SchemaVersion < CurrentSchemaVersion && configuration.Projects
+        if (configuration.SchemaVersion < 4 && configuration.Projects
             .Where(project => project?.Commands is not null).SelectMany(project => project.Commands)
             .Any(command => command?.TcpProbe is not null))
             throw new InvalidDataException("非空 TCP 探测配置要求 schema 4。");
+        if (configuration.SchemaVersion < 5 && configuration.Projects
+            .Where(project => project?.Commands is not null).SelectMany(project => project.Commands)
+            .Any(command => command?.AutoRestartEnabled == true))
+            throw new InvalidDataException("自动重启开关要求 schema 5。");
         configuration.SchemaVersion = CurrentSchemaVersion;
         if (legacyWorkspace)
         {
@@ -439,6 +458,8 @@ public sealed class WorkspaceStore
                 if (!commandIds.Add(command.Id)) throw new InvalidDataException("The TalosDesk workspace contains duplicate command IDs.");
                 if (!Enum.IsDefined(command.Kind)) throw new InvalidDataException($"Command '{command.Name}' has an unsupported run type.");
                 TcpProbeConfiguration.ValidateCommand(command);
+                if (command.AutoRestartEnabled && command.Kind != CommandKind.Service)
+                    throw new InvalidDataException("只有服务命令可以开启自动重启。");
                 if (command.EnvironmentVariables is null || command.EnvironmentVariables.Any(variable => variable is null))
                     throw new InvalidDataException($"Command '{command.Name}' has an invalid environment variable list.");
                 var variableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

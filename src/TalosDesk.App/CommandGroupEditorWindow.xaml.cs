@@ -92,7 +92,7 @@ public partial class CommandGroupEditorWindow : Window
         OrderHintText.Text = sequential ? "前一条成功完成后才运行下一条。" : "此顺序用于发起命令。";
         ModeHintText.Text = sequential
             ? "顺序执行仅支持任务；失败或停止后不会运行后续命令。"
-            : "同时执行会跳过已占用命令，并按轨道顺序发起其余命令。";
+            : "同时执行会跳过已占用及待重试命令；分组运行不启用自动重启。";
     }
 
     private void SaveGroup_Click(object sender, RoutedEventArgs e)

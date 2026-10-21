@@ -5,18 +5,16 @@ namespace TalosDesk.App;
 
 internal interface IMainWindowExitInteraction
 {
-    bool ConfirmExit(Window owner, int commandCount, int sequenceCount);
+    bool ConfirmExit(Window owner, int commandCount, int sequenceCount, int pendingCount = 0);
     Task StopAsync(CommandRunSession session);
     void ReportFailure(Window owner, Exception exception);
 }
 
 internal sealed class MainWindowExitInteraction : IMainWindowExitInteraction
 {
-    public bool ConfirmExit(Window owner, int commandCount, int sequenceCount) =>
+    public bool ConfirmExit(Window owner, int commandCount, int sequenceCount, int pendingCount = 0) =>
         AppMessageDialog.Show(owner,
-            sequenceCount > 0
-                ? $"还有 {commandCount} 条命令正在运行，{sequenceCount} 个顺序分组尚未完成。取消后续步骤、停止运行中的命令并退出吗？"
-                : $"还有 {commandCount} 条命令正在运行。停止这些命令并退出吗？",
+            $"还有 {commandCount} 条命令归属未释放、{pendingCount} 条命令待重试或正在提交、{sequenceCount} 个顺序分组尚未完成。取消等待与后续步骤、停止归属命令并退出吗？",
             "命令仍在运行", MessageBoxButton.YesNo, MessageBoxImage.Warning,
             primaryText: "停止并退出", secondaryText: "返回应用") == MessageBoxResult.Yes;
 

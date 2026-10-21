@@ -5,13 +5,17 @@ namespace TalosDesk.Core.Processes;
 public sealed class CommandRunner
 {
     private readonly object _sync = new();
-    private readonly Dictionary<Guid, CommandRunSession> _sessions = [];
+    private readonly Dictionary<Guid, ICommandRunSession> _sessions = [];
     private readonly ICommandStopOperations _stopOperations;
+    private readonly ICommandObservationOperations? _observation;
 
     public CommandRunner() : this(WindowsCommandStopOperations.Instance) { }
 
-    internal CommandRunner(ICommandStopOperations stopOperations) =>
+    internal CommandRunner(ICommandStopOperations stopOperations, ICommandObservationOperations? observation = null)
+    {
         _stopOperations = stopOperations ?? throw new ArgumentNullException(nameof(stopOperations));
+        _observation = observation;
+    }
 
     public CommandRunSession Start(Guid commandId, string command, string workingDirectory,
         EventHandler<CommandOutput>? outputReceived = null, CommandRunEnvironment? runEnvironment = null,
@@ -27,14 +31,20 @@ public sealed class CommandRunner
 
         lock (_sync)
         {
-            if (_sessions.TryGetValue(commandId, out var current) && !current.Completion.IsCompleted)
+            if (_sessions.TryGetValue(commandId, out var current) && IsOccupied(current))
             {
                 throw new InvalidOperationException("This command is already running.");
             }
 
-            var started = WindowsNative.StartPowerShell(command, Path.GetFullPath(workingDirectory), runEnvironment?.Overrides);
+            (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) started;
+            try { started = WindowsNative.StartPowerShell(command, Path.GetFullPath(workingDirectory), runEnvironment?.Overrides); }
+            catch (CommandCreationException exception)
+            {
+                _sessions[commandId] = exception.Ownership;
+                throw;
+            }
             var session = new CommandRunSession(started.Job, started.Process, started.ProcessId, started.Stdout, started.Stderr,
-                outputReceived, _stopOperations, runEnvironment?.SensitiveValues ?? [], probeSnapshot);
+                outputReceived, _stopOperations, runEnvironment?.SensitiveValues ?? [], probeSnapshot, _observation);
             _sessions[commandId] = session;
             _ = session.Completion.ContinueWith(_ => RemoveCompleted(commandId, session), CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
@@ -46,15 +56,17 @@ public sealed class CommandRunner
     {
         lock (_sync)
         {
-            return _sessions.TryGetValue(commandId, out var session) && !session.Completion.IsCompleted;
+            return _sessions.TryGetValue(commandId, out var session) && IsOccupied(session);
         }
     }
+
+    private static bool IsOccupied(ICommandRunSession session) => !session.Completion.IsCompleted || !session.IsOwnershipReleased;
 
     private void RemoveCompleted(Guid commandId, CommandRunSession session)
     {
         lock (_sync)
         {
-            if (_sessions.TryGetValue(commandId, out var current) && ReferenceEquals(current, session))
+            if (session.IsOwnershipReleased && _sessions.TryGetValue(commandId, out var current) && ReferenceEquals(current, session))
             {
                 _sessions.Remove(commandId);
             }

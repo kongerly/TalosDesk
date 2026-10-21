@@ -428,13 +428,13 @@ internal static class MessageDialogRegression
             var project = new ProjectDefinition { Name = "异常 ID 项目", Directory = root, Commands = [command] };
             if (emptyProjectId) project.Id = Guid.Empty;
             else command.Id = Guid.Empty;
-            object?[] arguments = [project, command, null, string.Empty, false];
-
-            var started = (bool)typeof(MainWindow).GetMethod("TryStartCommand", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, arguments)!;
-
-            Assert.IsFalse(started);
-            Assert.IsNull(arguments[2]);
-            StringAssert.Contains((string)arguments[3]!, "ID 不能为空");
+            var pending = (Task<(ICommandRunSession? Session, string Error)>)typeof(MainWindow)
+                .GetMethod("StartCommandSessionAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(window, [project, command, CommandStartSource.Independent, false, false, CancellationToken.None])!;
+            Wait(() => pending.IsCompleted);
+            var result = pending.GetAwaiter().GetResult();
+            Assert.IsNull(result.Session);
+            StringAssert.Contains(result.Error, "ID 不能为空");
             Assert.HasCount(1, Sessions(window));
             Assert.AreSame(runningSession, Sessions(window).Values.Cast<CommandRunSession>().Single());
             Assert.IsFalse(runningSession.Completion.IsCompleted);
@@ -447,8 +447,8 @@ internal static class MessageDialogRegression
     {
         private readonly MainWindowExitInteraction _desktop = new();
         internal bool FailStop, SkipConfirmation, FailureReported;
-        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount) =>
-            SkipConfirmation || _desktop.ConfirmExit(owner, commandCount, sequenceCount);
+        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount, int pendingCount = 0) =>
+            SkipConfirmation || _desktop.ConfirmExit(owner, commandCount, sequenceCount, pendingCount);
         public Task StopAsync(CommandRunSession session) =>
             FailStop ? Task.FromException(new IOException("合成停止失败")) : session.StopAsync();
         public void ReportFailure(Window owner, Exception exception)

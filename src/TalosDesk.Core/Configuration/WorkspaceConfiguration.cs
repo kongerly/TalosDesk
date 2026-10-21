@@ -4,7 +4,7 @@ namespace TalosDesk.Core.Configuration;
 
 public sealed class WorkspaceConfiguration
 {
-    public int SchemaVersion { get; set; } = 4;
+    public int SchemaVersion { get; set; } = WorkspaceStore.CurrentSchemaVersion;
     public List<ProjectDefinition> Projects { get; set; } = [];
 }
 
@@ -25,6 +25,8 @@ public sealed class CommandDefinition
     public string Command { get; set; } = string.Empty;
     public string WorkingDirectory { get; set; } = string.Empty;
     public CommandKind Kind { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AutoRestartEnabled { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public TcpProbeConfiguration? TcpProbe { get; set; }
     public List<CommandEnvironmentVariable> EnvironmentVariables { get; set; } = [];

@@ -74,7 +74,7 @@ internal static class TcpProbeRegression
             Stage = "运行与项目去重汇总";
             Wait(() => Status(window).Contains("TCP 探测通过"));
             Assert.AreEqual("1", Find<TextBlock>(window, "OverviewRunningCountText").Text);
-            Assert.AreEqual("其中 1 个探测通过", Find<TextBlock>(window, "OverviewProbeCountText").Text);
+            Assert.AreEqual("其中 1 个探测通过 · 0 个待重试", Find<TextBlock>(window, "OverviewProbeCountText").Text);
             Click(window, "OutputPageButton");
             var output = Find<TextBox>(window, "OutputTextBox");
             Wait(() => output.Text.Contains("probe-output-complete"));
@@ -88,13 +88,13 @@ internal static class TcpProbeRegression
             listener.Stop();
             Stage = "运行中失联且不改变长日志、选择和滚动位置";
             Wait(() => Status(window).Contains("连续失败 1/2"));
-            Assert.AreEqual("其中 1 个探测通过", Find<TextBlock>(window, "OverviewProbeCountText").Text);
+            Assert.AreEqual("其中 1 个探测通过 · 0 个待重试", Find<TextBlock>(window, "OverviewProbeCountText").Text);
             Wait(() => Status(window).Contains("TCP 不可达"));
             Assert.AreEqual(selected, output.SelectedText);
             Assert.AreEqual(originalOutput, output.Text);
             Assert.AreEqual(verticalOffset, output.VerticalOffset, 0.1);
             Assert.AreEqual("1", Find<TextBlock>(window, "OverviewRunningCountText").Text);
-            Assert.AreEqual("其中 0 个探测通过", Find<TextBlock>(window, "OverviewProbeCountText").Text);
+            Assert.AreEqual("其中 0 个探测通过 · 0 个待重试", Find<TextBlock>(window, "OverviewProbeCountText").Text);
 
             Stage = "重启超时与恢复";
             Click(window, "RestartButton");
@@ -121,7 +121,7 @@ internal static class TcpProbeRegression
             Assert.AreEqual("1", Find<TextBlock>(window, "OverviewRunningCountText").Text);
             Click(window, "StopButton");
             Wait(() => Find<TextBlock>(window, "OverviewRunningCountText").Text == "0");
-            Assert.AreEqual("其中 0 个探测通过", Find<TextBlock>(window, "OverviewProbeCountText").Text);
+            Assert.AreEqual("其中 0 个探测通过 · 0 个待重试", Find<TextBlock>(window, "OverviewProbeCountText").Text);
             var diskLog = Directory.GetFiles(store.FilePath + ".logs", "stdout.log", SearchOption.AllDirectories).Select(File.ReadAllText);
             Assert.IsTrue(diskLog.All(text => !text.Contains("TCP")));
         }, () =>
@@ -154,7 +154,7 @@ internal static class TcpProbeRegression
 
     private sealed class ExitInteraction : IMainWindowExitInteraction
     {
-        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount) => true;
+        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount, int pendingCount = 0) => true;
         public Task StopAsync(CommandRunSession session) => session.StopAsync();
         public void ReportFailure(Window owner, Exception exception) => Assert.Fail(exception.ToString());
     }

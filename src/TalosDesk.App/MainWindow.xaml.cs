@@ -45,6 +45,11 @@ public partial class MainWindow : Window
     private UpdateCandidate? _reminderCandidate;
     private string? _browserWarning;
     private readonly CommandRunner _runner = new();
+    private readonly CommandRecoveryCoordinator _recovery;
+    private readonly DispatcherTimer _recoveryTimer;
+    private bool _windowClosed;
+    private long _nextRunVersion;
+    private IReadOnlyList<CommandRecoverySnapshot> _displayedRecovery = [];
     private readonly RunLogStore _runLogStore;
     private readonly Func<RunLogInfo, string, CancellationToken, IReadOnlyList<string>> _readLogTail;
     private CancellationTokenSource? _historyReadCancellation;
@@ -55,7 +60,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<Guid, string> _logWarnings = [];
     private readonly ObservableCollection<RunHistoryItem> _runHistory = [];
     private bool _syncingRunHistory;
-    private readonly Dictionary<Guid, CommandRunSession> _sessions = [];
+    private readonly Dictionary<Guid, ICommandRunSession> _sessions = [];
     private readonly HashSet<TextBlock> _commandStatusLabels = [];
     private readonly Dictionary<Guid, CommandRunResult> _lastResults = [];
     private readonly Dictionary<Guid, DateTimeOffset> _runStartedAt = [];
@@ -65,7 +70,7 @@ public partial class MainWindow : Window
     private readonly HashSet<Guid> _reservedCommandIds = [];
     private readonly Dictionary<Guid, CancellationTokenSource> _sequentialGroupCancellations = [];
     private readonly Dictionary<Guid, Task> _sequentialGroupTasks = [];
-    private readonly Dictionary<Guid, Dictionary<Guid, CommandRunSession>> _parallelGroupSessions = [];
+    private readonly Dictionary<Guid, Dictionary<Guid, ICommandRunSession>> _parallelGroupSessions = [];
     private readonly Dictionary<Guid, long> _parallelGroupVersions = [];
     private readonly Dictionary<Guid, string> _groupStatuses = [];
     private readonly Dictionary<Guid, ObservableCollection<CommandOutput>> _logs = [];
@@ -75,6 +80,7 @@ public partial class MainWindow : Window
     private bool _canSave = true;
     private bool _saveFailed;
     private bool _workspaceChangeInProgress;
+    private IDisposable? _workspaceChangePause;
     private bool _allowClose;
     private bool _closeInProgress;
     private bool _isStoppingForClose;
@@ -127,9 +133,12 @@ public partial class MainWindow : Window
         ITrayIcon? trayIcon = null,
         IMainWindowExitInteraction? exitInteraction = null,
         Func<RunLogInfo, string, CancellationToken, IReadOnlyList<string>>? readLogTail = null,
-        Func<Task<WorkspaceRevision>>? readWorkspaceRevision = null)
+        Func<Task<WorkspaceRevision>>? readWorkspaceRevision = null,
+        TimeProvider? recoveryTime = null,
+        Func<Guid, CommandStartPlan, ICommandRunSession>? createSession = null)
     {
         _store = store;
+        _recovery = new CommandRecoveryCoordinator(createSession ?? ((id, plan) => _runner.Start(id, plan.Command, plan.WorkingDirectory, plan.OutputReceived, plan.Environment, plan.TcpProbe)), recoveryTime ?? TimeProvider.System);
         _readWorkspaceRevision = readWorkspaceRevision ?? (() => _store.GetRevisionAsync());
         _windowSettingsStore = new WindowSettingsStore(store.FilePath);
         _updateStateStore = new UpdateStateStore(store.FilePath);
@@ -145,7 +154,16 @@ public partial class MainWindow : Window
         _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
         _exitInteraction = exitInteraction ?? new MainWindowExitInteraction();
         InitializeComponent();
-        Closed += (_, _) => CancelHistoryRead();
+        _recoveryTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(100) };
+        _recoveryTimer.Tick += (_, _) =>
+        {
+            var snapshots = _recovery.GetSnapshots();
+            if (_windowClosed || snapshots.SequenceEqual(_displayedRecovery)) return;
+            _displayedRecovery = snapshots;
+            RefreshCommandSelection();
+        };
+        Loaded += (_, _) => _recoveryTimer.Start();
+        Closed += (_, _) => { _windowClosed = true; _recoveryTimer.Stop(); CancelHistoryRead(); };
         WindowPlacementController.Attach(this, _windowSettingsStore);
         _trayController = new TrayIconController(this, _profileLabel, trayIcon ?? new WindowsTrayIcon());
         if (!string.IsNullOrWhiteSpace(profileLabel))
@@ -381,7 +399,7 @@ public partial class MainWindow : Window
     private async Task RefreshWorkspaceAfterStartupAsync()
     {
         await Task.Delay(250);
-        if (IsLoaded) await ReloadWorkspaceForSecondaryLaunchAsync();
+        if (IsLoaded && _recovery.GetSnapshots().Count == 0) await ReloadWorkspaceForSecondaryLaunchAsync();
     }
 
     private async void MainWindow_Activated(object? sender, EventArgs e)
@@ -405,7 +423,7 @@ public partial class MainWindow : Window
     internal async Task ReloadWorkspaceForSecondaryLaunchAsync()
     {
         if (!_workspaceLoaded || _workspaceChangeInProgress || _closeInProgress || _restartsInProgress.Count > 0 ||
-            _sequentialGroupCancellations.Count > 0 || _sessions.Values.Any(session => !session.Completion.IsCompleted))
+            _sequentialGroupCancellations.Count > 0 || _recovery.GetSnapshots().Any(snapshot => snapshot.IsBusy))
         {
             SaveStatusText.Text = "已有任务运行，未重新加载配置";
             return;
@@ -928,7 +946,7 @@ public partial class MainWindow : Window
         _restartsInProgress.Count == 0 && _sequentialGroupCancellations.Count == 0 && !_isStoppingForClose;
 
     private bool CanEditCommand(CommandDefinition command) => _selectedProject?.Commands.Contains(command) == true &&
-        !(_sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted) && CanOpenWorkspaceEditor();
+        !IsCommandBusy(command.Id) && CanOpenWorkspaceEditor();
 
     private void UpdateCommandDragVisual()
     {
@@ -1004,6 +1022,7 @@ public partial class MainWindow : Window
 
     private void SelectCommand(CommandDefinition? command)
     {
+        if (_windowClosed) return;
         var previousId = _selectedCommand?.Id;
         _selectedCommand = command is not null && _selectedProject?.Commands.Contains(command) == true ? command : null;
         _syncingCommandSelection = true;
@@ -1046,6 +1065,7 @@ public partial class MainWindow : Window
 
     private void SetPage(MainPage page)
     {
+        if (_windowClosed) return;
         OverviewPage.Visibility = page == MainPage.Overview ? Visibility.Visible : Visibility.Collapsed;
         CommandsPage.Visibility = page == MainPage.Commands ? Visibility.Visible : Visibility.Collapsed;
         GroupsPage.Visibility = page == MainPage.Groups ? Visibility.Visible : Visibility.Collapsed;
@@ -1152,18 +1172,21 @@ public partial class MainWindow : Window
 
     private void RefreshCommandSelection()
     {
+        if (_windowClosed) return;
         var command = _selectedCommand;
         var running = command is not null && _sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted;
         var restarting = command is not null && _restartsInProgress.Contains(command.Id);
+        var recovery = command is null ? null : _recovery.GetSnapshot(command.Id);
+        var busy = command is not null && IsCommandBusy(command.Id);
         var reserved = command is not null && _reservedCommandIds.Contains(command.Id);
         var canUseWorkspace = !_workspaceChangeInProgress && _restartsInProgress.Count == 0 && !_isStoppingForClose && _canSave;
         var canChangeWorkspace = canUseWorkspace && _sequentialGroupCancellations.Count == 0;
         AddProjectButton.IsEnabled = canChangeWorkspace;
-        ImportButton.IsEnabled = canChangeWorkspace;
-        ExportButton.IsEnabled = canUseWorkspace;
+        ImportButton.IsEnabled = canChangeWorkspace && !_recovery.GetSnapshots().Any(snapshot => snapshot.IsBusy);
+        ExportButton.IsEnabled = !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
         AddCommandButton.IsEnabled = _selectedProject is not null && canChangeWorkspace;
         AddGroupButton.IsEnabled = _selectedProject?.Commands.Count > 0 && canChangeWorkspace;
-        EditProjectButton.IsEnabled = _selectedProject is not null && canChangeWorkspace;
+        EditProjectButton.IsEnabled = _selectedProject is not null && !HasRunningCommands(_selectedProject) && canChangeWorkspace;
         OverviewCommandsButton.IsEnabled = _selectedProject is not null;
         OverviewOutputButton.IsEnabled = _selectedProject is not null;
         ProjectNameText.Text = _selectedProject?.Name ?? "请选择项目";
@@ -1185,9 +1208,9 @@ public partial class MainWindow : Window
             ? $"开始时间：{startedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
             : string.Empty;
         LogCommandName.Text = command?.Name ?? "选择命令以查看输出";
-        RunButton.IsEnabled = command is not null && !running && !restarting && !reserved && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
-        StopButton.IsEnabled = command is not null && running && !restarting && !_isStoppingForClose;
-        RestartButton.IsEnabled = command is not null && !restarting && !reserved && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
+        RunButton.IsEnabled = command is not null && !busy && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
+        StopButton.IsEnabled = command is not null && recovery?.IsBusy == true && !_isStoppingForClose;
+        RestartButton.IsEnabled = command is not null && recovery?.State != CommandRecoveryState.Starting && recovery?.State != CommandRecoveryState.OwnershipUnconfirmed && !restarting && !reserved && !_workspaceChangeInProgress && !_isStoppingForClose && _canSave;
         OutputRunButton.IsEnabled = RunButton.IsEnabled;
         OutputStopButton.IsEnabled = StopButton.IsEnabled;
         OutputRestartButton.IsEnabled = RestartButton.IsEnabled;
@@ -1197,12 +1220,12 @@ public partial class MainWindow : Window
             ? historicalRun.Truncated ? "该批次日志已达到容量上限，后续输出未保存。" :
                 historicalRun.WriteFailed ? "该批次日志写入失败，内容不完整。" : string.Empty
             : command is not null && _logWarnings.TryGetValue(command.Id, out var logWarning) ? logWarning : _logInitError ?? string.Empty;
-        EditButton.IsEnabled = command is not null && !running && canChangeWorkspace;
+        EditButton.IsEnabled = command is not null && !busy && canChangeWorkspace;
         CopyButton.IsEnabled = command is not null;
         var selectedIndex = command is null ? -1 : _selectedProject?.Commands.IndexOf(command) ?? -1;
         MoveCommandUpButton.IsEnabled = selectedIndex > 0 && canChangeWorkspace;
         MoveCommandDownButton.IsEnabled = _selectedProject is not null && selectedIndex >= 0 && selectedIndex < _selectedProject.Commands.Count - 1 && canChangeWorkspace;
-        DeleteCommandButton.IsEnabled = command is not null && !running && !restarting && canChangeWorkspace;
+        DeleteCommandButton.IsEnabled = command is not null && !busy && canChangeWorkspace;
         var checkedCount = _selectedProject?.Commands.Count(item => _checkedCommandIds.Contains(item.Id)) ?? 0;
         var readyCount = _selectedProject?.Commands.Count(item => _checkedCommandIds.Contains(item.Id) &&
             !IsCommandBusy(item.Id)) ?? 0;
@@ -1250,12 +1273,14 @@ public partial class MainWindow : Window
 
     private string GetCommandStatusText(CommandDefinition command)
     {
+        var recovery = _recovery.GetSnapshot(command.Id);
+        if (RecoveryStatus(recovery) is { } recoveryText) return recoveryText;
         if (_restartsInProgress.Contains(command.Id)) return "正在重启";
         if (_sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted)
         {
-            if (session.IsStopping) return "正在停止 · Ctrl+C";
-            var probe = session.TcpProbe;
-            return probe.State switch
+            if (session is CommandRunSession { IsStopping: true }) return "正在停止 · Ctrl+C";
+            var probe = GetProbe(session);
+            var status = probe.State switch
             {
                 TcpProbeState.NotConfigured => "运行中",
                 TcpProbeState.Inactive => "运行中 · 探测已停止",
@@ -1265,6 +1290,7 @@ public partial class MainWindow : Window
                 _ => "运行中 · TCP 探测通过" + (probe.ConsecutiveFailures > 0
                     ? $" · 连续失败 {probe.ConsecutiveFailures}/{command.TcpProbe?.FailureThreshold}" : string.Empty)
             };
+            return status + (recovery?.RoundId is not null ? $" · 自动重启已用 {recovery.Attempts}/3 次" : string.Empty);
         }
         if (_reservedCommandIds.Contains(command.Id)) return "等待分组执行";
         if (!_lastResults.TryGetValue(command.Id, out var result)) return "空闲";
@@ -1294,10 +1320,11 @@ public partial class MainWindow : Window
 
     private void RefreshProbeDisplay()
     {
+        if (_windowClosed) return;
         var active = (_selectedProject?.Commands ?? []).DistinctBy(command => command.Id)
             .Where(command => _sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted).ToArray();
         OverviewRunningCountText.Text = active.Length.ToString(CultureInfo.CurrentCulture);
-        OverviewProbeCountText.Text = $"其中 {active.Count(command => command.Kind == CommandKind.Service && _sessions[command.Id].TcpProbe.State == TcpProbeState.Passed)} 个探测通过";
+        OverviewProbeCountText.Text = $"其中 {active.Count(command => command.Kind == CommandKind.Service && GetProbe(_sessions[command.Id]).State == TcpProbeState.Passed)} 个探测通过 · {_selectedProject?.Commands.Count(command => IsPendingRetry(_recovery.GetSnapshot(command.Id))) ?? 0} 个待重试";
         foreach (var label in _commandStatusLabels)
             if (label.DataContext is CommandDefinition command) label.Text = GetCommandStatusText(command);
         foreach (var item in _outputCommands) item.StatusText = GetCommandStatusText(item.Command);
@@ -1310,7 +1337,7 @@ public partial class MainWindow : Window
     private bool IsCommandBusy(Guid commandId) =>
         _reservedCommandIds.Contains(commandId) ||
         _restartsInProgress.Contains(commandId) ||
-        _sessions.TryGetValue(commandId, out var session) && !session.Completion.IsCompleted;
+        _recovery.IsBusy(commandId);
 
     private void RefreshGroupItems(bool? canEditOverride = null)
     {
@@ -1401,6 +1428,7 @@ public partial class MainWindow : Window
         if (!BeginWorkspaceChange()) return;
         try
         {
+            foreach (var command in project.Commands) _recovery.CancelRecovery(command.Id);
             var previousName = project.Name;
             var previousDirectory = project.Directory;
             var previousWorkingDirectories = project.Commands.ToDictionary(command => command.Id, command => command.WorkingDirectory);
@@ -1439,7 +1467,7 @@ public partial class MainWindow : Window
 
     private async void ExportWorkspace_Click(object sender, RoutedEventArgs e)
     {
-        if (_workspaceChangeInProgress || _restartsInProgress.Count > 0 || _isStoppingForClose || !_canSave) return;
+        if (_workspaceChangeInProgress || _isStoppingForClose || !_canSave) return;
         var confirmation = AppMessageDialog.Show(this,
             "导出文件会以明文包含项目路径、完整命令和普通环境变量。显式标记的敏感变量只导出名称和待填写状态，不包含本机密文。\n\n如果命令或普通变量中写有密钥，它们仍会导出。请在分享前检查内容。是否继续？",
             "确认导出明文工作区", MessageBoxButton.YesNo, MessageBoxImage.Warning, primaryText: "继续导出");
@@ -1455,7 +1483,7 @@ public partial class MainWindow : Window
         };
         if (picker.ShowDialog(this) != true) return;
 
-        var tracksWorkspaceChange = _sequentialGroupCancellations.Count == 0;
+        var tracksWorkspaceChange = _sequentialGroupCancellations.Count == 0 && _restartsInProgress.Count == 0;
         if (tracksWorkspaceChange && !BeginWorkspaceChange()) return;
         try
         {
@@ -1480,7 +1508,7 @@ public partial class MainWindow : Window
     private async void ImportWorkspace_Click(object sender, RoutedEventArgs e)
     {
         if (_workspaceChangeInProgress || _restartsInProgress.Count > 0 || _isStoppingForClose || !_canSave) return;
-        if (_restartsInProgress.Count > 0 || _sequentialGroupCancellations.Count > 0 || _sessions.Values.Any(session => !session.Completion.IsCompleted))
+        if (_restartsInProgress.Count > 0 || _sequentialGroupCancellations.Count > 0 || _recovery.GetSnapshots().Any(snapshot => snapshot.IsBusy))
         {
             AppMessageDialog.Show(this, "导入工作区前请先停止所有正在运行的命令，以免运行中的命令与保存的配置不一致。", "命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -1539,6 +1567,7 @@ public partial class MainWindow : Window
 
     private void ReplaceProjects(IEnumerable<ProjectDefinition> projects)
     {
+        foreach (var snapshot in _recovery.GetSnapshots()) _recovery.CancelRecovery(snapshot.CommandId);
         Projects.Clear();
         foreach (var project in projects) Projects.Add(project);
         RefreshProjectList();
@@ -1560,7 +1589,7 @@ public partial class MainWindow : Window
         var visibleProjects = imported.Projects.Select(project =>
         {
             var commands = project.Commands.Select(command =>
-                $"    - {command.Name}: {command.Command}{FormatSensitiveVariables(command)}\n      {FormatProbeConfiguration(command)}");
+                $"    - {command.Name}: {command.Command}{FormatSensitiveVariables(command)}\n      {FormatProbeConfiguration(command)}\n      {FormatRecoveryConfiguration(command)}");
             var groups = project.Groups.Select(group =>
             {
                 var memberNames = group.CommandIds.Select(id => project.Commands.First(command => command.Id == id).Name);
@@ -1576,7 +1605,7 @@ public partial class MainWindow : Window
                $"新增项目：{newProjects} · 文件夹相同：{matchingProjects}\n" +
                $"新增命令：{newCommands} · 名称冲突：{projectDetails}\n\n" +
                $"{string.Join("\n\n", visibleProjects)}\n\n" +
-               "导入不会自动运行命令或连接探测端口。同名命令若选择替换，其整套环境变量和 TCP 探测配置也会替换本机配置；未配置探测的导入项会关闭原探测。待填写或不可解密的敏感值可能使该命令暂不可运行。遇到冲突时仍可逐项选择保留、替换或取消。";
+               "导入不会自动运行命令或连接探测端口。同名命令若选择替换，其整套环境变量、TCP 探测和自动重启配置也会替换本机配置；未配置探测的导入项会关闭原探测。待填写或不可解密的敏感值可能使该命令暂不可运行。遇到冲突时仍可逐项选择保留、替换或取消。";
     }
 
     private static string FormatSensitiveVariables(CommandDefinition command)
@@ -1643,7 +1672,7 @@ public partial class MainWindow : Window
 
                 var existingCommand = existingProject.Commands[existingCommandIndex];
                 var commandChoice = AppMessageDialog.Show(this,
-                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n本机{FormatProbeConfiguration(existingCommand)}\n导入{FormatProbeConfiguration(incomingCommand)}\n\n选择“替换”将以导入的整套变量和探测配置替换本机配置，不沿用旧密文；选择“保留本机”保留本机命令及全部配置；选择“取消导入”停止导入。",
+                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n本机{FormatProbeConfiguration(existingCommand)}\n导入{FormatProbeConfiguration(incomingCommand)}\n本机{FormatRecoveryConfiguration(existingCommand)}\n导入{FormatRecoveryConfiguration(incomingCommand)}\n\n选择“替换”将以导入的整套变量、探测和自动重启配置替换本机配置，不沿用旧密文；选择“保留本机”保留本机命令及全部配置；选择“取消导入”停止导入。",
                     "命令名称冲突", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
                 if (commandChoice == MessageBoxResult.Cancel) return false;
                 if (commandChoice == MessageBoxResult.Yes)
@@ -1706,9 +1735,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool HasRunningCommands(ProjectDefinition project) => project.Commands.Any(command =>
-        _restartsInProgress.Contains(command.Id) ||
-        _sessions.TryGetValue(command.Id, out var session) && !session.Completion.IsCompleted);
+    private bool HasRunningCommands(ProjectDefinition project) => project.Commands.Any(command => IsCommandBusy(command.Id));
 
     private static bool SameCommandName(string left, string right) => string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
 
@@ -1732,6 +1759,7 @@ public partial class MainWindow : Window
         WorkingDirectory = command.WorkingDirectory,
         Kind = command.Kind,
         TcpProbe = command.TcpProbe?.Clone(),
+        AutoRestartEnabled = command.AutoRestartEnabled,
         EnvironmentVariables = command.EnvironmentVariables.Select(variable => variable.Clone()).ToList()
     };
 
@@ -1805,8 +1833,7 @@ public partial class MainWindow : Window
         if (_selectedProject is null || _selectedCommand is null) return;
         var project = _selectedProject;
         var command = _selectedCommand;
-        if (_restartsInProgress.Contains(command.Id) ||
-            (_sessions.TryGetValue(command.Id, out var activeSession) && !activeSession.Completion.IsCompleted))
+        if (IsCommandBusy(command.Id))
         {
             AppMessageDialog.Show(this, "请先停止这条命令，再删除保存的配置。", "命令仍在运行", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -1820,6 +1847,7 @@ public partial class MainWindow : Window
             var index = project.Commands.IndexOf(command);
             if (index < 0) return;
             var previousGroupMembers = project.Groups.ToDictionary(group => group.Id, group => group.CommandIds.ToList());
+            _recovery.CancelRecovery(command.Id);
             project.Commands.RemoveAt(index);
             CommandGroupOperations.RemoveCommandReferences(project, command.Id);
             var nextSelection = project.Commands.Count == 0 ? null : project.Commands[Math.Min(index, project.Commands.Count - 1)];
@@ -1898,6 +1926,7 @@ public partial class MainWindow : Window
             var project = _selectedProject;
             var index = project.Commands.IndexOf(_selectedCommand);
             var previousCommand = project.Commands[index];
+            _recovery.CancelRecovery(previousCommand.Id);
             project.Commands[index] = editor.Result;
             RefreshCommandList(editor.Result);
             if (!await SaveWorkspaceAsync())
@@ -2000,7 +2029,7 @@ public partial class MainWindow : Window
         finally { EndWorkspaceChange(); }
     }
 
-    private void RunGroup_Click(object sender, RoutedEventArgs e)
+    private async void RunGroup_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedProject is null || sender is not Button { DataContext: CommandGroupItem item } ||
             _workspaceChangeInProgress || _isStoppingForClose || !_canSave) return;
@@ -2010,14 +2039,14 @@ public partial class MainWindow : Window
 
         if (group.ExecutionMode == CommandGroupExecutionMode.Parallel)
         {
-            RunParallelGroup(project, group);
+            await RunParallelGroupAsync(project, group);
             return;
         }
 
         StartSequentialGroup(project, group);
     }
 
-    private void RunParallelGroup(ProjectDefinition project, CommandGroupDefinition group)
+    private async Task RunParallelGroupAsync(ProjectDefinition project, CommandGroupDefinition group)
     {
         var commands = CommandGroupExecution.GetParallelReadyCommands(project, group, IsCommandBusy);
         if (!TryPreflightCommands(commands)) return;
@@ -2029,7 +2058,8 @@ public partial class MainWindow : Window
         _groupStatuses.Remove(group.Id);
         foreach (var command in commands)
         {
-            if (TryStartCommand(project, command, out var session, out var error))
+            var (session, error) = await StartCommandSessionAsync(project, command, CommandStartSource.Group);
+            if (session is not null)
             {
                 firstStarted ??= command;
                 launched.Add(new ParallelCommandExecution(command, session!.Completion));
@@ -2051,7 +2081,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void TrackParallelGroupSession(Guid groupId, Guid commandId, CommandRunSession session)
+    private void TrackParallelGroupSession(Guid groupId, Guid commandId, ICommandRunSession session)
     {
         if (!_parallelGroupSessions.TryGetValue(groupId, out var sessions))
         {
@@ -2061,7 +2091,7 @@ public partial class MainWindow : Window
         _ = RemoveParallelGroupSessionWhenCompleteAsync(groupId, commandId, session);
     }
 
-    private async Task RemoveParallelGroupSessionWhenCompleteAsync(Guid groupId, Guid commandId, CommandRunSession session)
+    private async Task RemoveParallelGroupSessionWhenCompleteAsync(Guid groupId, Guid commandId, ICommandRunSession session)
     {
         try { await session.Completion; }
         catch { /* CompleteRunAsync reports unexpected observation failures. */ }
@@ -2159,7 +2189,8 @@ public partial class MainWindow : Window
         {
             try
             {
-                await session.StopAsync();
+                var id = launched.First(execution => ReferenceEquals(execution.Completion, session.Completion)).Command.Id;
+                await _recovery.StopAsync(id, session);
                 await session.Completion;
             }
             catch (Exception exception)
@@ -2205,17 +2236,19 @@ public partial class MainWindow : Window
             var result = await CommandGroupExecution.RunSequentialAsync(commands, async (command, token) =>
             {
                 token.ThrowIfCancellationRequested();
-                return await Dispatcher.InvokeAsync(() =>
+                return await Dispatcher.InvokeAsync(async () =>
                 {
                     startedCount++;
                     _groupStatuses[groupId] = $"正在执行 {startedCount} / {commands.Length} · {command.Name}";
-                    if (!TryStartCommand(Projects.First(project => project.Id == projectId), command, out var session, out var error, allowReserved: true))
+                    var (session, error) = await StartCommandSessionAsync(Projects.First(project => project.Id == projectId), command,
+                        CommandStartSource.Group, allowReserved: true, cancellationToken: token);
+                    if (session is null)
                     {
                         throw new InvalidOperationException(error);
                     }
                     SelectCommand(command);
                     RefreshCommandSelection();
-                    return session!.Completion;
+                    return await session.Completion;
                 }).Task.Unwrap();
             }, cancellation.Token);
 
@@ -2253,13 +2286,13 @@ public partial class MainWindow : Window
 
     private static bool SameGroupName(string left, string right) => string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
 
-    private void RunCommand_Click(object sender, RoutedEventArgs e)
+    private async void RunCommand_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedProject is null || _selectedCommand is null) return;
-        if (StartCommand(_selectedProject, _selectedCommand)) SetPage(MainPage.Output);
+        if (await StartCommandAsync(_selectedProject, _selectedCommand)) SetPage(MainPage.Output);
     }
 
-    private void RunCheckedCommands_Click(object sender, RoutedEventArgs e)
+    private async void RunCheckedCommands_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedProject is null || !_canSave || _workspaceChangeInProgress || _isStoppingForClose) return;
         var project = _selectedProject;
@@ -2269,7 +2302,7 @@ public partial class MainWindow : Window
         CommandDefinition? firstStarted = null;
         foreach (var command in commands)
         {
-            if (StartCommand(project, command)) firstStarted ??= command;
+            if (await StartCommandAsync(project, command)) firstStarted ??= command;
         }
         if (firstStarted is not null)
         {
@@ -2281,49 +2314,20 @@ public partial class MainWindow : Window
 
     private async void RestartCommand_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedProject is null || _selectedCommand is null) return;
-        if (!TryPreflightCommands([_selectedCommand])) return;
-        var projectId = _selectedProject.Id;
-        var commandId = _selectedCommand.Id;
-        if (_reservedCommandIds.Contains(commandId) || !_restartsInProgress.Add(commandId)) return;
-        RefreshCommandSelection();
-        try
-        {
-            if (_sessions.TryGetValue(commandId, out var session) && !session.Completion.IsCompleted)
-            {
-                RunStateText.Text = "正在重启 · 停止中";
-                OutputRunStateText.Text = RunStateText.Text;
-                try
-                {
-                    await session.StopAsync();
-                    await session.Completion;
-                    if (_sessions.TryGetValue(commandId, out var current) && ReferenceEquals(current, session)) _sessions.Remove(commandId);
-                }
-                catch (Exception exception)
-                {
-                    AppMessageDialog.Show(this, $"TalosDesk 无法停止此命令，因此未执行重启。\n\n{exception.Message}", "重启已取消", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
-            }
-
-            var project = Projects.FirstOrDefault(candidate => candidate.Id == projectId);
-            var command = project?.Commands.FirstOrDefault(candidate => candidate.Id == commandId);
-            if (project is not null && command is not null) StartCommand(project, command);
-        }
-        finally
-        {
-            _restartsInProgress.Remove(commandId);
-            RefreshCommandSelection();
-        }
+        if (_selectedProject is null || _selectedCommand is null || _reservedCommandIds.Contains(_selectedCommand.Id)) return;
+        var project = _selectedProject;
+        var command = _selectedCommand;
+        if (!_restartsInProgress.Add(command.Id)) return;
+        try { await StartCommandAsync(project, command, restart: true); }
+        finally { _restartsInProgress.Remove(command.Id); if (!_windowClosed) RefreshCommandSelection(); }
     }
 
-    private bool StartCommand(ProjectDefinition project, CommandDefinition command)
+    private async Task<bool> StartCommandAsync(ProjectDefinition project, CommandDefinition command, bool restart = false)
     {
-        if (TryStartCommand(project, command, out _, out var error)) return true;
-        if (!string.IsNullOrWhiteSpace(error))
-        {
+        var (session, error) = await StartCommandSessionAsync(project, command, CommandStartSource.Independent, restart: restart);
+        if (session is not null) return !_windowClosed && !_isStoppingForClose;
+        if (!string.IsNullOrWhiteSpace(error) && !_isStoppingForClose && !_windowClosed)
             AppMessageDialog.Show(this, error, "命令启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
         return false;
     }
 
@@ -2342,98 +2346,6 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private bool TryStartCommand(ProjectDefinition project, CommandDefinition command, out CommandRunSession? session, out string error, bool allowReserved = false)
-    {
-        session = null;
-        error = string.Empty;
-        if (!_canSave || _workspaceChangeInProgress || _isStoppingForClose) return false;
-        if (project.Id == Guid.Empty || command.Id == Guid.Empty)
-        {
-            error = "项目或命令 ID 不能为空（全零 GUID），请修复工作区配置后重试。";
-            return false;
-        }
-        if (!allowReserved && _reservedCommandIds.Contains(command.Id))
-        {
-            error = "这条命令正在等待顺序分组执行。";
-            return false;
-        }
-        CommandRunEnvironment runEnvironment;
-        try { TcpProbeConfiguration.ValidateCommand(command); runEnvironment = CommandRunEnvironmentResolver.Resolve(command); }
-        catch (Exception exception) when (exception is CommandEnvironmentException or InvalidDataException)
-        {
-            error = exception.Message;
-            return false;
-        }
-        var workingDirectory = string.IsNullOrWhiteSpace(command.WorkingDirectory) ? project.Directory : command.WorkingDirectory;
-        RunLogWriter? logWriter = null;
-        try
-        {
-            if (!_logStoreAvailable) throw new IOException("日志目录或设置不可用。");
-            logWriter = _runLogStore.Begin(project.Id, command.Id, DateTimeOffset.Now);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-        {
-            _logWarnings[command.Id] = $"本次日志未保存：{exception.Message}";
-            LogStatusText.Text = _logWarnings[command.Id];
-        }
-        try
-        {
-            var nextVersion = _runVersions.GetValueOrDefault(command.Id) + 1;
-            var started = _runner.Start(command.Id, command.Command, workingDirectory,
-                (_, output) =>
-                {
-                    if (logWriter is not null)
-                    {
-                        try { _runLogStore.Append(logWriter, output); }
-                        catch (Exception) { logWriter.Info.WriteFailed = true; }
-                        if ((logWriter.Info.WriteFailed || logWriter.Info.Truncated) &&
-                            Interlocked.Exchange(ref logWriter.WarningReported, 1) == 0)
-                        {
-                            Dispatcher.BeginInvoke(new Action(() =>
-                            {
-                                _logWarnings[command.Id] = logWriter.Info.Truncated ? "日志达到容量上限，本批次后续输出未保存。" : "日志写入失败，本批次输出不完整。";
-                                if (_selectedCommand?.Id == command.Id) LogStatusText.Text = _logWarnings[command.Id];
-                            }));
-                        }
-                    }
-                    QueueOutput(command.Id, nextVersion, output);
-                }, runEnvironment, command.TcpProbe);
-            _runVersions[command.Id] = nextVersion;
-            if (logWriter is not null) _runLogWriters[command.Id] = logWriter;
-            _lastResults.Remove(command.Id);
-            _runStartedAt[command.Id] = DateTimeOffset.Now;
-            GetLogs(command.Id).Clear();
-            if (_selectedCommand?.Id == command.Id) RenderSelectedOutput(command, scrollToEnd: true);
-            _sessions[command.Id] = started;
-            started.TcpProbeChanged += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
-            {
-                // 读取当前快照，不应用排队时的旧结果；旧会话不能刷新新运行。
-                if (_runVersions.GetValueOrDefault(command.Id) == nextVersion &&
-                    _sessions.TryGetValue(command.Id, out var current) && ReferenceEquals(current, started))
-                    RefreshProbeDisplay();
-            }));
-            session = started;
-            RefreshRunHistory(selectCurrent: true);
-            RefreshCommandSelection();
-            _logFinalizations[command.Id] = CompleteRunAsync(command.Id, nextVersion, started, logWriter);
-            return true;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.ComponentModel.Win32Exception)
-        {
-            if (logWriter is not null)
-            {
-                try { _runLogStore.Discard(logWriter); }
-                catch (Exception cleanupFailure) when (cleanupFailure is IOException or UnauthorizedAccessException)
-                {
-                    _logWarnings[command.Id] = $"启动失败批次的日志未能清理：{cleanupFailure.Message}";
-                }
-            }
-            RefreshCommandSelection();
-            error = FormatCommandStartError(exception, workingDirectory);
-            return false;
-        }
-    }
-
     internal static string FormatCommandStartError(Exception exception, string workingDirectory)
     {
         return exception switch
@@ -2449,83 +2361,16 @@ public partial class MainWindow : Window
         };
     }
 
-    private async Task CompleteRunAsync(Guid commandId, long version, CommandRunSession session, RunLogWriter? logWriter)
-    {
-        try
-        {
-            var result = await session.Completion;
-            if (logWriter is not null)
-            {
-                try { _runLogStore.Complete(logWriter, result); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    if (_runVersions.GetValueOrDefault(commandId) == version)
-                        _logWarnings[commandId] = $"日志完成写入失败：{exception.Message}";
-                }
-            }
-            await Dispatcher.InvokeAsync(() =>
-            {
-                if (_runVersions.GetValueOrDefault(commandId) != version) return;
-                if (logWriter is not null && _runLogWriters.TryGetValue(commandId, out var currentWriter) && ReferenceEquals(currentWriter, logWriter))
-                    _runLogWriters.Remove(commandId);
-                if (_sessions.TryGetValue(commandId, out var current) && ReferenceEquals(current, session)) _sessions.Remove(commandId);
-                if (Projects.Any(project => project.Commands.Any(command => command.Id == commandId))) _lastResults[commandId] = result;
-                if (_selectedCommand?.Id == commandId) RefreshRunHistory(selectCurrent: false);
-                RefreshCommandSelection();
-            });
-        }
-        catch (Exception exception)
-        {
-            if (logWriter is not null)
-            {
-                try { _runLogStore.Complete(logWriter, null); }
-                catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
-                {
-                    if (_runVersions.GetValueOrDefault(commandId) == version)
-                        _logWarnings[commandId] = $"日志完成写入失败：{failure.Message}";
-                }
-            }
-            await Dispatcher.InvokeAsync(() =>
-            {
-                if (_runVersions.GetValueOrDefault(commandId) != version) return;
-                RunStateText.Text = "进程异常";
-                RunStateText.ToolTip = exception.Message;
-            });
-        }
-        finally
-        {
-            if (_logFinalizations.TryGetValue(commandId, out var pending) && pending.IsCompleted)
-                _logFinalizations.Remove(commandId);
-        }
-    }
-
     private async void StopCommand_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedCommand is null || !_sessions.TryGetValue(_selectedCommand.Id, out var session)) return;
-        var stoppedCommandId = _selectedCommand.Id;
-        RunStateText.Text = "正在停止 · Ctrl+C";
-        OutputRunStateText.Text = RunStateText.Text;
-        var outputItem = _outputCommands.FirstOrDefault(item => item.Command.Id == stoppedCommandId);
-        if (outputItem is not null) outputItem.StatusText = RunStateText.Text;
-        StopButton.IsEnabled = false;
-        OutputStopButton.IsEnabled = false;
-        try
-        {
-            var stopResult = await session.StopAsync();
-            await session.Completion;
-            if (_selectedCommand?.Id == stoppedCommandId)
-            {
-                RunStateText.Text = stopResult == CommandStopResult.ForceTerminated ? "已强制停止" : "已停止";
-                OutputRunStateText.Text = RunStateText.Text;
-                StopButton.IsEnabled = false;
-                OutputStopButton.IsEnabled = false;
-            }
-        }
+        if (_selectedCommand is null) return;
+        var id = _selectedCommand.Id;
+        try { await _recovery.StopAsync(id); }
         catch (Exception exception)
         {
-            AppMessageDialog.Show(this, $"TalosDesk 无法确认命令已停止。\n\n{exception.Message}", "停止未完成", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (!_windowClosed) AppMessageDialog.Show(this, $"TalosDesk 无法确认命令已停止。\n\n{exception.Message}", "停止未完成", MessageBoxButton.OK, MessageBoxImage.Error);
         }
-        finally { RefreshCommandSelection(); }
+        finally { if (!_windowClosed) RefreshCommandSelection(); }
     }
 
     private void CopyCommand_Click(object sender, RoutedEventArgs e)
@@ -2564,6 +2409,7 @@ public partial class MainWindow : Window
 
     private void RefreshRunHistory(bool selectCurrent)
     {
+        if (_windowClosed) return;
         if (RunHistoryComboBox is null) return;
         CancelHistoryRead();
         var selectedRunId = selectCurrent ? null : SelectedHistoricalRun?.RunId;
@@ -2706,7 +2552,7 @@ public partial class MainWindow : Window
 
     private bool CanChangeLogLocation()
     {
-        if (_sessions.Values.Any(session => !session.Completion.IsCompleted) || _runLogWriters.Count > 0 ||
+        if (_recovery.GetSnapshots().Any(snapshot => snapshot.IsBusy) || _runLogWriters.Count > 0 ||
             _logFinalizations.Values.Any(task => !task.IsCompleted))
         {
             AppMessageDialog.Show(this, "请等待所有命令和日志写入结束后再更改日志位置。", "日志正在写入",
@@ -2806,37 +2652,35 @@ public partial class MainWindow : Window
             AppMessageDialog.Show(this, "工作区正在保存或导入，请等待操作完成后再退出。", "工作区正在处理", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        if (_restartsInProgress.Count > 0)
-        {
-            e.Cancel = true;
-            AppMessageDialog.Show(this, "命令正在重启，请等待停止与重新启动完成后再退出。", "命令正在重启", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-        var active = _sessions.Values.Where(session => !session.Completion.IsCompleted).ToArray();
+        using var pause = _recovery.PauseAutomaticStarts();
+        var snapshots = _recovery.GetSnapshots();
+        var active = snapshots.Count(snapshot => snapshot.Session is { } session && (!session.Completion.IsCompleted || !session.IsOwnershipReleased));
+        var pending = snapshots.Count(IsPendingRecovery);
         var activeSequences = _sequentialGroupCancellations.Count;
-        if (active.Length == 0 && activeSequences == 0 && _logFinalizations.Values.All(task => task.IsCompleted))
+        Task? stopping = null;
+        if (active == 0 && pending == 0 && activeSequences == 0 && _logFinalizations.Values.All(task => task.IsCompleted))
         {
-            StopUpdatesForShutdown();
-            return;
+            stopping = _recovery.CloseAndStopAsync();
+            if (stopping.IsCompletedSuccessfully) { StopUpdatesForShutdown(); return; }
         }
-
         e.Cancel = true;
         _closeInProgress = true;
         try
         {
-            if ((active.Length > 0 || activeSequences > 0) &&
-                !_exitInteraction.ConfirmExit(this, active.Length, activeSequences)) return;
+            if ((active > 0 || pending > 0 || activeSequences > 0) &&
+                !_exitInteraction.ConfirmExit(this, active, activeSequences, pending)) return;
 
             _isStoppingForClose = true;
+            // 调用返回任务之前关闭入口及全部轮次，包括无进程的快速路径。
+            stopping ??= _recovery.CloseAndStopAsync(stopSession: session => session is CommandRunSession concrete
+                ? _exitInteraction.StopAsync(concrete) : session.StopAsync());
             RefreshCommandSelection();
             // 先结束 WPF 的 Closing 回调，后续才能安全恢复窗口或再次 Close。
             await Task.Yield();
             StopUpdatesForShutdown();
             foreach (var cancellation in _sequentialGroupCancellations.Values.ToArray()) cancellation.Cancel();
-            active = _sessions.Values.Where(session => !session.Completion.IsCompleted).ToArray();
             var groupTasks = _sequentialGroupTasks.Values.ToArray();
-            await Task.WhenAll(active.Select(session => _exitInteraction.StopAsync(session)));
-            await Task.WhenAll(active.Select(session => session.Completion));
+            await stopping;
             await Task.WhenAll(groupTasks);
             await Task.WhenAll(_logFinalizations.Values.ToArray());
             _allowClose = true;
@@ -2845,6 +2689,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             _isStoppingForClose = false;
+            _recovery.ReopenForManualStarts();
             RefreshCommandSelection();
             await Task.Yield();
             await RestoreUpdatesAfterFailedExitAsync();
@@ -2920,6 +2765,7 @@ public partial class MainWindow : Window
     private bool ReportExternalWorkspaceChange(bool showDialog)
     {
         _canSave = false;
+        foreach (var snapshot in _recovery.GetSnapshots()) _recovery.CancelRecovery(snapshot.CommandId);
         _saveFailed = true;
         SaveStatusText.Text = "外部配置已变更";
         RefreshCommandSelection();
@@ -2937,6 +2783,7 @@ public partial class MainWindow : Window
     {
         if (!_canSave || _workspaceChangeInProgress || _restartsInProgress.Count > 0 ||
             _sequentialGroupCancellations.Count > 0 || _isStoppingForClose) return false;
+        _workspaceChangePause = _recovery.PauseAutomaticStarts();
         _workspaceChangeInProgress = true;
         RefreshCommandSelection();
         return true;
@@ -2946,6 +2793,8 @@ public partial class MainWindow : Window
     {
         var completedStatus = SaveStatusText.Text;
         _workspaceChangeInProgress = false;
+        _workspaceChangePause?.Dispose();
+        _workspaceChangePause = null;
         RefreshCommandSelection();
         if (!_saveFailed && (completedStatus is "已保存到本机" or "工作区已导入" or "工作区已导出"))
         {
@@ -2970,6 +2819,7 @@ public partial class MainWindow : Window
 
     private void FlushPendingOutput()
     {
+        if (_windowClosed) return;
         var selectedOutput = new List<CommandOutput>();
         var selectedOutputTrimmed = false;
         foreach (var entry in _pendingOutput.Take(500))

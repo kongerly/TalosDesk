@@ -13,6 +13,21 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 本文只写不随时间变化的内容：测试分层、回归覆盖范围、长期已知限制和未执行项。各次检查的通过数量与逐日实施记录已移入[变更记录归档](changelog/README.md)，发布包大小与校验值见[发布 tag](https://github.com/kongerly/TalosDesk/releases)；需要核对某个提交实际通过了多少用例时，请查该提交的 [CI 运行记录](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)。
 
+## 有限自动重启：配置与桌面隔离回归
+
+`RecoveryConfigurationTests` 验证 schema 5 严格开关、schema 1–4 默认关闭与读取不改写、schema 4 TCP 保留、保存/导出及失败保留。`CommandRecoveryCoordinatorTests` 使用可控计时、完成、创建和预检屏障覆盖核心竞争条件，另验证宿主成功创建登记及回调失败仍可停止。
+
+`MainWindowIntegrationTests.Recovery*` 十三项使用相同 STA 宿主、隔离配置、可控时钟及合成会话，验证次数/倒计时、状态与按钮、历史批次、停止/重启、关闭暂停与返回、无进程退出、外部变更、故障归属及保存/导入冲突。其中 `RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches` 使用真实 PowerShell、回环监听和合成 DPAPI 值，逐会话验证四批日志、TCP 新周期、非零退出、脱敏和耗尽。测试不读取正式工作区，也不通过导入建立进程或 TCP 连接。
+
+```powershell
+pwsh -NoProfile -File scripts/With-Sdk.ps1 test tests/TalosDesk.Core.Tests/TalosDesk.Core.Tests.csproj --filter "FullyQualifiedName~Recovery" --no-restore
+$env:TALOSDESK_LAYOUT_CAPTURE_DIR = Join-Path $PWD "artifacts/tests/recovery-layout"
+pwsh -NoProfile -File scripts/With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --filter "FullyQualifiedName~Recovery" --no-restore
+pwsh -NoProfile -File scripts/With-Sdk.ps1 test TalosDesk.slnx --no-restore --logger "trx;LogFilePrefix=recovery-batch" --results-directory artifacts/tests/recovery-batch
+```
+
+截图包含等待、800×520 窄窗口等待及耗尽后的历史输出，需检查状态换行与停止/重启入口；这是 WPF 自动化操作链与渲染检查，不能替代最终包、真实鼠标、多屏/DPI 或干净客户端。新 schema 与桌面接入的实际结果及未执行项见[策略实施记录](auto-restart-v0.3.x.md#第二批配置与桌面实施及实际检查)。本批不生成候选包，不执行 Release 或 `scripts/Publish.ps1`；此前用户跳过的 v0.3.0 补充实机验收继续保留未执行。
+
 ## 工程规范护栏：警告即错误
 
 仓库根 `.editorconfig` 统一缩进、换行、UTF-8 和命名约定（私有字段 `_camelCase`，其余成员 `PascalCase`），并逐条登记分析器严重级别；`Directory.Build.props` 只声明一次 `TreatWarningsAsErrors` 与 `EnforceCodeStyleInBuild`。`.editorconfig` 在展开阶段最后生效，可以逐条覆盖严重级别，因此例外必须连同理由写在文件内，不做隐式忽略。
@@ -34,7 +49,7 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 ## 桌面回归独立执行
 
-`MainWindowIntegrationTests` 现在提供十个独立测试结果，可按方法名筛选；各套内部已有断言继续保留：
+`MainWindowIntegrationTests` 原有十套继续提供独立测试结果，另增加十三项有限自动重启回归（见上节）。各套可按方法名筛选，内部已有断言继续保留：
 
 | 测试方法 | 覆盖内容 |
 | --- | --- |
@@ -49,14 +64,14 @@ $workspace = Join-Path $testRoot "workspace.json"
 | `StaleWorkspaceChecksDoNotDisableSaving` | 激活摘要检查跨越保存或重载后的旧结果失效，真实外部变化仍被拒绝 |
 | `UpdateStatesDoNotBlockDesktopCommandAndOutputFlows` | 更新失败、限流、挂起期间的运行、重启、停止、输出和分组 |
 
-例如，单独执行布局回归或执行全部十套并输出独立 TRX 结果：
+例如，单独执行布局回归或执行全部桌面测试并输出独立 TRX 结果：
 
 ```powershell
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests.WindowLayoutAndSettingsSurviveResizeAndReopen"
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests" --logger "trx;LogFileName=desktop.trx" --results-directory artifacts/tests/desktop
 ```
 
-十套保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
+全部桌面套件保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
 
 普通断言失败且清理成功后，宿主仍可执行下一套。清理失败、窗口残留或外层超时会使宿主不可用，后续测试直接失败并说明原因，不继续投递。共享 STA 线程卡死无法在进程内安全恢复；这时关闭宿主也可能超时，需要结束该次测试运行，不按名称结束其他系统进程。正常清理先关闭窗口、停止归属命令并完成日志收尾，再删除独立临时目录。
 

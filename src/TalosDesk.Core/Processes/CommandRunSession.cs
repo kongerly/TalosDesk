@@ -23,7 +23,7 @@ public enum CommandStopResult
     ForceTerminated
 }
 
-public sealed class CommandRunSession : IAsyncDisposable
+public sealed class CommandRunSession : ICommandRunSession
 {
     private readonly SafeJobHandle _job;
     private readonly SafeProcessHandle _process;
@@ -38,16 +38,20 @@ public sealed class CommandRunSession : IAsyncDisposable
     private int _forceTerminated;
     private readonly TcpProbeMonitor? _probe;
     private int _stopInProgress;
+    private int _ownershipReleased;
+    private readonly ICommandObservationOperations _observation;
+    private Task _outputDrain = Task.CompletedTask;
 
     internal CommandRunSession(SafeJobHandle job, SafeProcessHandle process, int processId, StreamReader stdout, StreamReader stderr,
         EventHandler<CommandOutput>? outputReceived, ICommandStopOperations stopOperations, IReadOnlyList<string> sensitiveValues,
-        TcpProbeConfiguration? tcpProbe = null)
+        TcpProbeConfiguration? tcpProbe = null, ICommandObservationOperations? observation = null)
     {
         _job = job;
         _process = process;
         _processId = processId;
         _stopOperations = stopOperations;
         _sensitiveValues = sensitiveValues;
+        _observation = observation ?? WindowsCommandObservationOperations.Instance;
         if (outputReceived is not null) OutputReceived += outputReceived;
         if (tcpProbe is not null)
         {
@@ -66,6 +70,7 @@ public sealed class CommandRunSession : IAsyncDisposable
     public TcpProbeSnapshot TcpProbe => _probe?.Snapshot ?? new(TcpProbeState.NotConfigured, 0, null);
     public bool IsStopRequested => Volatile.Read(ref _stopRequested) != 0;
     public bool IsStopping => Volatile.Read(ref _stopInProgress) != 0;
+    public bool IsOwnershipReleased => Volatile.Read(ref _ownershipReleased) != 0;
 
     public Task<CommandRunResult> Completion => _completion;
 
@@ -76,7 +81,7 @@ public sealed class CommandRunSession : IAsyncDisposable
         await _stopLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_completion.IsCompleted)
+            if (IsOwnershipReleased)
             {
                 return CommandStopResult.AlreadyExited;
             }
@@ -86,7 +91,7 @@ public sealed class CommandRunSession : IAsyncDisposable
             _probe?.Stop();
             if (!_stopOperations.TrySendCtrlC(_processId))
             {
-                if (_completion.IsCompleted)
+                if (IsOwnershipReleased)
                 {
                     return CommandStopResult.AlreadyExited;
                 }
@@ -95,6 +100,7 @@ public sealed class CommandRunSession : IAsyncDisposable
             var gracefulExit = await _stopOperations.WaitForCommandGroupExitAsync(_job, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
             if (gracefulExit)
             {
+                await ReleaseFaultedOwnershipAsync().ConfigureAwait(false);
                 return CommandStopResult.StoppedAfterCtrlC;
             }
 
@@ -106,6 +112,7 @@ public sealed class CommandRunSession : IAsyncDisposable
                 throw new TimeoutException("TalosDesk could not confirm that every process in this command group exited after the force-stop request.");
             }
 
+            await ReleaseFaultedOwnershipAsync().ConfigureAwait(false);
             return CommandStopResult.ForceTerminated;
         }
         finally
@@ -117,12 +124,28 @@ public sealed class CommandRunSession : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (!_completion.IsCompleted)
+        if (!IsOwnershipReleased)
         {
             await StopAsync().ConfigureAwait(false);
         }
 
-        await _completion.ConfigureAwait(false);
+        try { await _completion.ConfigureAwait(false); }
+        finally
+        {
+            if (IsOwnershipReleased)
+            {
+                _process.Dispose();
+                _job.Dispose();
+            }
+        }
+    }
+
+    private async Task ReleaseFaultedOwnershipAsync()
+    {
+        if (!_completion.IsCompleted) return; // 正常观察仍需读取退出码和排空输出。
+        try { await _outputDrain.ConfigureAwait(false); }
+        catch { /* 输出观察失败不撤销已经确认的归属退出。 */ }
+        Interlocked.Exchange(ref _ownershipReleased, 1);
         _process.Dispose();
         _job.Dispose();
     }
@@ -133,15 +156,17 @@ public sealed class CommandRunSession : IAsyncDisposable
         {
             var stdoutTask = PumpAsync(stdout, "stdout");
             var stderrTask = PumpAsync(stderr, "stderr");
-            await WindowsNative.WaitForProcessAsync(_process, Timeout.InfiniteTimeSpan, CancellationToken.None).ConfigureAwait(false);
-            await WindowsNative.WaitForCommandGroupExitAsync(_job, Timeout.InfiniteTimeSpan, CancellationToken.None).ConfigureAwait(false);
+            _outputDrain = Task.WhenAll(stdoutTask, stderrTask);
+            await _observation.WaitForProcessAsync(_process).ConfigureAwait(false);
+            await _observation.WaitForGroupAsync(_job).ConfigureAwait(false);
             _probe?.Stop();
-            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+            await _outputDrain.ConfigureAwait(false);
 
-            var exitCode = WindowsNative.GetExitCode(_process);
+            var exitCode = _observation.GetExitCode(_process);
             var stopped = Volatile.Read(ref _stopRequested) != 0;
             var forced = Volatile.Read(ref _forceTerminated) != 0;
             var state = stopped ? CommandRunState.Stopped : exitCode == 0 ? CommandRunState.Succeeded : CommandRunState.Failed;
+            Interlocked.Exchange(ref _ownershipReleased, 1);
             return new CommandRunResult(state, exitCode, forced);
         }
         finally
@@ -150,8 +175,12 @@ public sealed class CommandRunSession : IAsyncDisposable
             await _stopLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                _process.Dispose();
-                _job.Dispose();
+                // 观察失败时保留控制资源，允许重试停止；不能把 faulted Completion 当作退出。
+                if (IsOwnershipReleased)
+                {
+                    _process.Dispose();
+                    _job.Dispose();
+                }
             }
             finally
             {

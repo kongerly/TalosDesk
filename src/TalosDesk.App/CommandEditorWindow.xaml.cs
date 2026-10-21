@@ -28,6 +28,7 @@ public partial class CommandEditorWindow : Window
         PurposeBox.Text = existing.Purpose;
         CommandBox.Text = existing.Command;
         KindBox.SelectedIndex = existing.Kind == CommandKind.Service ? 1 : 0;
+        AutoRestartEnabledBox.IsChecked = existing.AutoRestartEnabled;
         if (existing.TcpProbe is { } probe)
         {
             ProbeAddressBox.SelectedIndex = probe.Address == "::1" ? 1 : 0;
@@ -47,9 +48,11 @@ public partial class CommandEditorWindow : Window
 
     private void RefreshProbeFields()
     {
-        if (ProbeFields is null || ProbeEnabledBox is null || ProbeTaskHint is null) return;
+        if (AutoRestartEnabledBox is null || ProbeFields is null || ProbeEnabledBox is null || ProbeTaskHint is null) return;
         var service = KindBox.SelectedIndex == 1;
         ProbeEnabledBox.IsEnabled = service;
+        AutoRestartEnabledBox.IsEnabled = service;
+        if (!service) AutoRestartEnabledBox.IsChecked = false;
         ProbeFields.IsEnabled = service && ProbeEnabledBox.IsChecked == true;
         ProbeTaskHint.Visibility = service ? Visibility.Collapsed : Visibility.Visible;
     }
@@ -172,6 +175,7 @@ public partial class CommandEditorWindow : Window
             WorkingDirectory = Path.GetFullPath(WorkingDirectoryBox.Text.Trim()),
             Kind = kind,
             TcpProbe = probe,
+            AutoRestartEnabled = kind == CommandKind.Service && AutoRestartEnabledBox.IsChecked == true,
             EnvironmentVariables = _environmentVariables.Select(variable => variable.Clone()).ToList()
         };
         DialogResult = true;

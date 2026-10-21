@@ -320,7 +320,7 @@
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <TextBlock x:Name="SelectedCommandName" Text="请选择命令" FontFamily="{StaticResource DisplayFont}" FontSize="14" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
-                            <TextBlock x:Name="RunStateText" Grid.Column="1" Text="空闲" FontSize="11" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" Margin="12,0,0,0" />
+                            <TextBlock x:Name="RunStateText" Grid.Column="1" TextWrapping="Wrap" MaxWidth="320" Text="空闲" FontSize="11" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" Margin="12,0,0,0" />
                         </Grid>
                         <WrapPanel Grid.Row="1" HorizontalAlignment="Right" Margin="0,7,0,0">
                             <Button x:Name="RunButton" Content="运行" Style="{StaticResource PrimaryButton}" Click="RunCommand_Click" IsEnabled="False" />
@@ -350,7 +350,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <DockPanel Margin="17,0,8,0" VerticalAlignment="Center">
                                 <Path Data="M 0,5 L 5,0 L 10,5 L 5,10 Z" Fill="#FFF7ED" Stroke="{StaticResource GoldBrush}" StrokeThickness="1.4" Width="10" Height="10" />
-                                <TextBlock Text="执行轨道按保存顺序启动；同一命令可以出现在多个分组中" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="9,0,0,0" TextWrapping="Wrap" />
+                                <TextBlock Text="执行轨道按保存顺序启动；分组运行不启用自动重启，已占用或待重试命令会跳过" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="9,0,0,0" TextWrapping="Wrap" />
                             </DockPanel>
                             <TextBlock x:Name="GroupCountText" Grid.Column="1" Text="0 个分组" Foreground="{StaticResource JadeBrush}" FontFamily="{StaticResource CodeFont}" FontSize="10" FontWeight="Bold" VerticalAlignment="Center" Margin="8,0,17,0" />
                         </Grid>
@@ -431,7 +431,7 @@
                                     <TextBlock x:Name="LogCommandName" Text="选择命令以查看输出" FontFamily="{StaticResource DisplayFont}" FontSize="16" FontWeight="Bold" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" />
                                     <TextBlock x:Name="RunStartedText" Text="" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0" />
                                 </StackPanel>
-                                <TextBlock x:Name="OutputRunStateText" Grid.Column="1" Text="空闲" FontSize="11" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                <TextBlock x:Name="OutputRunStateText" Grid.Column="1" TextWrapping="Wrap" MaxWidth="320" Text="空闲" FontSize="11" FontWeight="Bold" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" VerticalAlignment="Center" />
                             </Grid>
                             <WrapPanel Grid.Row="1" Margin="0,12,0,0">
                                 <Button x:Name="OutputRunButton" Content="运行" Style="{StaticResource PrimaryButton}" Click="RunCommand_Click" IsEnabled="False" />

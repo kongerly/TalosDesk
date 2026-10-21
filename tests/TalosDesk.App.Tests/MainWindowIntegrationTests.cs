@@ -67,6 +67,58 @@ public sealed class MainWindowIntegrationTests
             () => $"{progress.Stage}，页面阶段：{progress.Phase}");
     }
 
+    [TestMethod]
+    public void RecoveryBudgetLogsAndOccupancy() =>
+        _host.Run(nameof(RecoveryBudgetLogsAndOccupancy), RecoveryRegression.BudgetLogsAndOccupancy, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryPauseReturnAndWaitingExit() =>
+        _host.Run(nameof(RecoveryPauseReturnAndWaitingExit), RecoveryRegression.PauseReturnAndWaitingExit, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryQueuedCompletionAndRestartCannotEscapeExit() =>
+        _host.Run(nameof(RecoveryQueuedCompletionAndRestartCannotEscapeExit), RecoveryRegression.QueuedCompletionAndRestartCannotEscapeExit, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryManualRestartAndStopCancelOldRound() =>
+        _host.Run(nameof(RecoveryManualRestartAndStopCancelOldRound), RecoveryRegression.ManualRestartAndStopCancelOldRound, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryExternalChangeCancelsBeforeAutomaticCreate() =>
+        _host.Run(nameof(RecoveryExternalChangeCancelsBeforeAutomaticCreate), RecoveryRegression.ExternalChangeCancelsBeforeAutomaticCreate, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryAutomaticPreflightAndCreationFailuresKeepLastBatch() =>
+        _host.Run(nameof(RecoveryAutomaticPreflightAndCreationFailuresKeepLastBatch), RecoveryRegression.AutomaticPreflightAndCreationFailuresKeepLastBatch, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryFaultOwnershipAndFailedExitRemainStoppable() =>
+        _host.Run(nameof(RecoveryFaultOwnershipAndFailedExitRemainStoppable), RecoveryRegression.FaultOwnershipAndFailedExitRemainStoppable, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryIndependentBatchAndGroupSourcesStaySeparate() =>
+        _host.Run(nameof(RecoveryIndependentBatchAndGroupSourcesStaySeparate), RecoveryRegression.IndependentBatchAndGroupSourcesStaySeparate, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryEditorPreviewAndClonesPreservePolicyWithoutRunning() =>
+        _host.Run(nameof(RecoveryEditorPreviewAndClonesPreservePolicyWithoutRunning), RecoveryRegression.EditorPreviewAndClonesPreservePolicyWithoutRunning, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches() =>
+        _host.Run(nameof(RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches), RecoveryRegression.RealProcessRetriesUseNewProbeAndRedactedLogBatches, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryOwnSavePausesAndKeepsOriginalBudget() =>
+        _host.Run(nameof(RecoveryOwnSavePausesAndKeepsOriginalBudget), RecoveryRegression.OwnSavePausesAndKeepsOriginalBudget, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryCreationRollbackFaultDoesNotLeaveFalseBatch() =>
+        _host.Run(nameof(RecoveryCreationRollbackFaultDoesNotLeaveFalseBatch), RecoveryRegression.CreationRollbackFaultDoesNotLeaveFalseBatch, () => RecoveryRegression.Stage);
+
+    [TestMethod]
+    public void RecoveryImportMergeAndFailedEditorSavePreservePolicy() =>
+        _host.Run(nameof(RecoveryImportMergeAndFailedEditorSavePreservePolicy), RecoveryRegression.ImportMergeAndFailedEditorSavePreservePolicy, () => RecoveryRegression.Stage);
+
     private static void RunRegression(ProgressState progress)
     {
         var sandbox = Path.Combine(Path.GetTempPath(), "TalosDesk.App.Tests", Guid.NewGuid().ToString("N"));
@@ -449,7 +501,7 @@ public sealed class MainWindowIntegrationTests
 
     private sealed class ExitInteraction : IMainWindowExitInteraction
     {
-        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount) => true;
+        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount, int pendingCount = 0) => true;
         public async Task StopAsync(CommandRunSession session) => await session.StopAsync();
         public void ReportFailure(Window owner, Exception exception) => throw new AssertFailedException("更新回归无法停止归属命令。", exception);
     }

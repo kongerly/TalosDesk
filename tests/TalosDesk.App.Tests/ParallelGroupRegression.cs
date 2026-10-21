@@ -61,13 +61,13 @@ internal static class ParallelGroupRegression
             group = project.Groups[0];
             skipped = project.Commands[2];
             peer = project.Commands[1];
-            Assert.IsTrue((bool)Invoke(window, "TryStartCommand", project, skipped, null, string.Empty, false)!);
+            Start(window, project, skipped);
             var skippedSession = Sessions(window)[skipped.Id];
-            Invoke(window, "RunParallelGroup", project, group);
+            RunGroup(window, project, group);
             var failingSession = Sessions(window)[failedService.Id];
             var originalPeer = Sessions(window)[peer.Id];
-            Wait(() => failingSession.GetRecentOutput().Any(output => output.Text == "failure-service-ready") &&
-                originalPeer.GetRecentOutput().Any(output => output.Text == "peer-service-ready"));
+            Wait(() => ((CommandRunSession)failingSession).GetRecentOutput().Any(output => output.Text == "failure-service-ready") &&
+                ((CommandRunSession)originalPeer).GetRecentOutput().Any(output => output.Text == "peer-service-ready"));
             if (!serviceOnly)
             {
                 Wait(() => window.GroupItems[0].StatusText == "任务已成功 · 2 个服务继续运行");
@@ -75,7 +75,7 @@ internal static class ParallelGroupRegression
                 Assert.IsFalse(originalPeer.Completion.IsCompleted);
             }
 
-            CommandRunSession? replacement = null;
+            ICommandRunSession? replacement = null;
             if (retry != RetryMode.None)
             {
                 Stage = $"混合分组 / {retry} / 建立新会话";
@@ -83,12 +83,12 @@ internal static class ParallelGroupRegression
                 Wait(() => stop.IsCompleted && originalPeer.Completion.IsCompleted);
                 stop.GetAwaiter().GetResult();
                 if (retry == RetryMode.ManualRestart)
-                    Assert.IsTrue((bool)Invoke(window, "TryStartCommand", project, peer, null, string.Empty, false)!);
+                    Start(window, project, peer);
                 else
-                    Invoke(window, "RunParallelGroup", project, group);
+                    RunGroup(window, project, group);
                 replacement = Sessions(window)[peer.Id];
                 Assert.AreNotSame(originalPeer, replacement);
-                Wait(() => replacement.GetRecentOutput().Any(output => output.Text == "peer-service-ready"));
+                Wait(() => ((CommandRunSession)replacement).GetRecentOutput().Any(output => output.Text == "peer-service-ready"));
                 if (retry == RetryMode.GroupRerun)
                     Wait(() => window.GroupItems[0].StatusText == "任务已成功 · 1 个服务继续运行");
             }
@@ -141,8 +141,24 @@ internal static class ParallelGroupRegression
         });
     }
 
-    private static Dictionary<Guid, CommandRunSession> Sessions(MainWindow window) =>
-        (Dictionary<Guid, CommandRunSession>)typeof(MainWindow).GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+    private static Dictionary<Guid, ICommandRunSession> Sessions(MainWindow window) =>
+        (Dictionary<Guid, ICommandRunSession>)typeof(MainWindow).GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+
+    private static void RunGroup(MainWindow window, ProjectDefinition project, CommandGroupDefinition group)
+    {
+        var pending = (Task)Invoke(window, "RunParallelGroupAsync", project, group)!;
+        Wait(() => pending.IsCompleted);
+        pending.GetAwaiter().GetResult();
+    }
+
+    private static void Start(MainWindow window, ProjectDefinition project, CommandDefinition command)
+    {
+        var pending = (Task<(ICommandRunSession? Session, string Error)>)Invoke(window, "StartCommandSessionAsync", project, command,
+            CommandStartSource.Independent, false, false, CancellationToken.None)!;
+        Wait(() => pending.IsCompleted);
+        var result = pending.GetAwaiter().GetResult();
+        Assert.IsNotNull(result.Session, result.Error);
+    }
 
     private static object? Invoke(object target, string method, params object?[] args) =>
         target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, args);
@@ -165,7 +181,7 @@ internal static class ParallelGroupRegression
 
     private sealed class ExitInteraction : IMainWindowExitInteraction
     {
-        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount) => true;
+        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount, int pendingCount = 0) => true;
         public Task StopAsync(CommandRunSession session) => session.StopAsync();
         public void ReportFailure(Window owner, Exception exception) => throw new AssertFailedException("分组回归无法停止归属命令。", exception);
     }

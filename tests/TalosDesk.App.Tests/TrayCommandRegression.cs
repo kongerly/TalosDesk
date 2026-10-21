@@ -159,7 +159,7 @@ internal static class TrayCommandRegression
         internal TaskCompletionSource? Gate;
         internal CommandRunSession? Session;
 
-        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount)
+        public bool ConfirmExit(Window owner, int commandCount, int sequenceCount, int pendingCount = 0)
         {
             Assert.IsTrue(owner.IsVisible);
             Assert.AreEqual(1, commandCount);
