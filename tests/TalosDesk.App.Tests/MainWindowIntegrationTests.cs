@@ -119,6 +119,13 @@ public sealed class MainWindowIntegrationTests
     public void RecoveryImportMergeAndFailedEditorSavePreservePolicy() =>
         _host.Run(nameof(RecoveryImportMergeAndFailedEditorSavePreservePolicy), RecoveryRegression.ImportMergeAndFailedEditorSavePreservePolicy, () => RecoveryRegression.Stage);
 
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void EditorTargetSurvivesNestedWorkspaceCallbacks(bool replaceConfiguration) =>
+        _host.Run(nameof(EditorTargetSurvivesNestedWorkspaceCallbacks),
+            () => RecoveryRegression.EditorTargetSurvivesNestedWorkspaceCallbacks(replaceConfiguration), () => RecoveryRegression.Stage);
+
     private static void RunRegression(ProgressState progress)
     {
         var sandbox = Path.Combine(Path.GetTempPath(), "TalosDesk.App.Tests", Guid.NewGuid().ToString("N"));

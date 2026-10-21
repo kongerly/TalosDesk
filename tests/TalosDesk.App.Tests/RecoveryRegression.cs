@@ -357,6 +357,58 @@ internal static class RecoveryRegression
         Assert.IsEmpty(Directory.GetFiles(f.Root, "run.json", SearchOption.AllDirectories));
     }
 
+    internal static void EditorTargetSurvivesNestedWorkspaceCallbacks(bool replaceConfiguration)
+    {
+        using var f = new Fixture(commandCount: 2);
+        var project = f.Window.Projects[0];
+        var command = project.Commands[0];
+        var before = File.ReadAllBytes(f.Store.FilePath);
+        Stage = replaceConfiguration ? "编辑期间替换配置使草稿失效" : "编辑弹窗中重载与更换选择";
+        var editing = Respond(() => (Task)Invoke(f.Window, "EditSelectedCommandAsync")!, window =>
+        {
+            if (window is CommandEditorWindow editor)
+            {
+                if (replaceConfiguration)
+                {
+                    var replacement = (ProjectDefinition)typeof(MainWindow).GetMethod("CloneProject", BindingFlags.Static | BindingFlags.NonPublic)!
+                        .Invoke(null, [project])!;
+                    Invoke(f.Window, "ReplaceProjects", (object)new[] { replacement });
+                }
+                else
+                {
+                    // 同步命中模态消息循环中的重载入口，不依赖 250 ms 计时碰撞。
+                    var reload = f.Window.ReloadWorkspaceForSecondaryLaunchAsync();
+                    Wait(() => reload.IsCompleted);
+                    reload.GetAwaiter().GetResult();
+                    Assert.AreSame(project, f.Window.Projects[0], "弹窗仍打开时不能替换其项目对象。");
+                    Assert.AreSame(command, f.Window.Projects[0].Commands[0]);
+                    ((ListBox)f.Window.FindName("CommandList")).SelectedIndex = 1;
+                }
+                ((CheckBox)editor.FindName("AutoRestartEnabledBox")).IsChecked = false;
+                Invoke(editor, "SaveCommand");
+            }
+            else ((Button)window.FindName("PrimaryActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        });
+        Respond(() => { Wait(() => editing.IsCompleted); return true; }, window =>
+            ((Button)window.FindName("PrimaryActionButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
+        editing.GetAwaiter().GetResult();
+        if (replaceConfiguration)
+        {
+            Assert.IsTrue(f.Window.Projects[0].Commands.All(item => item.AutoRestartEnabled));
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(f.Store.FilePath));
+        }
+        else
+        {
+            Assert.IsFalse(f.Window.Projects[0].Commands[0].AutoRestartEnabled);
+            Assert.IsTrue(f.Window.Projects[0].Commands[1].AutoRestartEnabled, "改变当前选择不能把原草稿保存到另一个命令。");
+            var saved = f.Store.LoadAsync().GetAwaiter().GetResult();
+            Assert.IsFalse(saved.Projects[0].Commands[0].AutoRestartEnabled);
+            Assert.IsTrue(saved.Projects[0].Commands[1].AutoRestartEnabled);
+        }
+        Assert.IsEmpty(f.Sessions);
+        Assert.IsEmpty(Directory.GetFiles(f.Root, "run.json", SearchOption.AllDirectories));
+    }
+
     private static T Respond<T>(Func<T> action, Action<Window> respond)
     {
         Exception? failure = null;

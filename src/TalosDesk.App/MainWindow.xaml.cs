@@ -422,6 +422,12 @@ public partial class MainWindow : Window
 
     internal async Task ReloadWorkspaceForSecondaryLaunchAsync()
     {
+        // ShowDialog 的嵌套消息循环仍会处理启动补查与再次唤醒；不能替换打开中草稿的绑定对象。
+        if (OwnedWindows.Cast<Window>().Any(window => window.IsVisible))
+        {
+            SaveStatusText.Text = "正在编辑或确认，未重新加载配置";
+            return;
+        }
         if (!_workspaceLoaded || _workspaceChangeInProgress || _closeInProgress || _restartsInProgress.Count > 0 ||
             _sequentialGroupCancellations.Count > 0 || _recovery.GetSnapshots().Any(snapshot => snapshot.IsBusy))
         {
@@ -1902,16 +1908,25 @@ public partial class MainWindow : Window
     private async Task EditSelectedCommandAsync()
     {
         if (_selectedProject is null || _selectedCommand is null || !CanEditCommand(_selectedCommand)) return;
-        var editor = new CommandEditorWindow(_selectedProject.Directory, _selectedCommand) { Owner = this };
+        var project = _selectedProject;
+        var previousCommand = _selectedCommand;
+        var editor = new CommandEditorWindow(project.Directory, previousCommand) { Owner = this };
         if (editor.ShowDialog() != true || editor.Result is null) return;
-        if (_selectedProject.Commands.Any(command => command.Id != editor.Result.Id && SameCommandName(command.Name, editor.Result.Name)))
+        var index = project.Commands.IndexOf(previousCommand);
+        if (!Projects.Contains(project) || !ReferenceEquals(_selectedProject, project) || index < 0 || IsCommandBusy(previousCommand.Id))
+        {
+            AppMessageDialog.Show(this, "编辑期间配置或运行状态已变化，本次草稿未保存。请重新打开命令编辑器。",
+                "编辑目标已变化", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (project.Commands.Any(command => command.Id != editor.Result.Id && SameCommandName(command.Name, editor.Result.Name)))
         {
             AppMessageDialog.Show(this, "此项目已有同名命令，请使用其他名称。", "命令名称已存在", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (editor.Result.Kind == CommandKind.Service)
         {
-            var sequentialGroups = CommandGroupOperations.GetSequentialGroupsContaining(_selectedProject, editor.Result.Id);
+            var sequentialGroups = CommandGroupOperations.GetSequentialGroupsContaining(project, editor.Result.Id);
             if (sequentialGroups.Count > 0)
             {
                 AppMessageDialog.Show(this,
@@ -1923,9 +1938,6 @@ public partial class MainWindow : Window
         if (!BeginWorkspaceChange()) return;
         try
         {
-            var project = _selectedProject;
-            var index = project.Commands.IndexOf(_selectedCommand);
-            var previousCommand = project.Commands[index];
             _recovery.CancelRecovery(previousCommand.Id);
             project.Commands[index] = editor.Result;
             RefreshCommandList(editor.Result);

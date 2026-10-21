@@ -138,3 +138,11 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/Talo
 CI 的虚拟桌面可能限制顶层窗口尺寸。布局断言依据实际显示宽度，并记录请求尺寸、实际尺寸和工作区；额外使用窗口尺寸上限，在本机也覆盖“请求宽布局但实际只能显示窄布局”的情况。位置往返测试先将窗口完整放入可用工作区，避免把正常的屏幕边界修正误判为恢复失败。较小 runner 上的通过不代表所有请求尺寸均已原样显示。
 
 布局回归等待隔离工作区的首次读取和启动后异步重载完成，再开始访问分组控件；“检查更新”按钮可用不能代替启动重载完成。滚动请求后的消息处理可能重建按钮，检查会依据名称、内容和数据上下文重新定位当前控件，最多尝试三次，再执行原有尺寸和裁切断言。合成场景主动在滚动请求后替换按钮，验证旧可视树不会再参与坐标转换；另移除按钮并确认测试失败，避免因跳过已脱离窗口的控件而漏检。
+
+## 命令编辑与配置重载的模态竞态（2026-10-21）
+
+提交 `5ad84cd` 的 [Windows CI](https://github.com/kongerly/TalosDesk/actions/runs/39605579441) 在 Release 构建成功后，`RecoveryImportMergeAndFailedEditorSavePreservePolicy` 出现 `ArgumentOutOfRangeException`：编辑器的模态消息循环允许启动后的延迟重载替换项目对象，保存又用变化后的当前选择计算索引。该次 CI Core 266 项通过，App 45 项通过、1 项失败；此前本机 Debug 通过不能排除这条竞态。
+
+重载现在会跳过正在显示的所有者编辑/确认窗口；编辑开始时捕获确切项目与命令，保存前重新验证对象归属、索引及占用，配置已被替换则提示草稿未保存。更改当前命令选择不能让草稿写入另一条命令。
+
+`EditorTargetSurvivesNestedWorkspaceCallbacks` 的两个数据用例同步在模态回调中触发重载/更换选择，或直接替换配置，不依赖等待 250 ms 碰撞。修复前两个用例均失败，直接替换用例复现 CI 同一数组越界；修复后两个用例和原 CI 失败用例 3/3 通过。随后在独立工作树按 CI 顺序执行还原、完整 Release 构建及 `test TalosDesk.slnx --configuration Release --no-build --no-restore`：构建 0 警告、0 错误，Core 266/266、App 48/48，共 314/314，0 跳过；`git diff --check` 通过。此修复没有执行发布脚本或最终候选包验收，原有实机未执行项保持不变。
