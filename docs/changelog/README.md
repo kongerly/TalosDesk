@@ -1,20 +1,12 @@
-# 变更记录
+# 版本记录
 
-面向未来的文档不记录会随时间变化的结果数字。以下归档保存历史实施记录，原始内容和日期未作改写。
+本页面向使用者和贡献者汇总已发布变更。当前源码与未来方向见[路线图](../roadmap.md)，历史自包含包的运行时问题见[安全维护说明](../security-maintenance-2026-10-22.md)。
 
-| 归档 | 覆盖范围 | 原始位置 |
+| 版本 | 渠道 | 主要变化 |
 | --- | --- | --- |
-| [实施记录 v0.1.1 → v0.2.0](implementation-log-v0.1.1-to-v0.2.0.md) | T01–T08 批次计划与逐批本地实施记录、窗口与托盘等源码维护记录、v0.2.0 之后的源码修复检查记录 | `docs/roadmap.md`、`docs/testing.md` |
+| [v0.3.0](../release-v0.3.0.md) | Stable | 回环 TCP 探测、项目汇总、托盘、窗口恢复及配置与日志保护 |
+| [v0.2.0](../release-v0.2.0.md) | Stable | 可关闭的更新检查、本地崩溃诊断及贡献材料 |
+| [v0.1.1](../release-v0.1.1.md) | Preview | 命令分组、持久化日志、敏感环境变量与输出脱敏 |
+| [v0.1.0](../release-v0.1.0.md) | Preview | 项目与命令管理、执行与停止、输出及 JSON 导入导出 |
 
-## 为什么不写"通过 N 项测试"
-
-自动化测试的通过数、发布 ZIP 的字节数与条目数、SHA-256、单次本机耗时，都是**某一次运行的结果**，不是代码的属性。把它们写进 `docs/roadmap.md`、`docs/testing.md` 这类面向未来的文档后，同一个文件里就会出现多个互相矛盾的"当前值"，读者无法判断该信哪一个。
-
-这些数字的权威来源是：
-
-- [Windows CI 运行记录](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)：每次 push 与 PR 的完整 Release 构建与全量测试结果，附 TRX。
-- [release tag](https://github.com/kongerly/TalosDesk/releases)：已发布版本的候选包 SHA-256 与附件。
-
-需要复核某个提交实际通过了多少用例时，请以该提交的 CI 运行记录为准；需要复核某个发布包的校验值时，请核对对应 tag 的附件与 `.sha256` 文件。
-
-文档仍然保留的内容是**不随时间变化的事实**：环境版本、缺陷复现结论（修复前失败、修复后通过）、长期已知限制，以及每次明确未执行的验收项。归档记录中保留了当次的具体数字，仅作为历史执行的凭据，不表示当前状态。
+发布附件与校验文件以[官方 Releases](https://github.com/kongerly/TalosDesk/releases)为准，对应提交的自动化结果见 [Windows CI](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)。未发布候选与本地安全重建不列为已发布版本。

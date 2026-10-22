@@ -7,6 +7,10 @@ TestResults/
 *.user
 *.suo
 
+# 本地内部文档、验收证据与工作副本
+/docs/local/
+/work/
+
 # Local configuration and credentials
 .env
 .env.*

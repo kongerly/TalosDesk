@@ -1,148 +1,80 @@
 # 隔离测试说明
 
-所有桌面和集成测试都应把工作区放在独立临时目录，并传入明确身份：
+本文供贡献者复现验证，不包含维护者的逐次验收报告。测试只使用独立临时目录、合成命令和占位凭据，不读取日常工作区，也不按进程名结束其他程序。
+
+## 构建与自动化
+
+开发环境安装见[贡献指南](../CONTRIBUTING.md)。先验证相关 Core 行为，再检查桌面流程：
 
 ```powershell
-$testRoot = Join-Path ([IO.Path]::GetTempPath()) ("TalosDesk-Manual-" + [guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Path $testRoot | Out-Null
-$workspace = Join-Path $testRoot "workspace.json"
-.\src\TalosDesk.App\bin\Release\net10.0-windows\TalosDesk.App.exe --workspace $workspace --profile-label "隔离测试"
+pwsh -NoProfile -File .\scripts\Test-Environment.ps1
+pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.Core.Tests/TalosDesk.Core.Tests.csproj --configuration Release
+pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release
+pwsh -NoProfile -File .\scripts\With-Sdk.ps1 build TalosDesk.slnx --configuration Release
+pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration Release --no-build --no-restore
 ```
 
-测试结束后先关闭应用并确认合成命令已经退出，再删除这个明确的临时目录。不要把 `%LOCALAPPDATA%\TalosDesk\workspace.json` 用于自动化。
+`.editorconfig` 和 `Directory.Build.props` 启用警告即错误；例外须在配置中说明理由。[Windows CI](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)保存对应提交的构建与测试结果。测试数量、耗时和包哈希属于当次运行，不写进长期指南。
 
-本文只写不随时间变化的内容：测试分层、回归覆盖范围、长期已知限制和未执行项。各次检查的通过数量与逐日实施记录已移入[变更记录归档](changelog/README.md)，发布包大小与校验值见[发布 tag](https://github.com/kongerly/TalosDesk/releases)；需要核对某个提交实际通过了多少用例时，请查该提交的 [CI 运行记录](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)。
+## 回归入口
 
-## 有限自动重启：配置与桌面隔离回归
-
-`RecoveryConfigurationTests` 验证 schema 5 严格开关、schema 1–4 默认关闭与读取不改写、schema 4 TCP 保留、保存/导出及失败保留。`CommandRecoveryCoordinatorTests` 使用可控计时、完成、创建和预检屏障覆盖核心竞争条件，另验证宿主成功创建登记及回调失败仍可停止。
-
-`MainWindowIntegrationTests.Recovery*` 十三项使用相同 STA 宿主、隔离配置、可控时钟及合成会话，验证次数/倒计时、状态与按钮、历史批次、停止/重启、关闭暂停与返回、无进程退出、外部变更、故障归属及保存/导入冲突。其中 `RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches` 使用真实 PowerShell、回环监听和合成 DPAPI 值，逐会话验证四批日志、TCP 新周期、非零退出、脱敏和耗尽。测试不读取正式工作区，也不通过导入建立进程或 TCP 连接。
-
-```powershell
-pwsh -NoProfile -File scripts/With-Sdk.ps1 test tests/TalosDesk.Core.Tests/TalosDesk.Core.Tests.csproj --filter "FullyQualifiedName~Recovery" --no-restore
-$env:TALOSDESK_LAYOUT_CAPTURE_DIR = Join-Path $PWD "artifacts/tests/recovery-layout"
-pwsh -NoProfile -File scripts/With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --filter "FullyQualifiedName~Recovery" --no-restore
-pwsh -NoProfile -File scripts/With-Sdk.ps1 test TalosDesk.slnx --no-restore --logger "trx;LogFilePrefix=recovery-batch" --results-directory artifacts/tests/recovery-batch
-```
-
-截图包含等待、800×520 窄窗口等待及耗尽后的历史输出，需检查状态换行与停止/重启入口；这是 WPF 自动化操作链与渲染检查，不能替代最终包、真实鼠标、多屏/DPI 或干净客户端。新 schema 与桌面接入的实际结果及未执行项见[策略实施记录](auto-restart-v0.3.x.md#第二批配置与桌面实施及实际检查)。后续 v0.3.1-rc.1 的 Release、发布脚本和最终包检查单独见[候选验收记录](acceptance-v0.3.1-rc.1.md)；用户跳过的 v0.3.0 补充实机验收继续保留未执行。
-
-## 工程规范护栏：警告即错误
-
-仓库根 `.editorconfig` 统一缩进、换行、UTF-8 和命名约定（私有字段 `_camelCase`，其余成员 `PascalCase`），并逐条登记分析器严重级别；`Directory.Build.props` 只声明一次 `TreatWarningsAsErrors` 与 `EnforceCodeStyleInBuild`。`.editorconfig` 在展开阶段最后生效，可以逐条覆盖严重级别，因此例外必须连同理由写在文件内，不做隐式忽略。
-
-验证护栏本身是否生效时，用一个临时源文件引入可空性违规（例如对 `string?` 字段取 `.Length`），确认 `dotnet build` 以 `CS8602` 失败，再删除该文件。
-
-2026-10-06 护栏检查结论：Release 全量重建 0 警告、0 错误，完整自动化测试 0 失败、0 跳过，`git diff --check` 通过；故意引入的可空性违规按预期使构建失败。存量修复共 14 处，其中 `CommandEditorWindow` 的探测参数改为固定区域写入并同步以固定区域解析，消除了原先“写入与解析区域不一致”的往返缺陷；数量与日期显示使用 `CurrentCulture`，保持各区域原有行为。`DesktopTestHost` 的清理失败改为收集后随正文失败一并上报，不再从 `finally` 抛出，宿主不可用仍只由清理失败触发。未启用 `AnalysisLevel=latest-recommended`，未运行 `scripts/Publish.ps1`，未修改版本或制作候选包；未执行人工鼠标键盘、多屏或真实 DPI 验收。当次通过数量与基线数量见[变更记录归档](changelog/implementation-log-v0.1.1-to-v0.2.0.md#工程规范护栏检查2026-10-06)。
-
-## 自动化层次
-
-1. 相关 Core 测试验证纯逻辑、存储失败和边界条件。
-2. App 测试使用 STA Dispatcher、模拟网络和浏览器替身验证桌面流程。
-3. 全量验证运行 Release 构建及整个解决方案测试。
-4. 候选包运行 `scripts/Publish.ps1`，再从最终解压目录执行桌面验收。
-
-诊断测试只使用合成秘密，并检查 `.crashes` 中的 JSON 与临时文件都不包含该值。异常测试不得破坏测试运行器；真实进程退出场景应放在独立宿主进程中。跨账户 DPAPI 必须在两个隔离 Windows 账户中执行，模拟解密失败不能替代该结果。
-
-候选包的人工步骤见 [v0.2.0 验收清单](acceptance-v0.2.0.md)。
-
-## 桌面回归独立执行
-
-`MainWindowIntegrationTests` 原有十套继续提供独立测试结果，另增加十三项有限自动重启回归（见上节）。各套可按方法名筛选，内部已有断言继续保留：
-
-| 测试方法 | 覆盖内容 |
+| 入口 | 主要覆盖 |
 | --- | --- |
-| `MessageDialogsPreserveInteractionAndLayout` | 提示、导入冲突、异常配置与运行中退出 |
-| `TrayControllerPreservesWindowAndIconLifecycle` | 托盘注册、恢复、通知区域重建及资源释放 |
-| `TrayCommandsContinueRunningAndExitSafely` | 隐藏期间命令与日志、取消退出、停止失败和重试 |
-| `WindowLayoutAndSettingsSurviveResizeAndReopen` | 页面与弹窗布局、窗口状态保存与恢复 |
-| `TcpProbeStatesFollowDesktopCommandLifecycle` | 探测编辑、状态、输出与项目汇总 |
-| `ParallelGroupsKeepWatchingServicesAndOnlyCleanUpTheirOwnExecution` | 纯服务及混合分组持续监视、失败清理和后续会话隔离 |
-| `HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults` | 历史后台读取、慢读取期间界面响应、切换与关闭后的旧结果隔离 |
-| `WorkspaceSavesPreserveExternalChangesAndTrackTheirOwnRevision` | 保存前后外部修改、保存摘要归属、编辑回滚与重新加载恢复 |
-| `StaleWorkspaceChecksDoNotDisableSaving` | 激活摘要检查跨越保存或重载后的旧结果失效，真实外部变化仍被拒绝 |
-| `UpdateStatesDoNotBlockDesktopCommandAndOutputFlows` | 更新失败、限流、挂起期间的运行、重启、停止、输出和分组 |
+| `WorkspaceStoreTests`、`WorkspaceSecurityTests`、`RecoveryConfigurationTests` | schema 兼容、严格 JSON、全零 ID、外部修改、保存回滚及安全导出 |
+| `CommandRunnerTests`、`CommandRunEnvironmentTests` | 归属进程、停止/重启、环境注入及启动失败 |
+| `CommandRecoveryCoordinatorTests`、`CommandRecoveryProcessTests` | 预算、退避、取消、故障归属、真实 Job 与逐会话日志 |
+| `CommandGroupExecutionTests` | 顺序预留、同时分组持续监视及确切会话清理 |
+| `RunLogStoreTests`、`StreamingOutputRedactorTests` | 历史尾部读取、损坏元数据容量、迁移、截断和脱敏 |
+| `MainWindowIntegrationTests` | 实际 WPF 控件路径、分组、导入预览、保存、探测、恢复、更新、窗口及托盘 |
+| `DesktopTestHostTests`、`WpfTestHostTests` | STA 宿主、超时及清理失败边界 |
+| 更新与诊断相关测试 | 固定网络响应、可控时间、渠道/缓存/限流、记录投影及独立崩溃宿主 |
 
-例如，单独执行布局回归或执行全部桌面测试并输出独立 TRX 结果：
+可按方法或主题筛选并输出 TRX：
 
 ```powershell
-pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests.WindowLayoutAndSettingsSurviveResizeAndReopen"
+pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.Core.Tests/TalosDesk.Core.Tests.csproj --configuration Release --filter "FullyQualifiedName~Recovery"
 pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~MainWindowIntegrationTests" --logger "trx;LogFileName=desktop.trx" --results-directory artifacts/tests/desktop
 ```
 
-全部桌面套件保持串行，在类初始化时创建专用 STA 线程、一个 `App(launchWorkspace: false)` 和持续运行的 Dispatcher，类清理时统一关闭。每套各有 120 秒外层等待上限，内部阶段期限保持原有设置；失败报告包含用例、阶段、耗时和原异常堆栈。更新流程只退出局部消息循环，不关闭共享 Dispatcher；等待异步关闭与请求取消时继续处理 Dispatcher 消息。
+竞争条件使用可控时钟、预检/创建/完成屏障和确切会话身份，避免靠随机等待碰撞。关键断言包括原文件未改写、失败不留虚假批次、旧回调不覆盖新状态、旧分组不停止后来会话，以及停止/退出后不恢复重试。
 
-普通断言失败且清理成功后，宿主仍可执行下一套。清理失败、窗口残留或外层超时会使宿主不可用，后续测试直接失败并说明原因，不继续投递。共享 STA 线程卡死无法在进程内安全恢复；这时关闭宿主也可能超时，需要结束该次测试运行，不按名称结束其他系统进程。正常清理先关闭窗口、停止归属命令并完成日志收尾，再删除独立临时目录。
+## 桌面宿主与截图
 
-`DesktopTestHostTests` 使用不创建 `Application` 的 Dispatcher 宿主，验证异常后继续、局部消息循环结束后继续、超时拒绝后续投递，以及清理失败保留两处异常并禁用宿主。
+桌面集成共用专用 STA 线程和 Dispatcher，各套串行执行。正常失败并清理成功后可继续下一套；窗口残留、清理失败或超时会禁用宿主。共享线程卡死不能在进程内安全恢复，应结束该次测试运行。
 
-`TALOSDESK_LAYOUT_CAPTURE_DIR` 继续控制提示与布局截图目录，分别筛选提示或布局测试即可生成对应截图。`TALOSDESK_NATIVE_TRAY_TEST=1` 仅为托盘控制器测试追加真实托盘 API 检查；默认使用替身，不要求通知区域可用。这些检查不替代真实鼠标、多屏或 Windows DPI 验收。
+```powershell
+$env:TALOSDESK_LAYOUT_CAPTURE_DIR = Join-Path $PWD 'artifacts/tests/layout'
+pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj --configuration Release --filter "FullyQualifiedName~WindowLayoutAndSettingsSurviveResizeAndReopen"
+```
 
-工作区旁的 `*.update-settings.json`、`*.update-cache.json` 与其他本机配置一样由 `.gitignore` 忽略，任意目录内均适用；普通 JSON 示例仍可纳入版本控制。忽略规则不会删除或改写已有旁文件。
+`TALOSDESK_NATIVE_TRAY_TEST=1` 可为托盘测试增加原生 API 检查，默认使用替身。WPF 布局缩放、合成屏幕、浏览器替身和原生托盘 API 均不能替代真实鼠标、多屏/DPI、浏览器点击与干净客户端验收。CI 虚拟桌面可能限制实际窗口尺寸，需结合截图和实际尺寸判断。
 
-## 工作区外部修改与保存摘要回归
+## 最终包检查
 
-`WorkspaceStoreTests` 在独立临时目录使用存储层内部回调，确定性地把外部修改安排在临时文件完整写入后、最终校验前，以及替换目标后、保存返回前。覆盖直接改写、原子替换、删除和首次创建冲突，检查返回摘要与实际提交字节一致，下一次保存拒绝陈旧摘要，冲突与取消不留下临时文件。另验证同实例两个携带相同预期摘要的保存只允许一次成功，以及文件被占用时两种保存入口均保留原文件。
+候选版本必须执行 `scripts/Publish.ps1`，完成还原、Release 构建、全量测试和自包含发布。脚本会替换当前副本 `artifacts/` 中的同版本输出；保留历史产物时应使用独立副本。包能启动不表示完整操作链通过。
 
-`WorkspaceSaveRegression` 共用现有 STA 宿主，使用真实项目编辑按钮与隔离工作区，检查正常保存、两个提交边界的外部替换、旧编辑回滚、禁用后不重复保存或提示，以及重新加载外部版本后恢复保存。外部替换由同步回调模拟，不依赖概率性的线程调度；这些回归不证明已有文件最后校验与替换之间对任意外部进程完全原子，也不替代真实编辑器、网络盘或人工桌面验收。
+核对 ZIP 与随附 SHA-256、应用版本与渠道、包内运行时、许可及未签名状态。包内不得包含工作区、用户日志、凭据、PDB、TRX 或测试宿主。随后从最终 ZIP 完整解压的目录，以明确的临时工作区启动：
 
-`StaleWorkspaceChecksDoNotDisableSaving` 使用延迟摘要读取替身，先挂起一次激活检查，再成功保存或重载工作区，最后返回此前读取的旧摘要。检查迟到结果不会禁用保存；修改进行中收到不同摘要也不会干扰该次操作，空闲且基线未改变时的真实外部删除仍会禁用保存。读取替身只控制激活检查，实际保存继续调用带预期摘要的存储入口。该回归在增加基线核对前确定性失败，用于覆盖普通机器与 CI 的调度差异。
+```powershell
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) ('TalosDesk-Manual-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $testRoot | Out-Null
+$workspace = Join-Path $testRoot 'workspace.json'
+# 将 EXE 路径替换为本次解压目录
+.\TalosDesk\TalosDesk.App.exe --workspace $workspace --profile-label '隔离测试'
+```
 
-## 历史日志尾部读取回归
+| 场景 | 必查结果 |
+| --- | --- |
+| 基础执行 | 成功、非零失败、并发、重启、Ctrl+C 及超时强停；只清理本次归属进程 |
+| 分组与恢复 | 失败清理只作用于本次会话；有限恢复 2/4/8 秒预算不被 TCP 通过重置；等待中停止、重启、退出确认与返回不重复创建 |
+| 配置 | 三个示例先预览，确认后不运行、不安装、不探测；缺失敏感值阻止启动；冲突替换和保存失败保留规则正确 |
+| 日志与异常 | 历史批次隔离、迁移、损坏元数据、目录不可写；日志失败不改变命令结果；强制结束后归属清理且重开不自动运行 |
+| TCP | 延迟监听、超时、失联、恢复、停止和快速重启；端口预占不能被解释为进程归属 |
+| 更新与诊断 | 真实联网成功或可理解失败；点击才打开合法发布页；诊断开关、清理、损坏文件、不可写路径及合成秘密检查 |
+| 桌面与兼容 | 同工作区二次启动、托盘恢复、退出取消、停止失败、窄窗口、多屏及真实 DPI；干净客户端不以开发机代替 |
 
-`RunLogStoreTests` 对比标准逐行读取结果，覆盖空文件、UTF-8 BOM、中文与 emoji、LF/CR/CRLF、空行、末行无换行、超长行和跨 16 KiB 块的 CRLF。256 MiB 合成日志测试检查最后 10 行和实际读取字节数，保证读取只覆盖尾部；计时只记录本机结果，不用固定毫秒数作为通过门槛。可控的慢读取测试在持有已打开句柄时验证其他批次追加、完成、清理和迁移仍能完成，另检查文件长度快照、取消、缺失文件与参数校验。
+UI/AppDomain 异常注入使用独立测试宿主，不能破坏测试运行器。强制结束只针对本轮确认了 PID、可执行路径和归属的实例。记录具体故障方式，区分目录初始化失败、磁盘写满、强制结束和断电；这些结果不可互相替代。
 
-`LogHistoryRegression` 在共用 STA 宿主和隔离工作区中挂起历史读取，确认实际读取运行在后台、Dispatcher 能响应、界面显示加载提示，再按相反顺序返回结果或错误，检查通道、批次、命令、项目切换和关闭后的旧回调被忽略。另检查空通道、完整性警告、当前读取失败，以及慢读取期间通过实际按钮运行合成任务后实时输出仍保留。既有更新回归改为等待历史加载完成再检查 stderr。
+跨账户 DPAPI 验证需两个隔离 Windows 账户：A 保存合成敏感值并运行，B 仅接收该临时工作区，确认原密文保留但无法启动；重新录入后可运行，导出仍只有待填写状态。模拟解密失败不能替代跨账户实测。
 
-这些自动化检查不替代慢盘或网络盘实测、人工鼠标键盘操作及最终发布包验收。包含少量超长行的日志仍需读取这些行的全部字节，WPF 显示文本时的排版也仍在界面线程执行。
-
-## 损坏日志容量与清理回归
-
-`RunLogStoreTests` 使用独立临时工作区覆盖 `run.json` 损坏、缺失、JSON `null` 和空对象。1 MiB 上限下先写入 700,000 字节的历史输出，破坏元数据并重新打开，再写入新的批次；检查损坏历史先被轮转、实际批次文件总量不超限，再次大量输出时当前批次被截断且状态落盘。另验证写入失败后的容量重算不会漏掉损坏的活动批次。
-
-清理回归检查损坏历史目录被删除，元数据同样异常的活动目录仍保留并继续写入；期限回归检查元数据不可用时采用目录修改时间，启动与修改设置均会清理过期历史，活动目录不受期限影响。
-
-`MessageDialogRegression` 在现有 STA 桌面宿主中检查实际“清理历史日志”按钮：提示明确包含损坏或缺失的元数据批次，默认聚焦取消，取消保留文件，确认删除损坏历史并保留活动批次，历史列表刷新且显示清理完成状态。活动批次使用合成写入器，无需真实用户命令或工作区。
-
-## 同时分组持续监视回归
-
-`CommandGroupExecutionTests` 使用可控的合成完成任务，覆盖纯服务分组中已失败与稍后失败的成员、混合分组任务成功后的服务失败、任务成功通知只发送一次、服务正常退出或被停止后继续监视其他成员，以及空分组、纯任务和任务被停止的原有结果。
-
-`ParallelGroupRegression` 接入 STA 桌面测试宿主，在独立临时工作区运行合成服务，使用标记文件控制失败时刻。纯服务及混合分组分别验证退出码、同次启动服务被停止和失败提示；混合分组先确认“任务已成功”仍保留运行中的服务，再触发失败。另检查手动启动并被跳过的服务仍存活，手动重新启动或再次运行分组产生的新会话不被旧执行清理，再次执行后的分组状态不被旧回调覆盖。清理只调用这些隔离会话的既有停止流程。
-
-## 全零配置 ID 回归
-
-`WorkspaceStoreTests` 使用独立临时文件覆盖 schema 1–4 的全零项目 ID 和命令 ID，检查 `LoadAsync`、`LoadSnapshotAsync` 及导入读取入口 `ReadFileAsync` 都以 `InvalidDataException` 拒绝，并逐字节确认原文件未改写。保存和导出回归分别检查拒绝全零 ID 后仍保留已有目标文件、不留下临时文件；既有往返测试继续检查有效 ID 保持不变。
-
-`MessageDialogRegression` 在现有 STA 桌面宿主内加载两类异常文件，确认显示“无法加载工作区”、禁用保存与运行、主窗口仍可操作且原文件未改写。合成服务运行期间直接调用实际 `TryStartCommand` 方法传入全零项目或命令 ID，检查返回错误、没有新会话、日志批次或命令标记文件，已有服务仍在运行并能按原流程停止。导入异常文件由共用读取入口覆盖，本项不包含系统文件选择器的人工操作。
-
-2026-10-04 全零 ID 检查结论：新增 Core 用例在修复前全部失败，修复后配置测试与 STA 桌面集成回归通过；Release 构建 0 警告、0 错误。已有异常配置仍须手工修复 ID，不自动重分配。未进行真实导入文件选择器验收，未运行 `scripts/Publish.ps1`，未修改版本或制作候选包。当次通过数量见[变更记录归档](changelog/implementation-log-v0.1.1-to-v0.2.0.md#全零-id-源码修复检查2026-10-04)。
-
-## 窗口与布局回归
-
-`MessageDialogRegression` 接入现有 STA 桌面集成宿主，使用临时工作区和合成消息检查四种提示类别、模态所有者、所有者居中、无主窗口提示、初始焦点、Enter/Esc、关闭取消与按钮结果。编辑校验关闭后返回原输入框；删除取消与确认分别检查配置保留和保存；项目、命令及分组三种导入冲突分别检查替换、保留、取消及命令 ID 映射，验证不创建运行会话或执行合成命令。使用真实合成服务和默认提示窗口检查运行中关闭、取消退出、模拟停止失败后窗口与命令仍保留、重试停止并退出；进程只由隔离窗口启动并按已有归属机制停止。既有托盘回归继续覆盖托盘出口与停止期间重复关闭。
-
-提示布局检查包含长中文、长路径、多行消息、选中复制、正文滚动，以及 380 × 320 基础布局和 1、1.25、1.5、2 倍 WPF 布局缩放下的三按钮可达性。设置 `TALOSDESK_LAYOUT_CAPTURE_DIR` 后，提示截图与既有页面截图一同输出。WPF 布局缩放属于合成检查，不能替代真实 Windows DPI 切换和多屏验收。
-
-`TrayIconControllerTests` 在 STA 窗口中使用托盘替身检查普通窗口边界、最大化恢复、反复切换、注册失败保留任务栏、通知区域重建及取消退出后的资源保留。`MainWindowIntegrationTests` 的托盘场景使用临时工作区与持续写入 stdout/stderr 的合成服务，验证隐藏时输出与磁盘日志继续增加、重复启动信号唤醒最大化窗口、取消退出、模拟停止失败、确认停止及停止期间的重复退出。失败由退出交互替身注入，不结束未知进程。
-
-真实桌面检查需使用 `--workspace` 和 `--profile-label` 启动隔离窗口，检查最小化后任务栏隐藏、通知区域或折叠菜单中的图标、左键恢复、右键菜单及“×”退出。不得为验收而重启用户的资源管理器；`TaskbarCreated` 失败路径由替身覆盖，真实资源管理器重启验收单独报告。
-
-在有可用 Windows 通知区域的本机，将测试进程环境变量 `TALOSDESK_NATIVE_TRAY_TEST` 设为 `1` 后运行 `MainWindowIntegrationTests`，可额外检查真实托盘 API 注册、原生图标资源加载、最小化隐藏、恢复及关闭后释放。这项本机检查不代替真实鼠标点击与菜单验收，CI 默认不依赖系统托盘可用。
-
-`WindowSettingsStoreTests` 使用临时目录和合成屏幕数据验证隔离读写、损坏与失败回退、负坐标、DPI 换算及屏幕移除后的边界修正。桌面回归使用独立工作区，验证正常关闭、取消关闭、最大化、最小化及重新打开后的尺寸和位置，并检查 800 × 520、1050 × 650、1199/1200 宽度断点和 1400 × 860 下各页面及编辑弹窗的按钮可达性；运行、停止、重启及分组路径继续由既有集成测试覆盖。
-
-设置测试进程环境变量 `TALOSDESK_LAYOUT_CAPTURE_DIR` 可将合成数据界面截图保存到指定测试产物目录。自动化的合成屏幕测试不代替真实多屏和 100%、125%、150%、200% Windows 显示缩放实测；交付时分别说明实际执行与未执行的项目。
-
-CI 的虚拟桌面可能限制顶层窗口尺寸。布局断言依据实际显示宽度，并记录请求尺寸、实际尺寸和工作区；额外使用窗口尺寸上限，在本机也覆盖“请求宽布局但实际只能显示窄布局”的情况。位置往返测试先将窗口完整放入可用工作区，避免把正常的屏幕边界修正误判为恢复失败。较小 runner 上的通过不代表所有请求尺寸均已原样显示。
-
-布局回归等待隔离工作区的首次读取和启动后异步重载完成，再开始访问分组控件；“检查更新”按钮可用不能代替启动重载完成。滚动请求后的消息处理可能重建按钮，检查会依据名称、内容和数据上下文重新定位当前控件，最多尝试三次，再执行原有尺寸和裁切断言。合成场景主动在滚动请求后替换按钮，验证旧可视树不会再参与坐标转换；另移除按钮并确认测试失败，避免因跳过已脱离窗口的控件而漏检。
-
-## 命令编辑与配置重载的模态竞态（2026-10-21）
-
-提交 `5ad84cd` 的 [Windows CI](https://github.com/kongerly/TalosDesk/actions/runs/39605579441) 在 Release 构建成功后，`RecoveryImportMergeAndFailedEditorSavePreservePolicy` 出现 `ArgumentOutOfRangeException`：编辑器的模态消息循环允许启动后的延迟重载替换项目对象，保存又用变化后的当前选择计算索引。该次 CI Core 266 项通过，App 45 项通过、1 项失败；此前本机 Debug 通过不能排除这条竞态。
-
-重载现在会跳过正在显示的所有者编辑/确认窗口；编辑开始时捕获确切项目与命令，保存前重新验证对象归属、索引及占用，配置已被替换则提示草稿未保存。更改当前命令选择不能让草稿写入另一条命令。
-
-`EditorTargetSurvivesNestedWorkspaceCallbacks` 的两个数据用例同步在模态回调中触发重载/更换选择，或直接替换配置，不依赖等待 250 ms 碰撞。修复前两个用例均失败，直接替换用例复现 CI 同一数组越界；修复后两个用例和原 CI 失败用例 3/3 通过。随后在独立工作树按 CI 顺序执行还原、完整 Release 构建及 `test TalosDesk.slnx --configuration Release --no-build --no-restore`：构建 0 警告、0 错误，Core 266/266、App 48/48，共 314/314，0 跳过；`git diff --check` 通过。此修复没有执行发布脚本或最终候选包验收，原有实机未执行项保持不变。
+结束后先关闭应用并确认合成命令退出，再删除确切的临时目录。交付说明分别列出实际检查、未执行项和已知限制；截图、TRX、哈希清单、PID 与操作流水仅保存在本地忽略目录，归档约定见[贡献指南](../CONTRIBUTING.md#文档与本地资料)。
