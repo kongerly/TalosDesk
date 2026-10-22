@@ -2,7 +2,9 @@
 
 TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令，一键运行，并集中查看状态和输出。
 
-[下载稳定版](https://github.com/kongerly/TalosDesk/releases/download/v0.3.0/TalosDesk-v0.3.0-win-x64.zip) · [一键演示](#一键演示可选) · [2 分钟演示](#2-分钟演示) · [示例工作区](examples/README.md) · [从源码构建](#从源码构建)
+[历史稳定版](https://github.com/kongerly/TalosDesk/releases/tag/v0.3.0) · [一键演示](#一键演示可选) · [2 分钟演示](#2-分钟演示) · [示例工作区](examples/README.md) · [从源码构建](#从源码构建)
+
+> 2026-10-22 安全维护：现有 v0.1.0–v0.3.0 本地历史自包含包（含 v0.3.0-preview.1）嵌入 .NET 10.0.12；更新系统 .NET 不会替换包内运行时。请停止继续分发这些旧包。SDK 10.0.402 / Runtime 10.0.13 的本地安全重建、验证结果及分发限制见[安全维护记录](docs/security-maintenance-2026-10-22.md)。新产物尚未发布，rc.1 不因运行时更新而成为正式版；下文历史下载步骤不代表安全基线已更新。
 
 当前版本为 `v0.3.0` 稳定版。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包，新增服务 TCP 探测与项目汇总，并包含可关闭的更新检查和按工作区隔离的本地崩溃诊断。实际验证与未执行项见 [v0.3.0 验收清单](docs/acceptance-v0.3.0.md)。
 
