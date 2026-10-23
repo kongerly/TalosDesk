@@ -59,7 +59,27 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/Talo
 
 候选版本必须执行 `scripts/Publish.ps1`，它会完成还原、Release 构建、全量测试和自包含发布。脚本会替换当前副本 `artifacts/` 中的同版本输出；如果要保留历史产物，应使用独立副本。包能启动并不表示完整操作链已经通过。
 
-需要核对 ZIP 与随附 SHA-256、应用版本与渠道、包内运行时、许可及未签名状态。包内不得包含工作区、用户日志、凭据、PDB、TRX 或测试宿主。然后从最终 ZIP 完整解压的目录，以明确的临时工作区启动：
+需要核对 ZIP 与随附 SHA-256、应用版本与渠道、包内运行时、许可及未签名状态。包内不得包含工作区、用户日志、凭据、PDB、TRX 或测试宿主。静态信息通过不代表运行与停止验收通过。
+
+先做不启动应用的静态检查，可使用仓库脚本，需要 PowerShell 7.2 或以上（将占位版本换为实际文件名）：
+
+```powershell
+pwsh -NoProfile -File .\scripts\Test-Package.ps1 -ArchivePath .\artifacts\TalosDesk-v<版本>-win-x64.zip -EvidenceDirectory .\artifacts\package-evidence-<唯一编号>
+```
+
+脚本默认从当前仓库读取期望版本、渠道与运行时；核对其他源码副本的包时应显式提供 `-ExpectedVersion`、`-ExpectedChannel` 和 `-ExpectedRuntimeVersion`。默认使用 ZIP 同名 `.sha256`，也可用 `-ChecksumPath` 指定。它校验摘要及文件名、Windows 不区分大小写的重复条目/越界路径、必需文件、私有/测试文件名、README、依赖及运行时声明，并直接读取 PE 版本与 App 程序集渠道。生成的 summary.json 和逐条 inventory.json 绑定同一个只读 ZIP 句柄；证据目录必须不存在，防止覆盖旧记录。少量 PE 临时副本读取后即清理，不会加载或执行。
+
+该脚本不证明依赖完整、内容无秘密、签名可信、schema 兼容或运行/停止正确，也不代替完整自动化和人工验收。schema 要对应源码与配置回归确认。此前维护包README带本地重建前言，不能通过正式标题校验；应在维护线正式准备时更新包内说明并重新打包，不能以修改校验文件或改名来绕过。
+
+脚本自身的回归使用指定合格包的 PE 字节，在独立临时目录生成结构夹具及损坏变体，不启动其中任何程序：
+
+```powershell
+pwsh -NoProfile -File .\tests\PackageInspection.Tests.ps1 -ArchivePath .\artifacts\TalosDesk-v<版本>-win-x64.zip
+```
+
+它检查正向证据生成，以及缺文件、路径/大小写冲突、私有文件、错误摘要/文件名、版本/渠道/运行时/依赖声明错误和已有证据目录保护。此独立 PowerShell 回归需要先有可通过静态检查的 ZIP，不包含在 `dotnet test` 中。
+
+静态检查后继续按下面步骤进行最终 EXE 操作验收；仅需要后台准备时，将其明确保留为未执行。
 
 ```powershell
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('TalosDesk-Manual-' + [guid]::NewGuid().ToString('N'))
