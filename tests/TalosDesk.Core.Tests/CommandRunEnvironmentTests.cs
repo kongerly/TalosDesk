@@ -185,6 +185,50 @@ public sealed class CommandRunEnvironmentTests
     }
 
     [TestMethod]
+    public async Task IntersectingPatternsAndKnownValuesStayRedactedBeforeEventsMemoryAndLogs()
+    {
+        using var sandbox = new TemporaryDirectory();
+        const string secondVariable = "TALOSDESK_SYNTHETIC_PREFIX_7B2E";
+        const string thirdVariable = "TALOSDESK_SYNTHETIC_CROSS_PREFIX_7B2E";
+        var command = CreateCommand([
+            new CommandEnvironmentVariable { Name = VariableName, IsSensitive = true, ValueState = "Protected", ProtectedValue = SensitiveValueProtector.Protect("ken") },
+            new CommandEnvironmentVariable { Name = secondVariable, IsSensitive = true, ValueState = "Protected", ProtectedValue = SensitiveValueProtector.Protect("synthetic-known-Bearer synthetic-") },
+            new CommandEnvironmentVariable { Name = thirdVariable, IsSensitive = true, ValueState = "Protected", ProtectedValue = SensitiveValueProtector.Protect("i_key=synthetic-first\nsynthetic-last") }
+        ]);
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), command.Id, DateTimeOffset.Now);
+        var events = new List<CommandOutput>();
+        var originals = new[] { VariableName, secondVariable, thirdVariable }.ToDictionary(name => name, name => Environment.GetEnvironmentVariable(name));
+        var script = $"$lines = @(('to' + $env:{VariableName} + '=synthetic-pattern-value public'), ($env:{secondVariable} + 'pattern-tail public'), ('ap' + $env:{thirdVariable} + ' public'), ('to' + $env:{VariableName} + '=Bearer synthetic-nested-value public')); foreach ($line in $lines) {{ [Console]::Out.WriteLine($line); [Console]::Error.WriteLine($line) }}";
+        await using var session = new CommandRunner().Start(command.Id, script, sandbox.Path, (_, output) =>
+        {
+            lock (events) events.Add(output);
+            store.Append(writer, output);
+        }, CommandRunEnvironmentResolver.Resolve(command));
+        CommandRunResult? result = null;
+        try { result = await session.Completion.WaitAsync(TimeSpan.FromSeconds(20)); }
+        finally { store.Complete(writer, result); }
+
+        Assert.AreEqual(CommandRunState.Succeeded, result.State);
+        Assert.IsTrue(session.IsOwnershipReleased);
+        foreach (var original in originals) Assert.AreEqual(original.Value, Environment.GetEnvironmentVariable(original.Key));
+        string[] expected = ["to[已隐藏]=[已隐藏] public", "[已隐藏] public", "ap[已隐藏] public", "to[已隐藏]=[已隐藏] [已隐藏] public"];
+        foreach (var stream in new[] { "stdout", "stderr" })
+        {
+            CollectionAssert.AreEqual(expected, session.GetRecentOutput().Where(output => output.Stream == stream).Select(output => output.Text).ToArray());
+            lock (events) CollectionAssert.AreEqual(expected, events.Where(output => output.Stream == stream).Select(output => output.Text).ToArray());
+            CollectionAssert.AreEqual(expected, store.ReadTail(writer.Info, stream).ToArray());
+        }
+        foreach (var file in Directory.GetFiles(store.RootPath, "*", SearchOption.AllDirectories))
+        {
+            var text = await File.ReadAllTextAsync(file);
+            foreach (var fragment in new[] { "ken", "synthetic-pattern-", "pattern-tail", "synthetic-last", "synthetic-nested-" })
+                Assert.IsFalse(text.Contains(fragment, StringComparison.Ordinal), $"Sensitive fragment reached {Path.GetFileName(file)}.");
+        }
+    }
+
+    [TestMethod]
     public async Task ConcurrentCommandsUseIndependentEnvironmentSnapshots()
     {
         using var sandbox = new TemporaryDirectory();
