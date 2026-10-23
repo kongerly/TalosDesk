@@ -209,6 +209,7 @@ public sealed class StreamingOutputRedactorTests
         var redactor = new StreamingOutputRedactor(["synthetic-secret"], TimeSpan.Zero);
 
         Assert.AreEqual(StreamingOutputRedactor.OmittedMarker, redactor.Append("synthetic-secret"));
+        Assert.IsTrue(redactor.HasFailed);
         Assert.AreEqual(string.Empty, redactor.Append("more synthetic-secret"));
         Assert.AreEqual(string.Empty, redactor.Finish());
     }

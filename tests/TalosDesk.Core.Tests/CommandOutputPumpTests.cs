@@ -1,0 +1,113 @@
+using System.Text;
+using TalosDesk.Core.Processes;
+
+namespace TalosDesk.Core.Tests;
+
+[TestClass]
+public sealed class CommandOutputPumpTests
+{
+    [TestMethod]
+    [DataRow("stdout")]
+    [DataRow("stderr")]
+    public async Task RedactionFailureIsPublishedBeforeStreamEnds(string stream)
+    {
+        const string secret = "synthetic-pump-secret";
+        using var input = new HeldOpenStream(Encoding.UTF8.GetBytes(secret));
+        var output = new List<(string Text, string Stream)>();
+        var pump = CommandRunSession.PumpAsync(new StreamReader(input), stream, [secret],
+            (text, channel) => output.Add((text, channel)), TimeSpan.Zero);
+        try
+        {
+            await input.EndReadRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.IsFalse(pump.IsCompleted, "输入仍保持打开，不能靠EOF触发提示。");
+            Assert.HasCount(1, output, "脱敏失败后应在继续等待输入之前发布固定提示。");
+            Assert.AreEqual((StreamingOutputRedactor.OmittedMarker, stream), output[0]);
+            Assert.IsFalse(output[0].Text.Contains(secret, StringComparison.Ordinal));
+        }
+        finally
+        {
+            input.AllowEnd();
+            await pump.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        Assert.HasCount(1, output, "EOF不能重复发布同一失败提示。");
+    }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(16_383)]
+    public async Task ReadFailureKeepsOmissionMarkerWholeAfterPartialLine(int prefixLength)
+    {
+        using var input = new FailingAfterContentStream(Encoding.UTF8.GetBytes(new string('x', prefixLength)));
+        var output = new List<(string Text, string Stream)>();
+
+        await CommandRunSession.PumpAsync(new StreamReader(input), "stderr", [],
+            (text, stream) => output.Add((text, stream))).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.HasCount(prefixLength == 0 ? 1 : 2, output);
+        Assert.AreEqual((StreamingOutputRedactor.OmittedMarker, "stderr"), output[^1]);
+        if (prefixLength > 0)
+        {
+            Assert.AreEqual("stderr", output[0].Stream);
+            Assert.AreEqual(prefixLength, output[0].Text.Length);
+            Assert.IsTrue(output[0].Text.All(character => character == 'x'), "已脱敏半行应完整保留。");
+        }
+        Assert.IsFalse(output.Any(line => line.Text.Contains("synthetic-read-error-secret", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task ReadFailureAfterRedactionFailureDoesNotRepeatOmission()
+    {
+        const string secret = "synthetic-pump-secret";
+        using var input = new FailingAfterContentStream(Encoding.UTF8.GetBytes(secret));
+        var output = new List<(string Text, string Stream)>();
+
+        await CommandRunSession.PumpAsync(new StreamReader(input), "stdout", [secret],
+            (text, stream) => output.Add((text, stream)), TimeSpan.Zero).WaitAsync(TimeSpan.FromSeconds(5));
+
+        CollectionAssert.AreEqual(new[] { (StreamingOutputRedactor.OmittedMarker, "stdout") }, output.ToArray());
+    }
+
+    [TestMethod]
+    public async Task NormalPartialLineStillWaitsForEndAfterSanitization()
+    {
+        const string secret = "synthetic-pump-secret";
+        using var input = new HeldOpenStream(Encoding.UTF8.GetBytes("before " + secret));
+        var output = new List<(string Text, string Stream)>();
+        var pump = CommandRunSession.PumpAsync(new StreamReader(input), "stdout", [secret],
+            (text, stream) => output.Add((text, stream)));
+        try
+        {
+            await input.EndReadRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.IsFalse(pump.IsCompleted);
+            Assert.HasCount(0, output, "正常的不完整行仍按原有换行/EOF规则发布。");
+        }
+        finally
+        {
+            input.AllowEnd();
+            await pump.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        CollectionAssert.AreEqual(new[] { ("before " + StreamingOutputRedactor.HiddenMarker, "stdout") }, output.ToArray());
+    }
+
+    private sealed class FailingAfterContentStream(byte[] content) : MemoryStream(content, writable: false)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            Position == Length ? throw new IOException("synthetic-read-error-secret") : base.ReadAsync(buffer, cancellationToken);
+    }
+
+    private sealed class HeldOpenStream(byte[] content) : MemoryStream(content, writable: false)
+    {
+        private readonly TaskCompletionSource _allowEnd = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource EndReadRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void AllowEnd() => _allowEnd.TrySetResult();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await base.ReadAsync(buffer, cancellationToken);
+            if (read != 0) return read;
+            EndReadRequested.TrySetResult();
+            await _allowEnd.Task.WaitAsync(cancellationToken);
+            return 0;
+        }
+    }
+}

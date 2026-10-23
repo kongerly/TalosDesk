@@ -16,6 +16,7 @@ internal sealed class StreamingOutputRedactor
     private int _tokenPrefixRemaining;
     private bool _suppressToken;
     private bool _failed;
+    internal bool HasFailed => _failed;
 
     internal StreamingOutputRedactor(IEnumerable<string> secrets, TimeSpan? timeout = null)
     {
