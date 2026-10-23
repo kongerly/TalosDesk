@@ -92,6 +92,8 @@ pwsh -NoProfile -File .\scripts\Publish.ps1
 2. 备份本机工作区、日志和需要保留的旁文件；可分享导出不保留敏感值。
 3. 解压到新目录，用原来的明确 `--workspace` 路径启动。回退旧版时要使用兼容的工作区副本：当前 schema 6 不能交给只支持 schema 4 的 v0.3.0，也不能交给此前 schema 5 的 rc.1 构建。
 
+包含试用副本、旁文件与日志位置处理的详细步骤见[schema 6 升级与回退指南](docs/upgrade-schema6.md)。两条交付线和待批准的版本建议见[下一版本发布说明草稿](docs/release-next-draft.md)，不代表已有新版本可下载。
+
 ## 开发文档与许可
 
 [设计说明](docs/design.md) · [路线图](docs/roadmap.md) · [贡献指南](CONTRIBUTING.md) · [测试说明](docs/testing.md) · [版本记录](docs/changelog/README.md)

@@ -8,6 +8,7 @@ TalosDesk 聚焦 Windows 本地多项目、非交互命令的运行管理。版�
 - 当前源码在 v0.3.1-rc.1 / Preview 基础上继续开发，已加入默认关闭的[服务有限自动重启](design.md#有限自动重启)及 Windows Cmd。工作源码保存 schema 6，应用版本号与渠道尚未重新分配，尚未发布。
 - 当前源码另已实现[当前日志搜索](design.md#当前日志搜索)：只搜索已显示内容和所选通道，沿用最近 10,000 行边界；不包含跨批次索引。
 - 历史包的运行时安全基线和替代版本状态见[安全维护说明](security-maintenance-2026-10-22.md)。
+- 发布准备将 schema 4 安全维护与 schema 6 新功能分开；[发布说明草稿](release-next-draft.md)建议分别采用 v0.3.1 / Stable 与 v0.4.0-rc.1 / Preview，均待批准，未修改构建设置或正式定版。配置操作见[升级与回退指南](upgrade-schema6.md)。
 
 ## 后续方向
 
