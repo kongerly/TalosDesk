@@ -142,6 +142,49 @@ public sealed class CommandRunEnvironmentTests
     }
 
     [TestMethod]
+    public async Task OverlappingKnownValuesStayRedactedInBothStreamsEventsMemoryAndLogs()
+    {
+        using var sandbox = new TemporaryDirectory();
+        const string secondVariable = "TALOSDESK_SYNTHETIC_OVERLAP_7B2E";
+        const string overlap = "shared-";
+        const string firstSecret = "synthetic-overlap-left\n" + overlap;
+        const string secondSecret = overlap + "\nsynthetic-overlap-right";
+        var command = CreateCommand([
+            new CommandEnvironmentVariable { Name = VariableName, IsSensitive = true, ValueState = "Protected", ProtectedValue = SensitiveValueProtector.Protect(firstSecret) },
+            new CommandEnvironmentVariable { Name = secondVariable, IsSensitive = true, ValueState = "Protected", ProtectedValue = SensitiveValueProtector.Protect(secondSecret) }
+        ]);
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), command.Id, DateTimeOffset.Now);
+        var events = new List<CommandOutput>();
+        var original = Environment.GetEnvironmentVariable(VariableName);
+        var originalSecond = Environment.GetEnvironmentVariable(secondVariable);
+        var script = $"$value = $env:{VariableName} + ($env:{secondVariable}).Substring({overlap.Length}); foreach ($prefix in @('', 'Bearer ', 'token=', 'api_key=')) {{ [Console]::Out.WriteLine($prefix + $value + ' public'); [Console]::Error.WriteLine($prefix + $value + ' public') }}";
+        await using var session = new CommandRunner().Start(command.Id, script, sandbox.Path, (_, output) =>
+        {
+            lock (events) events.Add(output);
+            store.Append(writer, output);
+        }, CommandRunEnvironmentResolver.Resolve(command));
+        CommandRunResult? result = null;
+        try { result = await session.Completion.WaitAsync(TimeSpan.FromSeconds(20)); }
+        finally { store.Complete(writer, result); }
+
+        Assert.AreEqual(CommandRunState.Succeeded, result.State);
+        Assert.IsTrue(session.IsOwnershipReleased);
+        Assert.AreEqual(original, Environment.GetEnvironmentVariable(VariableName));
+        Assert.AreEqual(originalSecond, Environment.GetEnvironmentVariable(secondVariable));
+        string[] expected = ["[已隐藏] public", "Bearer [已隐藏] public", "token=[已隐藏] public", "api_key=[已隐藏] public"];
+        foreach (var stream in new[] { "stdout", "stderr" })
+        {
+            CollectionAssert.AreEqual(expected, session.GetRecentOutput().Where(output => output.Stream == stream).Select(output => output.Text).ToArray());
+            lock (events) CollectionAssert.AreEqual(expected, events.Where(output => output.Stream == stream).Select(output => output.Text).ToArray());
+            CollectionAssert.AreEqual(expected, store.ReadTail(writer.Info, stream).ToArray());
+        }
+        foreach (var file in Directory.GetFiles(store.RootPath, "*", SearchOption.AllDirectories))
+            Assert.IsFalse((await File.ReadAllTextAsync(file)).Contains("synthetic-overlap-", StringComparison.Ordinal), $"Sensitive fragment reached {Path.GetFileName(file)}.");
+    }
+
+    [TestMethod]
     public async Task ConcurrentCommandsUseIndependentEnvironmentSnapshots()
     {
         using var sandbox = new TemporaryDirectory();

@@ -1,3 +1,4 @@
+using System.Text;
 using TalosDesk.Core.Processes;
 
 namespace TalosDesk.Core.Tests;
@@ -66,6 +67,46 @@ public sealed class StreamingOutputRedactorTests
                 var output = redactor.Append(input[..split]) + redactor.Append(input[split..]) + redactor.Finish();
                 Assert.AreEqual(prefix + "[已隐藏] public", output, $"split={split}, leading={leadingValue}");
             }
+        }
+    }
+
+    [TestMethod]
+    [DataRow("shared")]
+    [DataRow("共通")]
+    [DataRow(" ")]
+    [DataRow("\n")]
+    [DataRow("\r\n")]
+    public void MasksTheEntireUnionOfOverlappingKnownValues(string overlap)
+    {
+        var firstSecret = "synthetic-left" + overlap;
+        var secondSecret = overlap + "synthetic-right";
+        foreach (var prefix in new[] { string.Empty, "token=", "Bearer ", "api_key=" })
+        {
+            var input = "before:" + prefix + "synthetic-left" + overlap + "synthetic-right public";
+            for (var split = 0; split <= input.Length; split++)
+            {
+                var redactor = new StreamingOutputRedactor([firstSecret, secondSecret]);
+                var output = redactor.Append(input[..split]) + redactor.Append(input[split..]) + redactor.Finish();
+
+                Assert.AreEqual("before:" + prefix + "[已隐藏] public", output, $"split={split}, prefix={prefix}");
+            }
+        }
+    }
+
+    [TestMethod]
+    public void MasksOverlappingChainsAcrossInternalBlocksWithoutBufferingTheWholeChain()
+    {
+        var input = string.Concat(Enumerable.Repeat("ab", 10_000));
+        foreach (var chunkLength in new[] { 1, 4095, 16_384, input.Length })
+        foreach (var suffix in new[] { string.Empty, " public" })
+        {
+            var redactor = new StreamingOutputRedactor(["aba", "bab"], TimeSpan.FromSeconds(5));
+            var output = new StringBuilder();
+            for (var offset = 0; offset < input.Length; offset += chunkLength)
+                output.Append(redactor.Append(input.Substring(offset, Math.Min(chunkLength, input.Length - offset))));
+            output.Append(redactor.Append(suffix)).Append(redactor.Finish());
+
+            Assert.AreEqual("[已隐藏]" + suffix, output.ToString(), $"chunkLength={chunkLength}, suffix={suffix}");
         }
     }
 

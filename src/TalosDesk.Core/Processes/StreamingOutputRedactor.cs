@@ -12,6 +12,7 @@ internal sealed class StreamingOutputRedactor
     private readonly string[] _secrets;
     private readonly TimeSpan _timeout;
     private string _pending = string.Empty;
+    private int _knownMaskRemaining;
     private bool _suppressToken;
     private bool _failed;
 
@@ -86,10 +87,15 @@ internal sealed class StreamingOutputRedactor
             if (partialSecret && !final) break;
             if (fullSecret is not null)
             {
-                // 模式省略中也先匹配已知值，不能跳过其开头后泄露空格/换行后的片段。
-                if (!_suppressToken) result.Append(HiddenMarker);
-                else if (fullSecret.Any(char.IsWhiteSpace)) _suppressToken = false;
-                offset += fullSecret.Length;
+                if (_knownMaskRemaining == 0 && !_suppressToken) result.Append(HiddenMarker);
+                _knownMaskRemaining = Math.Max(_knownMaskRemaining, fullSecret.Length);
+            }
+            if (_knownMaskRemaining > 0)
+            {
+                // 已遮蔽的区域也逐字符匹配，覆盖从其内部开始、延伸到末尾之外的已知值。
+                if (char.IsWhiteSpace(input[offset])) _suppressToken = false;
+                _knownMaskRemaining--;
+                offset++;
                 continue;
             }
 
