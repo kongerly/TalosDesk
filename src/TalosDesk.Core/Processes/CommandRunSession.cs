@@ -242,8 +242,10 @@ public sealed class CommandRunSession : ICommandRunSession
             }
             line.Append(character);
             if (line.Length < 16_384) continue;
-            emit(line.ToString(), stream);
-            line.Clear();
+            // 每条记录独立编码；将边界上的高代理项留到下一段，避免拆开补充字符。
+            var segmentLength = line.Length - (char.IsHighSurrogate(line[^1]) ? 1 : 0);
+            emit(line.ToString(0, segmentLength), stream);
+            line.Remove(0, segmentLength);
         }
     }
 

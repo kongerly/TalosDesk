@@ -7,6 +7,58 @@ namespace TalosDesk.Core.Tests;
 public sealed class CommandOutputPumpTests
 {
     [TestMethod]
+    [DataRow("stdout", 16_383, false)]
+    [DataRow("stderr", 16_383, false)]
+    [DataRow("stdout", 16_383, true)]
+    [DataRow("stderr", 16_383, true)]
+    [DataRow("stdout", 16_382, false)]
+    [DataRow("stderr", 16_384, false)]
+    public async Task LongOutputKeepsSupplementaryCharactersWholeInEventsAndHistory(string stream, int prefixLength, bool redact)
+    {
+        const string secret = "synthetic-unicode-secret";
+        var visiblePrefix = new string('x', prefixLength - (redact ? StreamingOutputRedactor.HiddenMarker.Length : 0));
+        var content = (redact ? secret : string.Empty) + visiblePrefix + "😀尾部𠮷";
+        var expected = (redact ? StreamingOutputRedactor.HiddenMarker : string.Empty) + visiblePrefix + "😀尾部𠮷";
+        var directory = Path.Combine(Path.GetTempPath(), $"TalosDesk-pump-unicode-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = new RunLogStore(Path.Combine(directory, "workspace.json"));
+            store.Initialize();
+            var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+            var output = new List<(string Text, string Stream)>();
+            using var input = new MemoryStream(Encoding.UTF8.GetBytes(content));
+            try
+            {
+                await CommandRunSession.PumpAsync(new StreamReader(input), stream, redact ? [secret] : [], (text, channel) =>
+                {
+                    output.Add((text, channel));
+                    store.Append(writer, new CommandOutput(DateTimeOffset.Now, channel, text));
+                }).WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            finally { store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false)); }
+
+            Assert.AreEqual(expected, string.Concat(output.Select(line => line.Text)), "输出记录不得丢失或改变字符。");
+            Assert.IsFalse(writer.Info.WriteFailed);
+            var reopened = new RunLogStore(Path.Combine(directory, "workspace.json"));
+            reopened.Initialize();
+            var history = reopened.GetRuns(writer.Info.ProjectId, writer.Info.CommandId).Single();
+            var persisted = string.Concat(reopened.ReadTail(history, stream));
+            Assert.DoesNotContain('\uFFFD', persisted, "有效的UTF-8输入不应在落盘时变成替代字符。");
+            Assert.AreEqual(expected, persisted, "磁盘重开后仍须保留完整字符。");
+            Assert.HasCount(0, reopened.ReadTail(history, stream == "stdout" ? "stderr" : "stdout"));
+            var strictUtf8 = new UTF8Encoding(false, true);
+            foreach (var line in output)
+            {
+                Assert.AreEqual(stream, line.Stream);
+                Assert.IsLessThanOrEqualTo(16_384, line.Text.Length, "长行分段仍需保持长度上限。");
+                _ = strictUtf8.GetBytes(line.Text); // 每条记录须可单独编码，不能把代理对分到相邻记录。
+            }
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [TestMethod]
     [DataRow("stdout")]
     [DataRow("stderr")]
     public async Task RedactionFailureIsPublishedBeforeStreamEnds(string stream)
