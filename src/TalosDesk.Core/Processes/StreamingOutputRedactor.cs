@@ -73,14 +73,6 @@ internal sealed class StreamingOutputRedactor
                 return OmittedMarker;
             }
 
-            if (_suppressToken)
-            {
-                while (offset < input.Length && !char.IsWhiteSpace(input[offset])) offset++;
-                if (offset == input.Length) break;
-                _suppressToken = false;
-                continue;
-            }
-
             var remaining = input.AsSpan(offset);
             string? fullSecret = null;
             var partialSecret = false;
@@ -94,9 +86,17 @@ internal sealed class StreamingOutputRedactor
             if (partialSecret && !final) break;
             if (fullSecret is not null)
             {
-                result.Append(HiddenMarker);
+                // 模式省略中也先匹配已知值，不能跳过其开头后泄露空格/换行后的片段。
+                if (!_suppressToken) result.Append(HiddenMarker);
+                else if (fullSecret.Any(char.IsWhiteSpace)) _suppressToken = false;
                 offset += fullSecret.Length;
                 continue;
+            }
+
+            if (_suppressToken)
+            {
+                if (!char.IsWhiteSpace(input[offset])) { offset++; continue; }
+                _suppressToken = false;
             }
 
             string? fullPrefix = null;

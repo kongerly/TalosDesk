@@ -42,6 +42,34 @@ public sealed class StreamingOutputRedactorTests
     }
 
     [TestMethod]
+    [DataRow("token=", " ")]
+    [DataRow("token=", "\n")]
+    [DataRow("token=", "\r\n")]
+    [DataRow("token=", "\t")]
+    [DataRow("Bearer ", " ")]
+    [DataRow("Bearer ", "\n")]
+    [DataRow("Bearer ", "\r\n")]
+    [DataRow("Bearer ", "\t")]
+    [DataRow("api_key=", " ")]
+    [DataRow("api_key=", "\n")]
+    [DataRow("api_key=", "\r\n")]
+    [DataRow("api_key=", "\t")]
+    public void TokenSuppressionDoesNotExposeMultilineKnownValueSuffix(string prefix, string separator)
+    {
+        var secret = "synthetic-first" + separator + "synthetic-second";
+        foreach (var leadingValue in new[] { string.Empty, "other-" })
+        {
+            var input = prefix + leadingValue + secret + " public";
+            for (var split = 0; split <= input.Length; split++)
+            {
+                var redactor = new StreamingOutputRedactor([secret]);
+                var output = redactor.Append(input[..split]) + redactor.Append(input[split..]) + redactor.Finish();
+                Assert.AreEqual(prefix + "[已隐藏] public", output, $"split={split}, leading={leadingValue}");
+            }
+        }
+    }
+
+    [TestMethod]
     public void TimeoutOmitsCurrentAndLaterRawText()
     {
         var redactor = new StreamingOutputRedactor(["synthetic-secret"], TimeSpan.Zero);
