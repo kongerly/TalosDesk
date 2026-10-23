@@ -746,6 +746,30 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    public void MetadataReplacementFailureIsReportedThroughWriterWithoutChangingSavedOutput()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic-final-output"));
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stderr", "synthetic-final-diagnostic"));
+        var metadata = Path.Combine(writer.Directory, "run.json");
+        var original = File.ReadAllBytes(metadata);
+        using var lockedMetadata = new FileStream(metadata, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+
+        Assert.IsTrue(writer.Info.WriteFailed, "调用方必须检查失败标记，收尾IO错误不会从Complete抛出。");
+        Assert.AreEqual("Succeeded", writer.Info.State);
+        Assert.AreEqual(0, writer.Info.ExitCode);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(metadata));
+        Assert.IsFalse(File.Exists(metadata + ".tmp"));
+        CollectionAssert.AreEqual(new[] { "synthetic-final-output" }, store.ReadTail(writer.Info, "stdout").ToArray());
+        CollectionAssert.AreEqual(new[] { "synthetic-final-diagnostic" }, store.ReadTail(writer.Info, "stderr").ToArray());
+    }
+
+    [TestMethod]
     public void WriteFailureMarksBatchIncomplete()
     {
         using var sandbox = new Sandbox();

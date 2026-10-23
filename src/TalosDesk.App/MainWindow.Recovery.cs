@@ -206,7 +206,11 @@ public partial class MainWindow
             lock (_gate)
             {
                 if (_writer is not null)
-                    try { owner._runLogStore.Complete(_writer, result); }
+                    try
+                    {
+                        owner._runLogStore.Complete(_writer, result);
+                        if (_writer.Info.WriteFailed) _warning ??= "日志完成写入失败。";
+                    }
                     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { _warning = "日志完成写入失败。"; }
             }
             await owner.Dispatcher.InvokeAsync(() =>

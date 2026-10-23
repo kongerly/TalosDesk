@@ -37,7 +37,7 @@ pwsh -NoProfile -File .\tests\PublishPipeline.Tests.ps1
 | `CommandGroupExecutionTests` | 顺序预留、同时分组持续监视及确切会话清理 |
 | `RunLogStoreTests`、`StreamingOutputRedactorTests`、`CommandRunEnvironmentTests` | 历史尾部读取、损坏元数据容量、清理失败后容量重算、收尾重建缺失元数据及精确配额边界、迁移、截断；含空白已知值、长重叠链及模式前缀交叠的跨块遮蔽、独立完整文本覆盖校验，以及真实双通道事件/内存/磁盘输出 |
 | `LogSearchTests`、`LogSearchFollowsDisplayedScopeWithoutBlocking` | 中文/字面/大小写、通道与最近 10,000 行、取消、WPF 查找路由/高亮/循环导航、实时追加与切换/清空失效、界面响应 |
-| `MainWindowIntegrationTests` | 实际 WPF 控件路径、分组、导入预览、保存、探测、恢复、更新、窗口及托盘 |
+| `MainWindowIntegrationTests` | 实际 WPF 控件路径、日志收尾失败提示及新运行清除旧警告、分组、导入预览、保存、探测、恢复、更新、窗口及托盘 |
 | `DesktopTestHostTests`、`WpfTestHostTests` | STA 宿主、超时及清理失败边界 |
 | 更新与诊断相关测试 | 固定网络响应、可控时间、渠道/缓存/限流、记录投影及独立崩溃宿主 |
 

@@ -52,6 +52,11 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(LogSearchFollowsDisplayedScopeWithoutBlocking), LogSearchRegression.Run, () => LogSearchRegression.Stage);
 
     [TestMethod]
+    public void LogFinalizationFailureStaysVisibleAndFreshRunClearsWarning() =>
+        _host.Run(nameof(LogFinalizationFailureStaysVisibleAndFreshRunClearsWarning),
+            RecoveryRegression.LogFinalizationFailureStaysVisibleAndFreshRunClearsWarning, () => RecoveryRegression.Stage);
+
+    [TestMethod]
     public void HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults() =>
         _host.Run(nameof(HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults), LogHistoryRegression.Run, () => LogHistoryRegression.Stage);
 

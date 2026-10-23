@@ -91,6 +91,53 @@ internal static class RecoveryRegression
         Capture(f.Window, "recovery-exhausted-history");
     }
 
+    internal static void LogFinalizationFailureStaysVisibleAndFreshRunClearsWarning()
+    {
+        using var f = new Fixture();
+        f.Button("OutputPageButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        f.Start();
+        var writers = Field<Dictionary<Guid, RunLogWriter>>(f.Window, "_runLogWriters");
+        Wait(() => writers.ContainsKey(f.CommandId) && f.Output.Text.Contains("attempt-1", StringComparison.Ordinal));
+        var first = writers[f.CommandId];
+        var logs = Field<RunLogStore>(f.Window, "_runLogStore");
+        var metadata = Path.Combine(logs.RootPath, first.Info.ProjectId.ToString("N"), first.Info.CommandId.ToString("N"),
+            first.Info.RunId.ToString("N"), "run.json");
+        var original = File.ReadAllBytes(metadata);
+        using var lockedMetadata = new FileStream(metadata, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+        Stage = "完成记录替换失败仍显示警告，命令保留成功结果且不触发重启";
+        f.Latest.Finish(CommandRunState.Succeeded, 0);
+        Wait(() => !f.Coordinator.IsBusy(f.CommandId) && !writers.ContainsKey(f.CommandId));
+        Assert.IsTrue(first.Info.WriteFailed);
+        Assert.AreEqual("日志完成写入失败。", f.Text("LogStatusText"));
+        Assert.AreEqual(CommandRunState.Succeeded, f.Snapshot.LastResult!.State);
+        Assert.AreEqual(0, f.Snapshot.LastResult.ExitCode);
+        StringAssert.StartsWith(f.Text("RunStateText"), "已成功");
+        Assert.IsTrue(f.Button("RunButton").IsEnabled);
+        Assert.IsFalse(f.Button("StopButton").IsEnabled);
+        StringAssert.Contains(f.Output.Text, "attempt-1");
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(metadata));
+        Assert.IsFalse(File.Exists(metadata + ".tmp"));
+        f.Clock.Advance(100); Pump();
+        Assert.HasCount(1, f.Sessions);
+        Assert.AreEqual("日志完成写入失败。", f.Text("LogStatusText"));
+
+        Stage = "解除占用后新运行清除旧警告，正常收尾保持清洁";
+        lockedMetadata.Dispose();
+        f.Start();
+        Wait(() => writers.ContainsKey(f.CommandId) && f.Output.Text.Contains("attempt-2", StringComparison.Ordinal));
+        var second = writers[f.CommandId];
+        Assert.AreNotEqual(first.Info.RunId, second.Info.RunId);
+        Assert.AreEqual(string.Empty, f.Text("LogStatusText"));
+        f.Latest.Finish(CommandRunState.Succeeded, 0);
+        Wait(() => !f.Coordinator.IsBusy(f.CommandId) && !writers.ContainsKey(f.CommandId));
+        Assert.IsFalse(second.Info.WriteFailed);
+        Assert.AreEqual(string.Empty, f.Text("LogStatusText"));
+        Assert.AreEqual(CommandRunState.Succeeded, f.Snapshot.LastResult!.State);
+        Assert.AreEqual(0, f.Snapshot.LastResult.ExitCode);
+        Assert.HasCount(2, f.Sessions);
+    }
+
     internal static void PauseReturnAndWaitingExit()
     {
         using var f = new Fixture();
