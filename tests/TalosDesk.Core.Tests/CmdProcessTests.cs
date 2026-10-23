@@ -9,6 +9,8 @@ namespace TalosDesk.Core.Tests;
 [DoNotParallelize]
 public sealed class CmdProcessTests
 {
+    public TestContext TestContext { get; set; } = null!;
+
     [TestMethod]
     public async Task CapturesUtf8ChannelsEnvironmentAndRedactedHistory()
     {
@@ -63,7 +65,7 @@ public sealed class CmdProcessTests
         var id = Guid.NewGuid();
         var pwsh = WindowsNative.FindPowerShellPath(Environment.GetEnvironmentVariable("PATH") ?? string.Empty, sandbox.Root);
         await using var session = runner.Start(id, $"\"{pwsh}\" -NoProfile -NonInteractive -Command \"Write-Output 'cmd-ready'; while ($true) {{ Start-Sleep -Milliseconds 100 }}\"", sandbox.Root, shell: CommandShell.Cmd);
-        await Until(() => session.GetRecentOutput().Any(line => line.Text == "cmd-ready"));
+        await Until(session, "Cmd Ctrl+C 子进程", output => output.Any(line => line.Text == "cmd-ready"));
         Assert.ThrowsExactly<InvalidOperationException>(() => runner.Start(id, "exit /b 0", sandbox.Root, shell: CommandShell.Cmd));
         Assert.AreEqual(CommandStopResult.StoppedAfterCtrlC, await session.StopAsync().WaitAsync(TimeSpan.FromSeconds(12)));
         Assert.AreEqual(CommandRunState.Stopped, (await session.Completion).State);
@@ -78,11 +80,11 @@ public sealed class CmdProcessTests
     {
         using var sandbox = new Sandbox();
         var pwsh = WindowsNative.FindPowerShellPath(Environment.GetEnvironmentVariable("PATH") ?? string.Empty, sandbox.Root);
-        await File.WriteAllTextAsync(Path.Combine(sandbox.Root, "ignore.ps1"), "Add-Type 'using System; using System.Runtime.InteropServices; public static class IgnoreCtrl { [DllImport(\"kernel32.dll\")] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); }'; [IgnoreCtrl]::SetConsoleCtrlHandler([IntPtr]::Zero,$true)|Out-Null; Write-Output \"child:$PID\"; while($true){Start-Sleep -Milliseconds 100}");
+        await File.WriteAllTextAsync(Path.Combine(sandbox.Root, "ignore.ps1"), "Write-Output 'phase:ignore-script-started'; Add-Type -ErrorAction Stop 'using System; using System.Runtime.InteropServices; public static class IgnoreCtrl { [DllImport(\"kernel32.dll\")] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); }'; Write-Output 'phase:ignore-handler-compiled'; if(-not [IgnoreCtrl]::SetConsoleCtrlHandler([IntPtr]::Zero,$true)){throw 'Synthetic Ctrl+C handler registration failed.'}; Write-Output 'phase:ignore-handler-registered'; Write-Output \"child:$PID\"; while($true){Start-Sleep -Milliseconds 100}");
         await using var sentinel = new CommandRunner().Start(Guid.NewGuid(), "Write-Output 'sentinel-ready'; while($true){Start-Sleep -Milliseconds 100}", sandbox.Root);
-        await Until(() => sentinel.GetRecentOutput().Any(line => line.Text == "sentinel-ready"));
+        await Until(sentinel, "独立哨兵", output => output.Any(line => line.Text == "sentinel-ready"));
         await using var session = new CommandRunner().Start(Guid.NewGuid(), $"\"{pwsh}\" -NoProfile -File ignore.ps1", sandbox.Root, shell: CommandShell.Cmd);
-        await Until(() => session.GetRecentOutput().Any(line => line.Text.StartsWith("child:", StringComparison.Ordinal)));
+        await Until(session, "忽略 Ctrl+C 的 Cmd 子进程", output => output.Any(line => line.Text.StartsWith("child:", StringComparison.Ordinal)));
         var childId = int.Parse(session.GetRecentOutput().Single(line => line.Text.StartsWith("child:", StringComparison.Ordinal)).Text[6..], System.Globalization.CultureInfo.InvariantCulture);
         using var child = Process.GetProcessById(childId);
         Assert.AreEqual(CommandStopResult.ForceTerminated, await session.StopAsync().WaitAsync(TimeSpan.FromSeconds(12)));
@@ -92,6 +94,71 @@ public sealed class CmdProcessTests
         Assert.IsFalse(sentinel.Completion.IsCompleted);
         await sentinel.StopAsync();
         await sentinel.Completion;
+    }
+
+    [TestMethod]
+    public async Task ReadinessFailureReportsExitedCmdWithItsOutput()
+    {
+        using var sandbox = new Sandbox();
+        await using var session = new CommandRunner().Start(Guid.NewGuid(),
+            "echo synthetic-start& echo synthetic-diagnostic 1>&2 & exit /b 7", sandbox.Root, shell: CommandShell.Cmd);
+
+        var failure = await Assert.ThrowsExactlyAsync<AssertFailedException>(() =>
+            Until(session, "合成提前退出", output => output.Any(line => line.Text == "never-ready")));
+
+        StringAssert.Contains(failure.Message, "阶段：合成提前退出");
+        StringAssert.Contains(failure.Message, "命令已提前结束");
+        StringAssert.Contains(failure.Message, "State=Failed; ExitCode=7");
+        StringAssert.Contains(failure.Message, "stdout: synthetic-start");
+        StringAssert.Contains(failure.Message, "stderr: synthetic-diagnostic");
+        Assert.IsTrue(session.IsOwnershipReleased);
+        Assert.IsFalse(session.IsStopRequested);
+    }
+
+    [TestMethod]
+    public async Task ReadinessTimeoutKeepsRunningSessionAndBoundsRedactedDiagnostics()
+    {
+        using var sandbox = new Sandbox();
+        const string variable = "TALOSDESK_SYNTHETIC_READY_5A31";
+        const string secret = "synthetic-readiness-secret";
+        var environment = new CommandRunEnvironment(new Dictionary<string, string> { [variable] = secret }, [secret]);
+        var script = $"0..19 | ForEach-Object {{ Write-Output ('synthetic-line-' + $_ + ':' + $env:{variable} + ':' + ('x' * 500)) }}; [Console]::Error.WriteLine('synthetic-diagnostic'); Write-Output 'diagnostic-ready'; while($true) {{ Start-Sleep -Milliseconds 100 }}";
+        await using var session = new CommandRunner().Start(Guid.NewGuid(), script, sandbox.Root, runEnvironment: environment);
+        await Until(session, "诊断样本就绪", output => output.Any(line => line.Text == "diagnostic-ready") &&
+            output.Any(line => line.Stream == "stderr" && line.Text == "synthetic-diagnostic"));
+
+        var failure = await Assert.ThrowsExactlyAsync<AssertFailedException>(() =>
+            Until(session, "合成等待超时", output => output.Any(line => line.Text == "never-ready"), TimeSpan.Zero));
+
+        StringAssert.Contains(failure.Message, "阶段：合成等待超时");
+        StringAssert.Contains(failure.Message, "等待超时");
+        StringAssert.Contains(failure.Message, "Completion=");
+        StringAssert.Contains(failure.Message, "OwnershipReleased=False");
+        StringAssert.Contains(failure.Message, "StopRequested=False");
+        StringAssert.Contains(failure.Message, "synthetic-line-19:[已隐藏]");
+        Assert.IsFalse(failure.Message.Contains("synthetic-line-0:", StringComparison.Ordinal));
+        Assert.IsFalse(failure.Message.Contains(secret, StringComparison.Ordinal));
+        Assert.IsLessThanOrEqualTo(4096, failure.Message.Length);
+        foreach (var line in failure.Message.Split(Environment.NewLine).Where(line =>
+            line.StartsWith("stdout: ", StringComparison.Ordinal) || line.StartsWith("stderr: ", StringComparison.Ordinal)))
+            Assert.IsLessThanOrEqualTo(256, line[(line.IndexOf(": ", StringComparison.Ordinal) + 2)..].Length);
+        Assert.IsFalse(session.Completion.IsCompleted);
+        Assert.IsFalse(session.IsStopRequested);
+        await session.StopAsync();
+        Assert.AreEqual(CommandRunState.Stopped, (await session.Completion).State);
+    }
+
+    [TestMethod]
+    public async Task ReadyMarkerInCompletedSessionStillSatisfiesReadiness()
+    {
+        using var sandbox = new Sandbox();
+        await using var session = new CommandRunner().Start(Guid.NewGuid(), "echo already-ready& exit /b 0", sandbox.Root, shell: CommandShell.Cmd);
+        Assert.AreEqual(0, (await session.Completion.WaitAsync(TimeSpan.FromSeconds(15))).ExitCode);
+
+        await Until(session, "已完成且已就绪", output => output.Any(line => line.Text == "already-ready"));
+
+        Assert.IsTrue(session.IsOwnershipReleased);
+        Assert.IsFalse(session.IsStopRequested);
     }
 
     [TestMethod]
@@ -118,12 +185,44 @@ public sealed class CmdProcessTests
         Assert.IsFalse(runner.IsRunning(id));
     }
 
-    private static async Task Until(Func<bool> condition)
+    private async Task Until(CommandRunSession session, string phase, Func<IReadOnlyList<CommandOutput>, bool> condition,
+        TimeSpan? timeout = null)
     {
+        var limit = timeout ?? TimeSpan.FromSeconds(15);
         var clock = Stopwatch.StartNew();
-        while (!condition())
+        while (true)
         {
-            if (clock.Elapsed > TimeSpan.FromSeconds(15)) Assert.Fail("合成 Cmd 命令未就绪。");
+            var output = session.GetRecentOutput();
+            if (condition(output)) return;
+            string? reason = null;
+            if (session.Completion.IsCompleted)
+            {
+                // 输出可能在第一次快照后才排空，完成状态不能抢在就绪标记之前判失败。
+                output = session.GetRecentOutput();
+                if (condition(output)) return;
+                try
+                {
+                    var result = await session.Completion;
+                    reason = $"命令已提前结束；State={result.State}; ExitCode={result.ExitCode}";
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                { reason = $"命令观察失败；ExceptionType={exception.GetType().Name}"; }
+            }
+            else if (clock.Elapsed > limit) reason = "等待超时";
+            if (reason is not null)
+            {
+                var recent = string.Join(Environment.NewLine, output.TakeLast(8).Select(line =>
+                {
+                    var text = line.Text.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
+                    return $"{line.Stream}: {(text.Length > 256 ? text[..255] + "…" : text)}";
+                }));
+                var message = $"合成 Cmd 命令未就绪。阶段：{phase}；{reason}。" + Environment.NewLine +
+                    $"Elapsed={clock.Elapsed.TotalSeconds:F3}s; Limit={limit.TotalSeconds:F3}s; Completion={session.Completion.Status}; " +
+                    $"OwnershipReleased={session.IsOwnershipReleased}; StopRequested={session.IsStopRequested}" + Environment.NewLine +
+                    "最近脱敏输出（最多8条，每条256字符）：" + Environment.NewLine + (recent.Length == 0 ? "（无输出）" : recent);
+                TestContext.WriteLine(message);
+                Assert.Fail(message);
+            }
             await Task.Delay(20);
         }
     }
