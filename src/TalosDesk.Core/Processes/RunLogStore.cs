@@ -403,7 +403,7 @@ public sealed class RunLogStore
         {
             foreach (var (runId, directory) in EnumerateRunDirectories())
             {
-                if (!_active.Contains(runId)) System.IO.Directory.Delete(directory, true);
+                if (!_active.Contains(runId)) DeleteHistoryDirectory(directory);
             }
             _storedBytes = CalculateStoredBytes();
         }
@@ -420,9 +420,21 @@ public sealed class RunLogStore
             if (startedAt < now.AddDays(-Settings.RetentionDays) || _storedBytes + requiredBytes > Settings.MaxBytes)
             {
                 var deletedBytes = GetDirectoryBytes(directory);
-                System.IO.Directory.Delete(directory, true);
+                DeleteHistoryDirectory(directory);
                 _storedBytes -= deletedBytes;
             }
+        }
+    }
+
+    private void DeleteHistoryDirectory(string directory)
+    {
+        try { System.IO.Directory.Delete(directory, true); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // 删除可能只完成一部分；重算受阻时保留原计数，仍向调用方报告原清理错误。
+            try { _storedBytes = CalculateStoredBytes(); }
+            catch (Exception recountException) when (recountException is IOException or UnauthorizedAccessException) { }
+            throw;
         }
     }
 

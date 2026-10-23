@@ -476,6 +476,59 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    [DataRow("clear")]
+    [DataRow("retention")]
+    [DataRow("begin")]
+    public void FailedHistoryCleanupRecountsDeletedBytesBeforeActiveOutputContinues(string cleanup)
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var projectId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+        var first = store.Begin(projectId, commandId, DateTimeOffset.Now.AddDays(-2).AddMinutes(-1));
+        store.Append(first, new CommandOutput(DateTimeOffset.Now, "stdout", new string('a', 400_000)));
+        store.Complete(first, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var second = store.Begin(projectId, commandId, DateTimeOffset.Now.AddDays(-2));
+        store.Append(second, new CommandOutput(DateTimeOffset.Now, "stdout", new string('b', 400_000)));
+        store.Complete(second, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var active = store.Begin(projectId, commandId, DateTimeOffset.Now);
+        var history = cleanup == "clear"
+            ? Directory.GetDirectories(Path.GetDirectoryName(first.Directory)!).Where(path => path != active.Directory).ToArray()
+            : new[] { first.Directory, second.Directory };
+        using var lockedMetadata = new FileStream(Path.Combine(history[1], "run.json"), FileMode.Open, FileAccess.Read, FileShare.Read);
+        try
+        {
+            Action cleanupAction = cleanup switch
+            {
+                "clear" => store.ClearHistory,
+                "retention" => () => store.UpdateSettings(new RunLogSettings(1024 * 1024, 1)),
+                _ => () => store.Begin(projectId, commandId, DateTimeOffset.Now.AddDays(40))
+            };
+            Assert.ThrowsExactly<IOException>(cleanupAction);
+            Assert.IsFalse(Directory.Exists(history[0]), "清理失败前应已经删除了一个历史批次。");
+            Assert.IsTrue(File.Exists(Path.Combine(history[1], "run.json")), "文件锁必须保留失败的清理对象。");
+            var output = new string('c', 800_000);
+            var outputBytes = Encoding.UTF8.GetByteCount(output + Environment.NewLine);
+            TestContext.WriteLine($"清理失败后实际批次字节：{GetBatchBytes(store)}；待写入：{outputBytes}。");
+            Assert.IsLessThanOrEqualTo(store.Settings.MaxBytes, GetBatchBytes(store) + outputBytes, "实际剩余文件与新输出应能放入容量上限。");
+
+            store.Append(active, new CommandOutput(DateTimeOffset.Now, "stdout", output));
+
+            Assert.IsFalse(active.Info.WriteFailed, "清理失败不能让已删除的字节阻止后续正常写入。");
+            Assert.IsFalse(active.Info.Truncated);
+            Assert.AreEqual((long)outputBytes, new FileInfo(Path.Combine(active.Directory, "stdout.log")).Length);
+            CollectionAssert.AreEqual(new[] { output }, store.ReadTail(active.Info, "stdout").ToArray());
+        }
+        finally
+        {
+            lockedMetadata.Dispose();
+            store.Complete(active, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        }
+    }
+
+    [TestMethod]
     public void CapacityRecountAfterWriteFailureIncludesUnreadableActiveBatch()
     {
         using var sandbox = new Sandbox();
