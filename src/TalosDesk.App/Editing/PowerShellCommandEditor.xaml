@@ -23,7 +23,7 @@
         <Grid Grid.Row="1" Margin="2,6,2,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedBrush}" FontSize="10.5" />
-            <TextBlock Grid.Column="1" Text="Tab 补全 · Ctrl+Enter 保存" Foreground="{StaticResource MutedBrush}" FontSize="10.5" />
+            <TextBlock x:Name="ShortcutHintText" Grid.Column="1" Text="Tab 补全 · Ctrl+Enter 保存" Foreground="{StaticResource MutedBrush}" FontSize="10.5" />
         </Grid>
 
         <Popup x:Name="CompletionPopup" Grid.Row="0" PlacementTarget="{Binding ElementName=Editor}"

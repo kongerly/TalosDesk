@@ -28,6 +28,8 @@ public partial class CommandEditorWindow : Window
         PurposeBox.Text = existing.Purpose;
         CommandBox.Text = existing.Command;
         KindBox.SelectedIndex = existing.Kind == CommandKind.Service ? 1 : 0;
+        ShellBox.SelectedIndex = existing.Shell == CommandShell.Cmd ? 1 : 0;
+        RefreshShell();
         AutoRestartEnabledBox.IsChecked = existing.AutoRestartEnabled;
         if (existing.TcpProbe is { } probe)
         {
@@ -42,6 +44,17 @@ public partial class CommandEditorWindow : Window
     }
 
     public CommandDefinition? Result { get; private set; }
+
+    private void ShellBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => RefreshShell();
+
+    private void RefreshShell()
+    {
+        if (CommandBox is null || ShellHintText is null) return;
+        CommandBox.Shell = ShellBox.SelectedIndex == 1 ? CommandShell.Cmd : CommandShell.PowerShell;
+        ShellHintText.Text = CommandBox.Shell == CommandShell.Cmd
+            ? "Cmd 非交互单行，最多 7,000 字符，禁用 AutoRun 和延迟变量展开；UTF-8 输出。含空格路径用双引号，变量用 %NAME%；批处理可用 call \"脚本.cmd\"。不提供 PowerShell 补全，旧编码工具需自行配置 UTF-8。命令以明文保存和导出，不要写入密钥。"
+            : "命令以明文保存和导出，不要写入密钥。PowerShell 7 非交互运行，不加载个人配置文件；目录中的程序可用 .\\程序名.exe。";
+    }
 
     private void ProbeKind_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => RefreshProbeFields();
     private void ProbeEnabled_Changed(object sender, RoutedEventArgs e) => RefreshProbeFields();
@@ -159,6 +172,13 @@ public partial class CommandEditorWindow : Window
         }
 
         var kind = (KindBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() == "Service" ? CommandKind.Service : CommandKind.Task;
+        var shell = ShellBox.SelectedIndex == 1 ? CommandShell.Cmd : CommandShell.PowerShell;
+        try { CommandShellRules.Validate(shell, CommandBox.Text); }
+        catch (InvalidDataException exception)
+        {
+            AppMessageDialog.Show(this, exception.Message, "命令配置无效", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         TcpProbeConfiguration? probe;
         try { probe = ReadProbe(kind); }
         catch (InvalidDataException exception)
@@ -174,6 +194,7 @@ public partial class CommandEditorWindow : Window
             Command = CommandBox.Text.Trim(),
             WorkingDirectory = Path.GetFullPath(WorkingDirectoryBox.Text.Trim()),
             Kind = kind,
+            Shell = shell,
             TcpProbe = probe,
             AutoRestartEnabled = kind == CommandKind.Service && AutoRestartEnabledBox.IsChecked == true,
             EnvironmentVariables = _environmentVariables.Select(variable => variable.Clone()).ToList()

@@ -12,6 +12,41 @@ namespace TalosDesk.Core.Tests;
 public sealed class CommandRecoveryProcessTests
 {
     [TestMethod]
+    public async Task PublicCoordinatorPreservesCmdShellForInitialAndRetriedSessions()
+    {
+        using var sandbox = new Sandbox();
+        var clock = new CommandRecoveryCoordinatorTests.ManualTime();
+        var coordinator = new CommandRecoveryCoordinator(new CommandRunner(), clock);
+        var id = Guid.NewGuid();
+        var request = new CommandStartRequest(id, CommandKind.Service, CommandStartSource.Independent,
+            () => new("echo cmd-coordinator& exit /b 7", sandbox.Path, Shell: CommandShell.Cmd), true);
+        var sessions = new List<CommandRunSession>();
+        try
+        {
+            var first = (CommandRunSession)await coordinator.StartAsync(request);
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var session = attempt == 0 ? first : (CommandRunSession)coordinator.GetSnapshot(id)!.Session!;
+                sessions.Add(session);
+                Assert.AreEqual(7, (await session.Completion.WaitAsync(TimeSpan.FromSeconds(12))).ExitCode);
+                Assert.IsTrue(session.GetRecentOutput().Any(line => line.Text == "cmd-coordinator"));
+                await TcpProbeTests.Until(() => coordinator.GetSnapshot(id)!.State == CommandRecoveryState.Waiting);
+                Assert.AreEqual(attempt, coordinator.GetSnapshot(id)!.Attempts);
+                if (attempt == 0)
+                {
+                    clock.Advance(2);
+                    await TcpProbeTests.Until(() => coordinator.GetSnapshot(id)!.Session is { } next && !ReferenceEquals(next, first));
+                }
+            }
+        }
+        finally
+        {
+            await coordinator.CloseAndStopAsync();
+            foreach (var session in sessions) await session.DisposeAsync();
+        }
+    }
+
+    [TestMethod]
     public async Task RealSessionsHaveDistinctProcessesProbesAndLogsWithoutReturningBudgetOrLeakingSyntheticSecret()
     {
         using var sandbox = new Sandbox();

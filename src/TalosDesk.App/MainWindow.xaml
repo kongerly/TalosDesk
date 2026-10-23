@@ -439,6 +439,7 @@
                                 <Button x:Name="OutputRestartButton" Content="重启" Style="{StaticResource ActionButton}" Margin="7,0,0,0" Click="RestartCommand_Click" IsEnabled="False" />
                                 <Button x:Name="CopySelectedOutputButton" Content="复制所选" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="CopySelectedOutput_Click" IsEnabled="False" ToolTip="先拖选任意文本，再复制；Ctrl+A 可选择全部输出" />
                                 <Button x:Name="ClearOutputButton" Content="清空显示" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="ClearOutput_Click" IsEnabled="False" />
+                                <Button x:Name="FindOutputButton" Content="查找" ToolTip="Ctrl+F 查找当前显示的日志" Style="{StaticResource SidebarButton}" Margin="7,0,0,0" Click="FindOutput_Click" />
                             </WrapPanel>
                             <StackPanel Grid.Row="2">
                                 <TextBlock x:Name="ProbeBoundaryText" Text="TCP 可连接不代表业务健康，也不能确认监听者属于该命令。" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="11" Visibility="Collapsed" />
@@ -479,8 +480,19 @@
                             </StackPanel>
                             </StackPanel>
                             </Expander>
+                            <StackPanel x:Name="LogSearchPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                                <WrapPanel>
+                                    <TextBox x:Name="LogSearchBox" Width="170" MaxLength="4096" Margin="0,0,6,5" ToolTip="关键词，忽略大小写，按字面匹配" AutomationProperties.Name="日志搜索关键词" KeyDown="LogSearchBox_KeyDown" />
+                                    <Button x:Name="PreviousLogMatchButton" Content="上一个" Margin="0,0,5,5" Click="PreviousLogMatch_Click" IsEnabled="False" />
+                                    <Button x:Name="NextLogMatchButton" Content="下一个" Margin="0,0,5,5" Click="NextLogMatch_Click" IsEnabled="False" />
+                                    <TextBlock x:Name="LogMatchCountText" Text="0 / 0" VerticalAlignment="Center" Margin="0,0,8,5" />
+                                    <Button Content="关闭查找" Margin="0,0,0,5" Click="CloseLogSearch_Click" />
+                                </WrapPanel>
+                                <TextBlock x:Name="LogSearchScopeText" TextWrapping="Wrap" FontSize="10" Foreground="{StaticResource MutedBrush}" />
                             </StackPanel>
-                            <TextBox x:Name="OutputTextBox" Grid.Row="1" Background="Transparent" BorderThickness="0"
+                            </StackPanel>
+                            <AdornerDecorator x:Name="OutputAdornerHost" Grid.Row="1">
+                            <TextBox x:Name="OutputTextBox" Background="Transparent" BorderThickness="0"
                                      Foreground="{StaticResource LogTextBrush}" CaretBrush="{StaticResource JadeBrush}"
                                      FontFamily="{StaticResource CodeFont}" FontSize="11" Padding="0,2,0,0"
                                      IsReadOnly="True" IsReadOnlyCaretVisible="True" IsUndoEnabled="False"
@@ -499,6 +511,7 @@
                                     </ContextMenu>
                                 </TextBox.ContextMenu>
                             </TextBox>
+                            </AdornerDecorator>
                             <TextBlock x:Name="EmptyOutputHint" Grid.Row="1" Text="选择命令以查看输出。" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="Visible" />
                         </Grid>
                     </Grid>

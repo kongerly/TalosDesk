@@ -153,7 +153,7 @@ public sealed class TcpProbeTests
         var valid = JsonSerializer.Serialize(Workspace(sandbox.Path));
         var cases = new List<string>
         {
-            valid.Replace("\"SchemaVersion\":5", "\"SchemaVersion\":3"),
+            valid.Replace($"\"SchemaVersion\":{WorkspaceStore.CurrentSchemaVersion}", "\"SchemaVersion\":3"),
             valid.Replace("\"Kind\":1", "\"Kind\":0"),
             valid.Replace("\"Port\":12345", "\"Port\":0"),
             valid.Replace("\"Port\":12345", "\"Port\":65536"),

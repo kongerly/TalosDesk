@@ -26,6 +26,8 @@ public sealed class CommandDefinition
     public string WorkingDirectory { get; set; } = string.Empty;
     public CommandKind Kind { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public CommandShell Shell { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool AutoRestartEnabled { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public TcpProbeConfiguration? TcpProbe { get; set; }
@@ -88,6 +90,22 @@ public enum CommandKind
 {
     Task,
     Service
+}
+
+public enum CommandShell
+{
+    PowerShell,
+    Cmd
+}
+
+public static class CommandShellRules
+{
+    public static void Validate(CommandShell shell, string command)
+    {
+        if (!Enum.IsDefined(shell)) throw new InvalidDataException("命令 Shell 无效。");
+        if (shell == CommandShell.Cmd && (command.Length > 7000 || command.IndexOfAny(['\r', '\n', '\0']) >= 0))
+            throw new InvalidDataException("Cmd 首版只支持不超过 7,000 个字符的单行命令。多行流程请保存为 UTF-8 批处理并显式调用。");
+    }
 }
 
 public sealed class CommandGroupDefinition

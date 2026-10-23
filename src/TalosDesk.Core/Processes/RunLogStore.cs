@@ -50,6 +50,7 @@ public sealed class RunLogStore
     private readonly string _defaultRootPath;
     private readonly string _locationFilePath;
     private readonly Func<string, Stream> _openRead;
+    private readonly Action<string, string> _moveDirectory;
     private long _storedBytes;
 
     public RunLogStore(string workspacePath)
@@ -58,9 +59,10 @@ public sealed class RunLogStore
     {
     }
 
-    internal RunLogStore(string workspacePath, Func<string, Stream> openRead)
+    internal RunLogStore(string workspacePath, Func<string, Stream> openRead, Action<string, string>? moveDirectory = null)
     {
         _openRead = openRead;
+        _moveDirectory = moveDirectory ?? System.IO.Directory.Move;
         _workspacePath = Path.GetFullPath(workspacePath);
         _defaultRootPath = _workspacePath + ".logs";
         _locationFilePath = _workspacePath + ".log-location.json";
@@ -124,7 +126,7 @@ public sealed class RunLogStore
             {
                 if (System.IO.Directory.Exists(source)) CopyDirectory(source, staging);
                 else System.IO.Directory.CreateDirectory(staging);
-                System.IO.Directory.Move(staging, target);
+                MoveStagingDirectory(staging, target);
                 targetCreated = true;
                 if (parentDirectory is null) File.Delete(_locationFilePath);
                 else WriteJsonAtomically(_locationFilePath, new LogLocation(Path.GetFullPath(parentDirectory)));
@@ -140,6 +142,22 @@ public sealed class RunLogStore
             if (!System.IO.Directory.Exists(source)) return null;
             try { System.IO.Directory.Delete(source, true); return null; }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return source; }
+        }
+    }
+
+    private void MoveStagingDirectory(string staging, string target)
+    {
+        // Windows 可能在刚复制完嵌套目录后短暂拒绝重命名；只重试同一暂存目录，绝不覆盖目标。
+        int[] delays = [20, 40, 80, 160, 200];
+        for (var attempt = 0; ; attempt++)
+        {
+            try { _moveDirectory(staging, target); return; }
+            catch (IOException exception) when (attempt < delays.Length &&
+                (exception.HResult & 0xffff) is 5 or 32 &&
+                !System.IO.Directory.Exists(target) && !File.Exists(target))
+            {
+                Thread.Sleep(delays[attempt]);
+            }
         }
     }
 

@@ -48,6 +48,10 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(ParallelGroupsKeepWatchingServicesAndOnlyCleanUpTheirOwnExecution), ParallelGroupRegression.Run, () => ParallelGroupRegression.Stage);
 
     [TestMethod]
+    public void LogSearchFollowsDisplayedScopeWithoutBlocking() =>
+        _host.Run(nameof(LogSearchFollowsDisplayedScopeWithoutBlocking), LogSearchRegression.Run, () => LogSearchRegression.Stage);
+
+    [TestMethod]
     public void HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults() =>
         _host.Run(nameof(HistoricalOutputLoadsWithoutBlockingAndRejectsStaleResults), LogHistoryRegression.Run, () => LogHistoryRegression.Stage);
 
@@ -104,8 +108,14 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(RecoveryEditorPreviewAndClonesPreservePolicyWithoutRunning), RecoveryRegression.EditorPreviewAndClonesPreservePolicyWithoutRunning, () => RecoveryRegression.Stage);
 
     [TestMethod]
-    public void RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches() =>
-        _host.Run(nameof(RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches), RecoveryRegression.RealProcessRetriesUseNewProbeAndRedactedLogBatches, () => RecoveryRegression.Stage);
+    public void CmdConfigurationEditorImportAndMixedGroup() =>
+        _host.Run(nameof(CmdConfigurationEditorImportAndMixedGroup), ShellRegression.Run, () => ShellRegression.Stage);
+
+    [TestMethod]
+    [DataRow(CommandShell.PowerShell)]
+    [DataRow(CommandShell.Cmd)]
+    public void RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches(CommandShell shell) =>
+        _host.Run(nameof(RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches), () => RecoveryRegression.RealProcessRetriesUseNewProbeAndRedactedLogBatches(shell), () => RecoveryRegression.Stage);
 
     [TestMethod]
     public void RecoveryOwnSavePausesAndKeepsOriginalBudget() =>

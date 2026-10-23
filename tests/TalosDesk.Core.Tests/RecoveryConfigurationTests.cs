@@ -23,7 +23,7 @@ public sealed class RecoveryConfigurationTests
         CollectionAssert.AreEqual(bytes, await File.ReadAllBytesAsync(sandbox.Store.FilePath));
         await sandbox.Store.SaveAsync(loaded);
         var saved = JsonNode.Parse(await File.ReadAllTextAsync(sandbox.Store.FilePath))!;
-        Assert.AreEqual(5, saved["SchemaVersion"]!.GetValue<int>());
+        Assert.AreEqual(WorkspaceStore.CurrentSchemaVersion, saved["SchemaVersion"]!.GetValue<int>());
         Assert.IsFalse(saved["Projects"]![0]!["Commands"]![0]!.AsObject().ContainsKey("AutoRestartEnabled"));
         Assert.HasCount(1, Directory.GetFiles(sandbox.Root));
     }

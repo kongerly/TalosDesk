@@ -138,7 +138,7 @@ public partial class MainWindow : Window
         Func<Guid, CommandStartPlan, ICommandRunSession>? createSession = null)
     {
         _store = store;
-        _recovery = new CommandRecoveryCoordinator(createSession ?? ((id, plan) => _runner.Start(id, plan.Command, plan.WorkingDirectory, plan.OutputReceived, plan.Environment, plan.TcpProbe)), recoveryTime ?? TimeProvider.System);
+        _recovery = new CommandRecoveryCoordinator(createSession ?? ((id, plan) => _runner.Start(id, plan.Command, plan.WorkingDirectory, plan.OutputReceived, plan.Environment, plan.TcpProbe, plan.Shell)), recoveryTime ?? TimeProvider.System);
         _readWorkspaceRevision = readWorkspaceRevision ?? (() => _store.GetRevisionAsync());
         _windowSettingsStore = new WindowSettingsStore(store.FilePath);
         _updateStateStore = new UpdateStateStore(store.FilePath);
@@ -154,6 +154,7 @@ public partial class MainWindow : Window
         _profileLabel = string.IsNullOrWhiteSpace(profileLabel) ? "正式工作区" : profileLabel;
         _exitInteraction = exitInteraction ?? new MainWindowExitInteraction();
         InitializeComponent();
+        InitializeLogSearch();
         _recoveryTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(100) };
         _recoveryTimer.Tick += (_, _) =>
         {
@@ -1595,7 +1596,7 @@ public partial class MainWindow : Window
         var visibleProjects = imported.Projects.Select(project =>
         {
             var commands = project.Commands.Select(command =>
-                $"    - {command.Name}: {command.Command}{FormatSensitiveVariables(command)}\n      {FormatProbeConfiguration(command)}\n      {FormatRecoveryConfiguration(command)}");
+                $"    - {command.Name} [Shell：{(command.Shell == CommandShell.Cmd ? "Windows Cmd（UTF-8，单行）" : "PowerShell 7")}]: {command.Command}{FormatSensitiveVariables(command)}\n      {FormatProbeConfiguration(command)}\n      {FormatRecoveryConfiguration(command)}");
             var groups = project.Groups.Select(group =>
             {
                 var memberNames = group.CommandIds.Select(id => project.Commands.First(command => command.Id == id).Name);
@@ -1678,7 +1679,7 @@ public partial class MainWindow : Window
 
                 var existingCommand = existingProject.Commands[existingCommandIndex];
                 var commandChoice = AppMessageDialog.Show(this,
-                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机命令：{existingCommand.Command}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n本机{FormatProbeConfiguration(existingCommand)}\n导入{FormatProbeConfiguration(incomingCommand)}\n本机{FormatRecoveryConfiguration(existingCommand)}\n导入{FormatRecoveryConfiguration(incomingCommand)}\n\n选择“替换”将以导入的整套变量、探测和自动重启配置替换本机配置，不沿用旧密文；选择“保留本机”保留本机命令及全部配置；选择“取消导入”停止导入。",
+                    $"项目“{existingProject.Name}”中已有同名命令。\n\n名称：{existingCommand.Name}\n本机 Shell：{existingCommand.Shell}\n本机命令：{existingCommand.Command}\n导入 Shell：{incomingCommand.Shell}\n导入命令：{incomingCommand.Command}\n本机敏感变量：{existingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个\n导入敏感变量：{incomingCommand.EnvironmentVariables.Count(variable => variable.IsSensitive)} 个{FormatSensitiveVariables(incomingCommand)}\n\n本机{FormatProbeConfiguration(existingCommand)}\n导入{FormatProbeConfiguration(incomingCommand)}\n本机{FormatRecoveryConfiguration(existingCommand)}\n导入{FormatRecoveryConfiguration(incomingCommand)}\n\n选择“替换”将以导入的整套 Shell、变量、探测和自动重启配置替换本机配置，不沿用旧密文；选择“保留本机”保留本机命令及全部配置；选择“取消导入”停止导入。",
                     "命令名称冲突", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
                 if (commandChoice == MessageBoxResult.Cancel) return false;
                 if (commandChoice == MessageBoxResult.Yes)
@@ -1766,6 +1767,7 @@ public partial class MainWindow : Window
         Kind = command.Kind,
         TcpProbe = command.TcpProbe?.Clone(),
         AutoRestartEnabled = command.AutoRestartEnabled,
+        Shell = command.Shell,
         EnvironmentVariables = command.EnvironmentVariables.Select(variable => variable.Clone()).ToList()
     };
 
@@ -2347,7 +2349,7 @@ public partial class MainWindow : Window
     {
         foreach (var command in commands)
         {
-            try { TcpProbeConfiguration.ValidateCommand(command); _ = CommandRunEnvironmentResolver.Resolve(command); }
+            try { CommandShellRules.Validate(command.Shell, command.Command); TcpProbeConfiguration.ValidateCommand(command); _ = CommandRunEnvironmentResolver.Resolve(command); }
             catch (Exception exception) when (exception is CommandEnvironmentException or InvalidDataException)
             {
                 AppMessageDialog.Show(this, $"命令“{command.Name}”的配置不可用：\n\n{exception.Message}\n\n本次不会启动任何命令。",
@@ -2358,14 +2360,15 @@ public partial class MainWindow : Window
         return true;
     }
 
-    internal static string FormatCommandStartError(Exception exception, string workingDirectory)
+    internal static string FormatCommandStartError(Exception exception, string workingDirectory, CommandShell shell = CommandShell.PowerShell)
     {
+        var name = shell == CommandShell.Cmd ? "Windows Cmd" : "PowerShell 7";
         return exception switch
         {
             DirectoryNotFoundException => $"运行目录不存在：{workingDirectory}",
-            FileNotFoundException => "未在应用启动时继承的 PATH 中找到 PowerShell 7（pwsh.exe）。",
-            UnauthorizedAccessException => $"无法访问运行目录或启动 PowerShell 7，请检查权限后重试：{workingDirectory}",
-            Win32Exception win32 => $"无法启动 PowerShell 7（Windows 错误代码 {win32.NativeErrorCode}）。",
+            FileNotFoundException => shell == CommandShell.Cmd ? "未找到 Windows 系统 Cmd（cmd.exe）。" : "未在应用启动时继承的 PATH 中找到 PowerShell 7（pwsh.exe）。",
+            UnauthorizedAccessException => $"无法访问运行目录或启动 {name}，请检查权限后重试：{workingDirectory}",
+            Win32Exception win32 => $"无法启动 {name}（Windows 错误代码 {win32.NativeErrorCode}）。",
             InvalidOperationException => "命令当前无法启动，可能已在运行。",
             ArgumentException => "命令或运行环境无效，未能启动。",
             IOException => "启动命令时发生文件系统错误。",
@@ -2469,6 +2472,7 @@ public partial class MainWindow : Window
     private async void ShowSelectedRun()
     {
         if (OutputTextBox is null) return;
+        ResetLogSearchScope();
         CancelHistoryRead();
         RefreshProbeDisplay();
         var info = SelectedHistoricalRun;

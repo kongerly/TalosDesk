@@ -19,10 +19,11 @@ public sealed class CommandRunner
 
     public CommandRunSession Start(Guid commandId, string command, string workingDirectory,
         EventHandler<CommandOutput>? outputReceived = null, CommandRunEnvironment? runEnvironment = null,
-        TcpProbeConfiguration? tcpProbe = null)
+        TcpProbeConfiguration? tcpProbe = null, CommandShell shell = CommandShell.PowerShell)
     {
         if (commandId == Guid.Empty) throw new ArgumentException("A command ID is required.", nameof(commandId));
         if (string.IsNullOrWhiteSpace(command)) throw new ArgumentException("A command is required.", nameof(command));
+        CommandShellRules.Validate(shell, command);
         var probeSnapshot = tcpProbe?.Clone();
         probeSnapshot?.Validate();
         if (runEnvironment?.SensitiveValues is { } values &&
@@ -37,7 +38,12 @@ public sealed class CommandRunner
             }
 
             (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) started;
-            try { started = WindowsNative.StartPowerShell(command, Path.GetFullPath(workingDirectory), runEnvironment?.Overrides); }
+            try
+            {
+                started = shell == CommandShell.Cmd
+                    ? WindowsNative.StartCmd(command, Path.GetFullPath(workingDirectory), runEnvironment?.Overrides)
+                    : WindowsNative.StartPowerShell(command, Path.GetFullPath(workingDirectory), runEnvironment?.Overrides);
+            }
             catch (CommandCreationException exception)
             {
                 _sessions[commandId] = exception.Ownership;

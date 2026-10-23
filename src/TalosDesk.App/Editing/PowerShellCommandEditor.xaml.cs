@@ -10,6 +10,7 @@ using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Highlighting.Xshd;
 using ICSharpCode.AvalonEdit.Rendering;
 using TalosDesk.Core.Editing;
+using TalosDesk.Core.Configuration;
 
 namespace TalosDesk.App.Editing;
 
@@ -19,6 +20,22 @@ public partial class PowerShellCommandEditor : UserControl
     private CancellationTokenSource? _completionCancellation;
     private bool _applyingCompletion;
     private string _workingDirectory = string.Empty;
+    private CommandShell _shell;
+
+    public CommandShell Shell
+    {
+        get => _shell;
+        set
+        {
+            _shell = value;
+            CancelCompletion();
+            if (value == CommandShell.PowerShell) LoadSyntaxHighlighting();
+            else Editor.SyntaxHighlighting = null;
+            ShortcutHintText.Text = value == CommandShell.Cmd ? "Ctrl+Enter 保存" : "Tab 补全 · Ctrl+Enter 保存";
+            foreach (var margin in Editor.TextArea.LeftMargins.OfType<TerminalPromptMargin>()) margin.InvalidateVisual();
+            UpdateStatus();
+        }
+    }
 
     public PowerShellCommandEditor()
     {
@@ -57,7 +74,7 @@ public partial class PowerShellCommandEditor : UserControl
     {
         Editor.Options.ConvertTabsToSpaces = true;
         Editor.Options.IndentationSize = 4;
-        Editor.TextArea.LeftMargins.Insert(0, new TerminalPromptMargin(Editor.TextArea.TextView));
+        Editor.TextArea.LeftMargins.Insert(0, new TerminalPromptMargin(Editor.TextArea.TextView, () => Shell));
         Editor.TextArea.Caret.PositionChanged += (_, _) =>
         {
             CancelCompletion();
@@ -92,6 +109,7 @@ public partial class PowerShellCommandEditor : UserControl
 
     private void Editor_TextEntering(object sender, TextCompositionEventArgs e)
     {
+        if (Shell == CommandShell.Cmd) return;
         if (string.IsNullOrEmpty(e.Text) || e.Text.Length != 1) return;
         CancelCompletion();
         var character = e.Text[0];
@@ -168,6 +186,12 @@ public partial class PowerShellCommandEditor : UserControl
                 e.Handled = true;
                 return;
             }
+        }
+
+        if (Shell == CommandShell.Cmd)
+        {
+            if (e.Key == Key.Enter || e.Key == Key.Space && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) e.Handled = true;
+            return;
         }
 
         if (e.Key == Key.Space && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
@@ -312,7 +336,8 @@ public partial class PowerShellCommandEditor : UserControl
         var directoryStatus = Directory.Exists(WorkingDirectory.Trim())
             ? string.Empty
             : " · 运行目录无效，路径补全不可用";
-        StatusText.Text = $"PowerShell 7 · 安全补全 · 第 {location.Line} 行，第 {location.Column} 列{directoryStatus}";
+        StatusText.Text = Shell == CommandShell.Cmd ? $"Cmd · UTF-8 · 单行命令{directoryStatus}" :
+            $"PowerShell 7 · 安全补全 · 第 {location.Line} 行，第 {location.Column} 列{directoryStatus}";
     }
 
     private sealed record CompletionViewItem(
@@ -340,12 +365,14 @@ public partial class PowerShellCommandEditor : UserControl
     private sealed class TerminalPromptMargin : AbstractMargin
     {
         private readonly TextView _textView;
+        private readonly Func<CommandShell> _shell;
         private readonly Typeface _typeface = new(new FontFamily("Cascadia Code, Consolas"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
         private readonly Brush _foreground = new SolidColorBrush(Color.FromRgb(44, 120, 152));
 
-        public TerminalPromptMargin(TextView textView)
+        public TerminalPromptMargin(TextView textView, Func<CommandShell> shell)
         {
             _textView = textView;
+            _shell = shell;
             _textView.VisualLinesChanged += (_, _) => InvalidateVisual();
             _textView.ScrollOffsetChanged += (_, _) => InvalidateVisual();
         }
@@ -361,7 +388,7 @@ public partial class PowerShellCommandEditor : UserControl
 
             foreach (var line in _textView.VisualLines)
             {
-                var text = line.FirstDocumentLine.LineNumber == 1 ? "PS>" : ">>";
+                var text = _shell() == CommandShell.Cmd ? ">" : line.FirstDocumentLine.LineNumber == 1 ? "PS>" : ">>";
                 var formatted = new FormattedText(text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
                     _typeface, 11, _foreground, VisualTreeHelper.GetDpi(this).PixelsPerDip);
                 var y = line.VisualTop - _textView.VerticalOffset + Math.Max(0, (_textView.DefaultLineHeight - formatted.Height) / 2);

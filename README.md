@@ -6,7 +6,7 @@ TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令�
 
 > **安全维护（2026-10-22）**：经本地核实，v0.1.0–v0.3.0 的历史自包含包（含 v0.3.0-preview.1）都嵌入了 .NET 10.0.12。这些包使用自带运行时，更新系统 .NET 不会替换它，因此请停止继续分发。10.0.13 的本地重建尚未发布，详情见[安全维护说明](docs/security-maintenance-2026-10-22.md)。
 
-已发布的稳定版是 `v0.3.0`。当前源码为 `v0.3.1-rc.1 / Preview`，使用 schema 5，包含默认关闭的服务有限自动重启，尚未正式发布。后续变更方向见[路线图](docs/roadmap.md)。
+已发布的稳定版是 `v0.3.0`。当前源码在 `v0.3.1-rc.1 / Preview` 基础上包含未发布改动：服务有限自动重启、当前日志搜索与 Windows Cmd；保存使用 schema 6。应用版本号尚未重新分配，不代表新的正式候选或发布。后续方向见[路线图](docs/roadmap.md)。
 
 ## 主要功能
 
@@ -14,6 +14,8 @@ TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令�
 - 运行、停止、重启及批量启动命令；项目内的分组可以同时执行，也可以按成功顺序执行任务。
 - 编辑器支持 PowerShell 着色、多行缩进，以及本地路径、程序和环境变量补全；双击编辑，拖动排序。
 - 分别查看 stdout、stderr、退出结果与历史日志，支持范围选择、复制、保留上限和清理。
+- 在运行输出页按 Ctrl+F 搜索当前显示或所选历史批次的所选通道，支持中文、关键词高亮、匹配计数和前后导航，范围限最近 10,000 行。
+- 命令可选择默认 PowerShell 7 或 Windows Cmd；Cmd 首版支持 UTF-8 非交互单行命令，详见[Cmd 范围](docs/design.md#windows-cmd)。
 - 服务可选开启回环 TCP 探测；项目概览分别统计进程运行数和探测通过数。
 - 通过 JSON 预览、导入和导出配置；导入和应用启动都不会自动运行命令。
 - 最小化到系统托盘，恢复窗口大小与位置；提供可关闭的更新检查和本地崩溃诊断。
@@ -21,7 +23,7 @@ TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令�
 
 ## 安装与启动
 
-TalosDesk 需要 Windows 11 x64，以及位于 `PATH` 中的 [PowerShell 7](https://learn.microsoft.com/powershell/)。Go、Python、uv 等目标项目要用的工具需要自行安装。便携包自带 .NET 和 Windows Desktop 运行时，不需要安装 SDK；其他 Windows 版本尚无兼容承诺，发布包未签名。
+TalosDesk 面向 Windows 11 x64。默认 PowerShell 命令需要位于 `PATH` 中的 [PowerShell 7](https://learn.microsoft.com/powershell/)；当前源码新增的 Cmd 命令使用系统 `cmd.exe`。Go、Python、uv 等目标项目要用的工具需要自行安装。便携包自带 .NET 和 Windows Desktop 运行时，不需要安装 SDK；其他 Windows 版本尚无兼容承诺，发布包未签名。
 
 [官方发布页](https://github.com/kongerly/TalosDesk/releases)保留历史附件，下载前请先阅读上方的安全维护提示。等新包发布后，下载完整的 ZIP 和同名 `.sha256` 文件，核对下面两行输出中的哈希是否一致：
 
@@ -88,7 +90,7 @@ pwsh -NoProfile -File .\scripts\Publish.ps1
 
 1. 下载符合安全基线的新包并校验，然后停止命令、退出旧应用。
 2. 备份本机工作区、日志和需要保留的旁文件；可分享导出不保留敏感值。
-3. 解压到新目录，用原来的明确 `--workspace` 路径启动。回退旧版时要使用兼容的工作区副本：当前 schema 5 不能交给只支持 schema 4 的 v0.3.0。
+3. 解压到新目录，用原来的明确 `--workspace` 路径启动。回退旧版时要使用兼容的工作区副本：当前 schema 6 不能交给只支持 schema 4 的 v0.3.0，也不能交给此前 schema 5 的 rc.1 构建。
 
 ## 开发文档与许可
 

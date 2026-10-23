@@ -433,12 +433,12 @@ internal static class RecoveryRegression
         finally { timer.Stop(); }
     }
 
-    internal static void RealProcessRetriesUseNewProbeAndRedactedLogBatches()
+    internal static void RealProcessRetriesUseNewProbeAndRedactedLogBatches(CommandShell shell)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        using var f = new Fixture(real: true, probePort: port);
+        using var f = new Fixture(real: true, probePort: port, shell: shell);
         f.Start();
         var seen = new HashSet<ICommandRunSession>();
         for (var attempt = 0; attempt < 4; attempt++)
@@ -483,7 +483,7 @@ internal static class RecoveryRegression
         internal TextBox Output => (TextBox)Window.FindName("OutputTextBox");
         internal Exception? CreateFailure;
         internal bool FailSave;
-        internal Fixture(bool real = false, int commandCount = 1, int? probePort = null)
+        internal Fixture(bool real = false, int commandCount = 1, int? probePort = null, CommandShell shell = CommandShell.PowerShell)
         {
             Stage = "初始化隔离工作区";
             Directory.CreateDirectory(Root);
@@ -496,6 +496,12 @@ internal static class RecoveryRegression
                 TcpProbe = probePort is { } port ? new() { Port = port, IntervalSeconds = 1 } : null,
                 EnvironmentVariables = [new() { Name = "SYNTHETIC_SECRET", IsSensitive = true, ValueState = "Protected", ProtectedValue = SensitiveValueProtector.Protect("synthetic-app-secret") }]
             }).ToList();
+            if (shell == CommandShell.Cmd)
+            {
+                File.WriteAllText(Path.Combine(WorkingDirectory, "service.ps1"), commands[0].Command);
+                var pwsh = WindowsNative.FindPowerShellPath(Environment.GetEnvironmentVariable("PATH") ?? string.Empty, WorkingDirectory);
+                foreach (var command in commands) { command.Shell = shell; command.Command = $"\"{pwsh}\" -NoProfile -File service.ps1"; }
+            }
             Store.SaveAsync(new() { Projects = [new() { Name = "隔离恢复项目", Directory = WorkingDirectory, Commands = commands,
                 Groups = [new() { Name = "服务组", CommandIds = commands.Select(command => command.Id).ToList() }] }] }).GetAwaiter().GetResult();
             Window = new MainWindow(Store, "隔离恢复验收", null, null, null, trayIcon: new TestTrayIcon(), exitInteraction: Exit,

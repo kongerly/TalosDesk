@@ -83,7 +83,7 @@ public partial class MainWindow
         {
             if (!_windowClosed) RefreshCommandSelection();
             return (null, exception is CommandEnvironmentException or InvalidDataException ? exception.Message :
-                FormatCommandStartError(exception, command.WorkingDirectory));
+                FormatCommandStartError(exception, command.WorkingDirectory, command.Shell));
         }
     }
 
@@ -107,12 +107,13 @@ public partial class MainWindow
             throw new InvalidDataException("工作区文件已变更，请重新打开后运行。");
         }
         var definition = input.Command;
+        CommandShellRules.Validate(definition.Shell, definition.Command);
         TcpProbeConfiguration.ValidateCommand(definition);
         if (!Directory.Exists(definition.WorkingDirectory)) throw new DirectoryNotFoundException();
         var environment = CommandRunEnvironmentResolver.Resolve(definition);
         var attempt = new RunAttempt(this, input.ProjectId, definition.Id, Interlocked.Increment(ref _nextRunVersion), input.LogAvailable);
         return new CommandStartPlan(definition.Command, definition.WorkingDirectory, attempt.OutputReceived, environment,
-            definition.TcpProbe, attempt.SessionCreated);
+            definition.TcpProbe, attempt.SessionCreated, definition.Shell);
     }
 
     private sealed class RunAttempt(MainWindow owner, Guid projectId, Guid commandId, long version, bool logAvailable)

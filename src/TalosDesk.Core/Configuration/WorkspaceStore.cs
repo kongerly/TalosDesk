@@ -6,7 +6,7 @@ namespace TalosDesk.Core.Configuration;
 
 public sealed class WorkspaceStore
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
     // Disallow 让未知字段（拼错的 "TcpProbee"、旧版本残留键）不再被静默丢弃；只影响读取，序列化不受影响。
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -104,6 +104,7 @@ public sealed class WorkspaceStore
                     WorkingDirectory = command.WorkingDirectory,
                     Kind = command.Kind,
                     AutoRestartEnabled = command.AutoRestartEnabled,
+                    Shell = command.Shell,
                     TcpProbe = command.TcpProbe?.Clone(),
                     EnvironmentVariables = command.EnvironmentVariables.Select(variable => variable.IsSensitive
                         ? new CommandEnvironmentVariable { Name = variable.Name, IsSensitive = true, ValueState = "Required" }
@@ -168,7 +169,7 @@ public sealed class WorkspaceStore
     private static void PrepareForWrite(WorkspaceConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        if (configuration.SchemaVersion is not (1 or 2 or 3 or 4 or CurrentSchemaVersion))
+        if (configuration.SchemaVersion is not (1 or 2 or 3 or 4 or 5 or CurrentSchemaVersion))
             throw new InvalidDataException("The TalosDesk workspace uses an unsupported schema version.");
         NormalizeAndValidate(configuration);
     }
@@ -246,6 +247,7 @@ public sealed class WorkspaceStore
             if (configuration.SchemaVersion >= 3) ValidateSchemaThreeShape(document.RootElement);
             ValidateProbeShape(document.RootElement, configuration.SchemaVersion);
             ValidateRecoveryShape(document.RootElement, configuration.SchemaVersion);
+            ValidateShellShape(document.RootElement, configuration.SchemaVersion);
             NormalizeAndValidate(configuration);
             return configuration;
         }
@@ -302,7 +304,7 @@ public sealed class WorkspaceStore
                 if (probes.Length > 1) throw new InvalidDataException("TCP 探测字段重复。");
                 if (probes.Length == 0 || probes[0].Value.ValueKind == JsonValueKind.Null) continue;
                 var probe = probes[0].Value;
-                if (schema is not (4 or 5) || probe.ValueKind != JsonValueKind.Object)
+                if (schema is not (4 or 5 or 6) || probe.ValueKind != JsonValueKind.Object)
                     throw new InvalidDataException("非空 TCP 探测配置要求 schema 4。");
                 var fields = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var property in probe.EnumerateObject())
@@ -326,8 +328,21 @@ public sealed class WorkspaceStore
             if (project.ValueKind != JsonValueKind.Object || !project.TryGetProperty("Commands", out var commands) || commands.ValueKind != JsonValueKind.Array) continue;
             foreach (var command in commands.EnumerateArray())
                 if (command.ValueKind == JsonValueKind.Object && command.TryGetProperty("AutoRestartEnabled", out var enabled) &&
-                    (schema != 5 || enabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False)))
+                    (schema < 5 || enabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False)))
                     throw new InvalidDataException("自动重启开关要求 schema 5 的布尔值。");
+        }
+    }
+
+    private static void ValidateShellShape(JsonElement root, int schema)
+    {
+        if (!root.TryGetProperty("Projects", out var projects) || projects.ValueKind != JsonValueKind.Array) return;
+        foreach (var project in projects.EnumerateArray())
+        {
+            if (project.ValueKind != JsonValueKind.Object || !project.TryGetProperty("Commands", out var commands) || commands.ValueKind != JsonValueKind.Array) continue;
+            foreach (var command in commands.EnumerateArray())
+                if (command.ValueKind == JsonValueKind.Object && command.TryGetProperty("Shell", out var shell) &&
+                    (schema < 6 || shell.ValueKind != JsonValueKind.Number || !shell.TryGetInt32(out var value) || !Enum.IsDefined((CommandShell)value)))
+                    throw new InvalidDataException("Shell 要求 schema 6：0 为 PowerShell，1 为 Cmd，缺省为 PowerShell。");
         }
     }
 
@@ -386,12 +401,16 @@ public sealed class WorkspaceStore
 
     private static void NormalizeAndValidate(WorkspaceConfiguration? configuration)
     {
-        if (configuration is null || configuration.SchemaVersion is not (1 or 2 or 3 or 4 or CurrentSchemaVersion) || configuration.Projects is null)
+        if (configuration is null || configuration.SchemaVersion is not (1 or 2 or 3 or 4 or 5 or CurrentSchemaVersion) || configuration.Projects is null)
         {
             throw new InvalidDataException("The TalosDesk workspace file is empty or uses an unsupported schema version.");
         }
 
         var legacyWorkspace = configuration.SchemaVersion == 1;
+        if (configuration.SchemaVersion < 6 && configuration.Projects
+            .Where(project => project?.Commands is not null).SelectMany(project => project.Commands)
+            .Any(command => command?.Shell != CommandShell.PowerShell && command is not null))
+            throw new InvalidDataException("Cmd 配置要求 schema 6。");
         if (configuration.SchemaVersion < 4 && configuration.Projects
             .Where(project => project?.Commands is not null).SelectMany(project => project.Commands)
             .Any(command => command?.TcpProbe is not null))
@@ -457,6 +476,7 @@ public sealed class WorkspaceStore
                 if (command.Id == Guid.Empty) throw new InvalidDataException("工作区包含全零 GUID，命令 ID 不能为空。");
                 if (!commandIds.Add(command.Id)) throw new InvalidDataException("The TalosDesk workspace contains duplicate command IDs.");
                 if (!Enum.IsDefined(command.Kind)) throw new InvalidDataException($"Command '{command.Name}' has an unsupported run type.");
+                CommandShellRules.Validate(command.Shell, command.Command);
                 TcpProbeConfiguration.ValidateCommand(command);
                 if (command.AutoRestartEnabled && command.Kind != CommandKind.Service)
                     throw new InvalidDataException("只有服务命令可以开启自动重启。");

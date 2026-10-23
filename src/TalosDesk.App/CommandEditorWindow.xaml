@@ -50,9 +50,13 @@
             </Grid>
         </StackPanel>
             <StackPanel Grid.Row="4" Margin="0,0,0,18">
+                <TextBlock Text="Shell" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="ShellBox" SelectedIndex="0" SelectionChanged="ShellBox_SelectionChanged" Margin="0,0,0,10">
+                    <ComboBoxItem Content="PowerShell 7" /><ComboBoxItem Content="Windows Cmd（UTF-8，单行）" />
+                </ComboBox>
                 <TextBlock Text="命令" Style="{StaticResource FieldLabel}" />
                 <editing:PowerShellCommandEditor x:Name="CommandBox" AutomationProperties.AutomationId="CommandEditorHost" MinHeight="145" SaveRequested="CommandBox_SaveRequested" />
-                <TextBlock Text="命令会以明文保存在本机配置和导出文件中。不要把密钥写入命令。命令通过 PowerShell 7 非交互运行，不加载个人配置文件；目录中的程序可用 .\程序名.exe。" Foreground="{StaticResource GoldBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+                <TextBlock x:Name="ShellHintText" Text="命令以明文保存和导出，不要写入密钥。PowerShell 7 非交互运行，不加载个人配置文件；目录中的程序可用 .\程序名.exe。" Foreground="{StaticResource GoldBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
                 <TextBlock Text="TCP 探测（仅服务）" Style="{StaticResource FieldLabel}" Margin="0,15,0,0" />
                 <CheckBox x:Name="ProbeEnabledBox" Content="启用本机 TCP 探测" Checked="ProbeEnabled_Changed" Unchecked="ProbeEnabled_Changed" Margin="0,4,0,8" />
                 <TextBlock x:Name="ProbeTaskHint" Text="任务不支持探测；保存为任务将移除探测配置。" TextWrapping="Wrap" Foreground="{StaticResource GoldBrush}" />

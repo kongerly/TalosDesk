@@ -245,6 +245,95 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    [DataRow(5)]
+    [DataRow(32)]
+    public void ChangingLocationRetriesTransientRenameWithoutRecopying(int error)
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var attempts = 0;
+        string? firstStaging = null;
+        var store = new RunLogStore(workspace, File.OpenRead, (source, target) =>
+        {
+            firstStaging ??= source;
+            Assert.AreEqual(firstStaging, source);
+            if (++attempts <= 2) throw new IOException("合成暂时占用", unchecked((int)0x80070000) | error);
+            Directory.Move(source, target);
+        });
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(2 * 1024 * 1024, 7));
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "中文迁移 marker"));
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var original = store.RootPath;
+
+        Assert.IsNull(store.ChangeLocation(Path.Combine(sandbox.Path, "selected")));
+        Assert.AreEqual(3, attempts);
+        Assert.IsFalse(Directory.Exists(original));
+        var reopened = new RunLogStore(workspace);
+        reopened.Initialize();
+        Assert.AreEqual(store.RootPath, reopened.RootPath);
+        Assert.AreEqual(7, reopened.Settings.RetentionDays);
+        CollectionAssert.AreEqual(new[] { "中文迁移 marker" }, reopened.ReadTail(writer.Info, "stdout").ToArray());
+    }
+
+    [TestMethod]
+    [DataRow(5, 6)]
+    [DataRow(32, 6)]
+    [DataRow(3, 1)]
+    public void ChangingLocationPermanentRenameFailureKeepsOriginalAndCleansStaging(int error, int expectedAttempts)
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var attempts = 0;
+        var store = new RunLogStore(workspace, File.OpenRead, (_, _) =>
+        {
+            attempts++;
+            throw new IOException("合成持续失败", unchecked((int)0x80070000) | error);
+        });
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "preserved"));
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var original = store.RootPath;
+        var selected = Path.Combine(sandbox.Path, "selected");
+
+        Assert.ThrowsExactly<IOException>(() => store.ChangeLocation(selected));
+        Assert.AreEqual(expectedAttempts, attempts);
+        Assert.AreEqual(original, store.RootPath);
+        Assert.IsFalse(File.Exists(workspace + ".log-location.json"));
+        Assert.HasCount(0, Directory.GetFileSystemEntries(selected));
+        CollectionAssert.AreEqual(new[] { "preserved" }, store.ReadTail(writer.Info, "stdout").ToArray());
+        var reopened = new RunLogStore(workspace);
+        reopened.Initialize();
+        Assert.AreEqual(original, reopened.RootPath);
+    }
+
+    [TestMethod]
+    public void ChangingLocationDoesNotRetryOrRemoveDestinationCreatedDuringRename()
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var attempts = 0;
+        var store = new RunLogStore(workspace, File.OpenRead, (_, target) =>
+        {
+            attempts++;
+            Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(target, "keep.txt"), "unrelated");
+            throw new IOException("合成目标竞争", unchecked((int)0x80070005));
+        });
+        store.Initialize();
+        var original = store.RootPath;
+        var selected = Path.Combine(sandbox.Path, "selected");
+        Assert.ThrowsExactly<IOException>(() => store.ChangeLocation(selected));
+        Assert.AreEqual(1, attempts);
+        Assert.AreEqual(original, store.RootPath);
+        var target = Directory.GetDirectories(selected).Single();
+        Assert.AreEqual("unrelated", File.ReadAllText(Path.Combine(target, "keep.txt")));
+        Assert.IsFalse(File.Exists(workspace + ".log-location.json"));
+    }
+
+    [TestMethod]
     public void ChangingLocationRejectsActiveRunsAndExistingDestination()
     {
         using var sandbox = new Sandbox();

@@ -13,7 +13,8 @@ public sealed record CommandStartRequest(Guid CommandId, CommandKind Kind, Comma
 
 public sealed record CommandStartPlan(string Command, string WorkingDirectory,
     EventHandler<CommandOutput>? OutputReceived = null, CommandRunEnvironment? Environment = null,
-    TcpProbeConfiguration? TcpProbe = null, Action<ICommandRunSession>? SessionCreated = null);
+    TcpProbeConfiguration? TcpProbe = null, Action<ICommandRunSession>? SessionCreated = null,
+    CommandShell Shell = CommandShell.PowerShell);
 
 public sealed record CommandRecoverySnapshot(Guid CommandId, Guid? RoundId, long SessionVersion,
     CommandRecoveryState State, int Attempts, bool IsBusy, ICommandRunSession? Session,
@@ -32,7 +33,7 @@ public sealed class CommandRecoveryCoordinator
     private long _sessionVersion;
 
     public CommandRecoveryCoordinator(CommandRunner runner, TimeProvider? timeProvider = null)
-        : this((id, plan) => runner.Start(id, plan.Command, plan.WorkingDirectory, plan.OutputReceived, plan.Environment, plan.TcpProbe),
+        : this((id, plan) => runner.Start(id, plan.Command, plan.WorkingDirectory, plan.OutputReceived, plan.Environment, plan.TcpProbe, plan.Shell),
             timeProvider ?? TimeProvider.System)
     {
         ArgumentNullException.ThrowIfNull(runner);

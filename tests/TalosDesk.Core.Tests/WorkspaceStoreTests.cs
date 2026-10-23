@@ -149,7 +149,7 @@ public sealed class WorkspaceStoreTests
             Assert.HasCount(0, loaded.Projects[0].Commands[0].EnvironmentVariables);
             CollectionAssert.AreEqual(originalBytes, await File.ReadAllBytesAsync(path));
             await new WorkspaceStore(path).SaveAsync(loaded);
-            Assert.IsTrue((await File.ReadAllTextAsync(path)).Contains("\"SchemaVersion\": 5", StringComparison.Ordinal));
+            Assert.IsTrue((await File.ReadAllTextAsync(path)).Contains($"\"SchemaVersion\": {WorkspaceStore.CurrentSchemaVersion}", StringComparison.Ordinal));
         }
         finally
         {

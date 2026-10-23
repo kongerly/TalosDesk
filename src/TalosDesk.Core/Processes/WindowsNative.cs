@@ -42,6 +42,15 @@ internal static class WindowsNative
 
     internal static (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) StartPowerShell(
         string command, string workingDirectory, string shellPath, IReadOnlyDictionary<string, string>? environmentOverrides = null)
+        => StartShell(command, workingDirectory, shellPath, environmentOverrides, Configuration.CommandShell.PowerShell);
+
+    internal static (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) StartCmd(
+        string command, string workingDirectory, IReadOnlyDictionary<string, string>? environmentOverrides = null)
+        => StartShell(command, workingDirectory, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
+            environmentOverrides, Configuration.CommandShell.Cmd);
+
+    private static (SafeJobHandle Job, SafeProcessHandle Process, int ProcessId, StreamReader Stdout, StreamReader Stderr) StartShell(
+        string command, string workingDirectory, string shellPath, IReadOnlyDictionary<string, string>? environmentOverrides, Configuration.CommandShell shell)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -83,11 +92,20 @@ internal static class WindowsNative
                 StdOutput = stdoutWrite.DangerousGetHandle(),
                 StdError = stderrWrite.DangerousGetHandle()
             };
-            // Captured stdout and stderr are decoded as UTF-8 by the readers below.
-            // Set PowerShell's console output encoding explicitly so Windows' active
-            // legacy code page cannot corrupt non-ASCII paths or command output.
             var encodedCommand = $"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $PSStyle.OutputRendering = 'PlainText'; {command}";
-            var commandLine = new StringBuilder($"\"{shellPath}\" -NoLogo -NoProfile -NonInteractive -Command {QuoteArgument(encodedCommand)}");
+            // Cmd 在同一行 chcp 后仍可能缓存旧代码页；在归属 Job 内先设置代码页，再启动实际解释器。
+            var chcp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "chcp.com");
+            var carrier = "TALOSDESK_CMD_" + Guid.NewGuid().ToString("N");
+            if (shell == Configuration.CommandShell.Cmd)
+            {
+                // 引导层延迟展开一次，避免再次解析用户命令内的引号、&、%、!；实际解释器关闭延迟展开。
+                var overrides = environmentOverrides is null ? new Dictionary<string, string>() : new Dictionary<string, string>(environmentOverrides);
+                overrides[carrier] = command;
+                environmentOverrides = overrides;
+            }
+            var commandLine = new StringBuilder(shell == Configuration.CommandShell.Cmd
+                ? $"\"{shellPath}\" /d /q /e:on /v:on /s /c \"\"{chcp}\" 65001 >nul && \"{shellPath}\" /d /q /e:on /v:off /s /c \"!{carrier}!\"\""
+                : $"\"{shellPath}\" -NoLogo -NoProfile -NonInteractive -Command {QuoteArgument(encodedCommand)}");
 
             if (environmentOverrides is { Count: > 0 })
             {
@@ -99,7 +117,7 @@ internal static class WindowsNative
                     environmentBlock, workingDirectory,
                     ref startup, out var processInfo))
             {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not start PowerShell 7.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not start the command shell.");
             }
 
             processCreated = true;
@@ -113,7 +131,7 @@ internal static class WindowsNative
             processAssigned = true;
             if (ResumeThread(thread) == uint.MaxValue)
             {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not start the PowerShell process.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not resume the command shell.");
             }
 
             thread.Dispose();
