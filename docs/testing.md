@@ -16,6 +16,14 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration
 
 `.editorconfig` 和 `Directory.Build.props` 启用了“警告即错误”，例外必须在配置中说明理由。[Windows CI](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)会保存对应提交的构建与测试结果。测试数量、耗时和包哈希只属于当次运行，不写进长期指南。
 
+CI 先用独立临时副本和合成 SDK 命令检查打包流水线的失败中止与测试证据保留，再统一调用 `scripts/Publish.ps1` 完成还原、Release 构建、全量测试和自包含打包，不额外重复全量测试。测试 TRX 写入 `artifacts/tests/`，即使后续步骤失败也尝试保存。随后对本次 ZIP 运行静态核验与核验脚本的隔离回归，将 JSON 清单和回归输出另存为 `package-inspection-evidence`。CI 不上传 ZIP 到 Releases，不分配正式版本，也不替代最终 EXE 人工验收。
+
+打包流水线的轻量回归可以独立运行，不调用真实 SDK 或桌面宿主：
+
+```powershell
+pwsh -NoProfile -File .\tests\PublishPipeline.Tests.ps1
+```
+
 ## 回归入口
 
 下表列出主要的测试入口及其覆盖范围。
@@ -77,7 +85,7 @@ pwsh -NoProfile -File .\scripts\Test-Package.ps1 -ArchivePath .\artifacts\TalosD
 pwsh -NoProfile -File .\tests\PackageInspection.Tests.ps1 -ArchivePath .\artifacts\TalosDesk-v<版本>-win-x64.zip
 ```
 
-它检查正向证据生成，以及缺文件、路径/大小写冲突、私有文件、错误摘要/文件名、版本/渠道/运行时/依赖声明错误和已有证据目录保护。此独立 PowerShell 回归需要先有可通过静态检查的 ZIP，不包含在 `dotnet test` 中。
+它检查正向证据生成，以及缺文件、路径/大小写冲突、私有文件、错误摘要/文件名、版本/渠道/运行时/依赖声明错误和已有证据目录保护。此独立 PowerShell 回归需要先有可通过静态检查的 ZIP，不包含在 `dotnet test` 中，由 CI 在打包后单独执行。
 
 静态检查后继续按下面步骤进行最终 EXE 操作验收；仅需要后台准备时，将其明确保留为未执行。
 

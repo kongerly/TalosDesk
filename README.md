@@ -84,7 +84,7 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration
 pwsh -NoProfile -File .\scripts\Publish.ps1
 ```
 
-脚本会依次执行还原、Release 构建、全量测试和自包含发布，按 `Directory.Build.props` 中的版本在 `artifacts/` 下生成 ZIP 与 SHA-256 文件。构建按警告即错误执行；本地打包不等于正式发布。验证方法见[测试说明](docs/testing.md)。
+脚本会依次执行还原、Release 构建、全量测试和自包含发布，测试 TRX 保存在 `artifacts/tests/`，按 `Directory.Build.props` 中的版本在 `artifacts/` 下生成 ZIP 与 SHA-256 文件。构建按警告即错误执行；本地打包不等于正式发布。验证方法见[测试说明](docs/testing.md)。
 
 ## 手工升级
 

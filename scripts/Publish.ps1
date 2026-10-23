@@ -14,6 +14,7 @@ $releaseName = "TalosDesk-v$releaseVersion-win-x64"
 $publishDirectory = Join-Path $artifactsRoot "publish/$releaseName"
 $archivePath = Join-Path $artifactsRoot "$releaseName.zip"
 $checksumPath = Join-Path $artifactsRoot "$releaseName.sha256"
+$testResultsDirectory = Join-Path $artifactsRoot 'tests'
 $withSdk = Join-Path $PSScriptRoot 'With-Sdk.ps1'
 
 function Assert-ArtifactPath([string]$Path) {
@@ -42,7 +43,7 @@ New-Item -ItemType Directory -Path $publishDirectory -Force | Out-Null
 
 Invoke-PinnedDotNet @('restore', 'TalosDesk.slnx')
 Invoke-PinnedDotNet @('build', 'TalosDesk.slnx', '--configuration', 'Release', '--no-restore')
-Invoke-PinnedDotNet @('test', 'TalosDesk.slnx', '--configuration', 'Release', '--no-build', '--no-restore')
+Invoke-PinnedDotNet @('test', 'TalosDesk.slnx', '--configuration', 'Release', '--no-build', '--no-restore', '--logger', 'trx', '--results-directory', $testResultsDirectory)
 Invoke-PinnedDotNet @(
     'publish', 'src/TalosDesk.App/TalosDesk.App.csproj',
     '--configuration', 'Release',

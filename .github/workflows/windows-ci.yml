@@ -25,7 +25,7 @@ jobs:
           Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
           Write-Host "PowerShell $($PSVersionTable.PSVersion)"
 
-      - name: Verify PowerShell 7 for command tests
+      - name: Verify PowerShell for command and package tests
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -34,7 +34,7 @@ jobs:
           $version = [version](& pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()')
           Write-Host "pwsh command: $($pwsh.Source)"
           Write-Host "pwsh version: $version"
-          if ($version -lt [version]'7.0') { throw "PowerShell 7.0 or later required, found $version" }
+          if ($version -lt [version]'7.2') { throw "PowerShell 7.2 or later required, found $version" }
 
       - name: Install pinned SDK
         shell: pwsh
@@ -44,22 +44,36 @@ jobs:
         shell: pwsh
         run: .\scripts\Test-Environment.ps1
 
-      - name: Restore
+      - name: Test publish pipeline with isolated commands
         shell: pwsh
-        run: .\scripts\With-Sdk.ps1 restore TalosDesk.slnx
+        run: .\tests\PublishPipeline.Tests.ps1
 
-      - name: Build Release
+      - name: Build, test and package
         shell: pwsh
-        run: .\scripts\With-Sdk.ps1 build TalosDesk.slnx --configuration Release --no-restore
+        run: .\scripts\Publish.ps1
 
-      - name: Run all tests
+      - name: Inspect package and test inspection failures
         shell: pwsh
-        run: .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration Release --no-build --no-restore --logger trx --results-directory TestResults
+        run: |
+          $archives = @(Get-ChildItem -LiteralPath artifacts -Filter 'TalosDesk-v*-win-x64.zip' -File)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one package from this CI checkout.' }
+          .\scripts\Test-Package.ps1 -ArchivePath $archives[0].FullName -EvidenceDirectory artifacts/package-evidence | Format-List
+          .\tests\PackageInspection.Tests.ps1 -ArchivePath $archives[0].FullName | Tee-Object -FilePath artifacts/package-inspection-tests.log
 
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: windows-test-results
-          path: TestResults/*.trx
+          path: artifacts/tests/**/*.trx
+          if-no-files-found: ignore
+
+      - name: Save package inspection evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-inspection-evidence
+          path: |
+            artifacts/package-evidence/*.json
+            artifacts/package-inspection-tests.log
           if-no-files-found: ignore
