@@ -35,7 +35,7 @@ pwsh -NoProfile -File .\tests\PublishPipeline.Tests.ps1
 | `CmdProcessTests`、`ShellConfigurationTests`、`CmdConfigurationEditorImportAndMixedGroup` | Cmd 引用与 UTF-8、中文/空格/特殊字符路径、批处理与 EXE、环境与脱敏、Ctrl+C/强停及独立进程隔离、schema 1–6、编辑/复制/预览/冲突/导出与混合分组 |
 | `CommandRecoveryCoordinatorTests`、`CommandRecoveryProcessTests` | 预算、退避、取消、故障归属、真实 Job 与逐会话日志，以及 Core 公共入口的 Cmd 初次/重试会话 |
 | `CommandGroupExecutionTests` | 顺序预留、同时分组持续监视及确切会话清理 |
-| `RunLogStoreTests`、`StreamingOutputRedactorTests`、`CommandRunEnvironmentTests` | 历史尾部读取、损坏元数据容量、清理部分失败后的容量重算、迁移、截断；含空白已知值、长重叠链及模式前缀交叠的跨块遮蔽、独立完整文本覆盖校验，以及真实双通道事件/内存/磁盘输出 |
+| `RunLogStoreTests`、`StreamingOutputRedactorTests`、`CommandRunEnvironmentTests` | 历史尾部读取、损坏元数据容量、清理失败后容量重算、收尾重建缺失元数据及精确配额边界、迁移、截断；含空白已知值、长重叠链及模式前缀交叠的跨块遮蔽、独立完整文本覆盖校验，以及真实双通道事件/内存/磁盘输出 |
 | `LogSearchTests`、`LogSearchFollowsDisplayedScopeWithoutBlocking` | 中文/字面/大小写、通道与最近 10,000 行、取消、WPF 查找路由/高亮/循环导航、实时追加与切换/清空失效、界面响应 |
 | `MainWindowIntegrationTests` | 实际 WPF 控件路径、分组、导入预览、保存、探测、恢复、更新、窗口及托盘 |
 | `DesktopTestHostTests`、`WpfTestHostTests` | STA 宿主、超时及清理失败边界 |

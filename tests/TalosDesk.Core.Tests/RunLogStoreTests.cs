@@ -646,6 +646,106 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    [DataRow(CommandRunState.Succeeded, 0, false, false)]
+    [DataRow(CommandRunState.Failed, 7, false, false)]
+    [DataRow(CommandRunState.Stopped, -1, false, false)]
+    [DataRow(null, null, false, false)]
+    [DataRow(CommandRunState.Failed, 7, true, false)]
+    [DataRow(CommandRunState.Succeeded, 0, false, true)]
+    public void CompletingBatchRecreatesMissingMetadataAndPreservesResultAndIntegrity(CommandRunState? state, int? exitCode, bool writeFailure, bool truncated)
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var projectId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+        var writer = store.Begin(projectId, commandId, DateTimeOffset.Now);
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic-preserved-output"));
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stderr", "synthetic-preserved-diagnostic"));
+        File.Delete(Path.Combine(writer.Directory, "run.json"));
+        if (writeFailure)
+        {
+            writer.Stdout.Dispose();
+            store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "cannot-write"));
+            Assert.IsTrue(writer.Info.WriteFailed);
+        }
+        if (truncated)
+        {
+            store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", new string('x', 1_100_000)));
+            Assert.IsTrue(writer.Info.Truncated);
+        }
+
+        store.Complete(writer, state is { } completed ? new CommandRunResult(completed, exitCode!.Value, state == CommandRunState.Stopped) : null);
+
+        Assert.IsTrue(File.Exists(Path.Combine(writer.Directory, "run.json")), "收尾应重建本次持有批次的缺失元数据。");
+        Assert.AreEqual(writeFailure, writer.Info.WriteFailed);
+        Assert.AreEqual(truncated, writer.Info.Truncated);
+        foreach (var current in new[] { store, new RunLogStore(workspace) })
+        {
+            if (!ReferenceEquals(current, store)) current.Initialize();
+            var saved = current.GetRuns(projectId, commandId).Single();
+            Assert.AreEqual(writer.Info.RunId, saved.RunId);
+            Assert.AreEqual(writer.Info.StartedAt, saved.StartedAt);
+            Assert.AreEqual(state?.ToString() ?? "Interrupted", saved.State);
+            Assert.AreEqual(exitCode, saved.ExitCode);
+            Assert.IsNotNull(saved.EndedAt);
+            Assert.AreEqual(writeFailure, saved.WriteFailed);
+            Assert.AreEqual(truncated, saved.Truncated);
+            CollectionAssert.AreEqual(new[] { "synthetic-preserved-output" }, current.ReadTail(saved, "stdout").ToArray());
+            CollectionAssert.AreEqual(new[] { "synthetic-preserved-diagnostic" }, current.ReadTail(saved, "stderr").ToArray());
+        }
+    }
+
+    [TestMethod]
+    public void CompletingBatchDoesNotRecreateMissingRunDirectory()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic-removed-output"));
+        writer.Stdout.Dispose();
+        writer.Stderr.Dispose();
+        Directory.Delete(writer.Directory, true);
+
+        store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+
+        Assert.IsTrue(writer.Info.WriteFailed);
+        Assert.IsFalse(Directory.Exists(writer.Directory));
+        Assert.HasCount(0, store.GetRuns(writer.Info.ProjectId, writer.Info.CommandId));
+    }
+
+    [TestMethod]
+    public void RecreatedMetadataDoesNotDoubleCountMissingBytesWhenOtherOutputExactlyFitsQuota()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var history = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(history, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic-history"));
+        File.Delete(Path.Combine(history.Directory, "run.json"));
+        store.Complete(history, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var active = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        try
+        {
+            var remainingBytes = store.Settings.MaxBytes - GetBatchBytes(store);
+            var output = new string('x', checked((int)remainingBytes - Encoding.UTF8.GetByteCount(Environment.NewLine)));
+
+            store.Append(active, new CommandOutput(DateTimeOffset.Now, "stdout", output));
+
+            Assert.IsFalse(active.Info.WriteFailed);
+            Assert.IsFalse(active.Info.Truncated);
+            Assert.IsTrue(Directory.Exists(history.Directory), "真实容量足够时不能因重复计入已丢失元数据而删除历史。");
+            Assert.AreEqual(store.Settings.MaxBytes, GetBatchBytes(store));
+            CollectionAssert.AreEqual(new[] { "synthetic-history" }, store.ReadTail(history.Info, "stdout").ToArray());
+        }
+        finally { store.Complete(active, new CommandRunResult(CommandRunState.Succeeded, 0, false)); }
+    }
+
+    [TestMethod]
     public void WriteFailureMarksBatchIncomplete()
     {
         using var sandbox = new Sandbox();

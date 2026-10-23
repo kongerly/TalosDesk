@@ -283,7 +283,14 @@ public sealed class RunLogStore
             try
             {
                 var metadataPath = Path.Combine(writer.Directory, MetadataFile);
-                var priorBytes = new FileInfo(metadataPath).Length;
+                long priorBytes;
+                try { priorBytes = new FileInfo(metadataPath).Length; }
+                catch (FileNotFoundException)
+                {
+                    // 本次仍持有批次状态；元数据丢失时先校准容量，再重建完成记录。
+                    _storedBytes = CalculateStoredBytes();
+                    priorBytes = 0;
+                }
                 SaveInfo(writer.Directory, writer.Info);
                 _storedBytes += new FileInfo(metadataPath).Length - priorBytes;
                 Prune(DateTimeOffset.Now);
