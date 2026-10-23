@@ -112,6 +112,7 @@ internal static class RecoveryRegression
         Assert.AreEqual("日志完成写入失败。", f.Text("LogStatusText"));
         Assert.AreEqual(CommandRunState.Succeeded, f.Snapshot.LastResult!.State);
         Assert.AreEqual(0, f.Snapshot.LastResult.ExitCode);
+        Wait(() => f.Text("RunStateText").StartsWith("已成功", StringComparison.Ordinal));
         StringAssert.StartsWith(f.Text("RunStateText"), "已成功");
         Assert.IsTrue(f.Button("RunButton").IsEnabled);
         Assert.IsFalse(f.Button("StopButton").IsEnabled);

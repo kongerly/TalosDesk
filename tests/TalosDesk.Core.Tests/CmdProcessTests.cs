@@ -80,11 +80,34 @@ public sealed class CmdProcessTests
     {
         using var sandbox = new Sandbox();
         var pwsh = WindowsNative.FindPowerShellPath(Environment.GetEnvironmentVariable("PATH") ?? string.Empty, sandbox.Root);
-        await File.WriteAllTextAsync(Path.Combine(sandbox.Root, "ignore.ps1"), "Write-Output 'phase:ignore-script-started'; Add-Type -ErrorAction Stop 'using System; using System.Runtime.InteropServices; public static class IgnoreCtrl { [DllImport(\"kernel32.dll\")] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); }'; Write-Output 'phase:ignore-handler-compiled'; if(-not [IgnoreCtrl]::SetConsoleCtrlHandler([IntPtr]::Zero,$true)){throw 'Synthetic Ctrl+C handler registration failed.'}; Write-Output 'phase:ignore-handler-registered'; Write-Output \"child:$PID\"; while($true){Start-Sleep -Milliseconds 100}");
+        var progressPath = Path.Combine(sandbox.Root, "ignore-progress.txt");
+        await File.WriteAllTextAsync(Path.Combine(sandbox.Root, "ignore.ps1"), """
+            $progress = Join-Path $PSScriptRoot 'ignore-progress.txt'
+            [IO.File]::WriteAllText($progress, 'script-started')
+            Write-Output 'phase:ignore-script-started'
+            Add-Type -ErrorAction Stop 'using System; using System.Runtime.InteropServices; public static class IgnoreCtrl { [DllImport("kernel32.dll")] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); }'
+            [IO.File]::WriteAllText($progress, 'handler-compiled')
+            Write-Output 'phase:ignore-handler-compiled'
+            if(-not [IgnoreCtrl]::SetConsoleCtrlHandler([IntPtr]::Zero,$true)){throw 'Synthetic Ctrl+C handler registration failed.'}
+            [IO.File]::WriteAllText($progress, "handler-registered:$PID")
+            Write-Output 'phase:ignore-handler-registered'
+            Write-Output "child:$PID"
+            while($true){Start-Sleep -Milliseconds 100}
+            """);
         await using var sentinel = new CommandRunner().Start(Guid.NewGuid(), "Write-Output 'sentinel-ready'; while($true){Start-Sleep -Milliseconds 100}", sandbox.Root);
         await Until(sentinel, "独立哨兵", output => output.Any(line => line.Text == "sentinel-ready"));
         await using var session = new CommandRunner().Start(Guid.NewGuid(), $"\"{pwsh}\" -NoProfile -File ignore.ps1", sandbox.Root, shell: CommandShell.Cmd);
-        await Until(session, "忽略 Ctrl+C 的 Cmd 子进程", output => output.Any(line => line.Text.StartsWith("child:", StringComparison.Ordinal)));
+        try
+        {
+            await Until(session, "忽略 Ctrl+C 的 Cmd 子进程", output => output.Any(line => line.Text.StartsWith("child:", StringComparison.Ordinal)));
+        }
+        catch (AssertFailedException)
+        {
+            try { TestContext.WriteLine("独立脚本进度：" + (File.Exists(progressPath) ? File.ReadAllText(progressPath) : "（尚未创建）")); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            { TestContext.WriteLine("独立脚本进度读取失败：" + exception.GetType().Name); }
+            throw;
+        }
         var childId = int.Parse(session.GetRecentOutput().Single(line => line.Text.StartsWith("child:", StringComparison.Ordinal)).Text[6..], System.Globalization.CultureInfo.InvariantCulture);
         using var child = Process.GetProcessById(childId);
         Assert.AreEqual(CommandStopResult.ForceTerminated, await session.StopAsync().WaitAsync(TimeSpan.FromSeconds(12)));
