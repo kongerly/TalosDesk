@@ -79,6 +79,16 @@ try {
     }
     Assert-Rejected 'runtime-target' 'runtime target must be win-x64' { param($zip) Set-TextEntry $zip 'TalosDesk.App.deps.json' '{"runtimeTarget":{"name":"linux-x64"},"libraries":{}}' }
     Assert-Rejected 'deps-identity' 'Dependency identity mismatch' { param($zip) Set-TextEntry $zip 'TalosDesk.App.deps.json' '{"runtimeTarget":{"name":"test/win-x64"},"libraries":{}}' }
+    Assert-Rejected 'core-deps-version' 'Dependency identity mismatch' {
+        param($zip)
+        $reader = [IO.StreamReader]::new($zip.GetEntry('TalosDesk.App.deps.json').Open())
+        try { $deps = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+        foreach ($name in @($deps.libraries.PSObject.Properties.Name | Where-Object { $_.StartsWith('TalosDesk.Core/', [StringComparison]::Ordinal) })) {
+            $deps.libraries.PSObject.Properties.Remove($name)
+        }
+        $deps.libraries | Add-Member -NotePropertyName 'TalosDesk.Core/0.0.0' -NotePropertyValue @{type='project'}
+        Set-TextEntry $zip 'TalosDesk.App.deps.json' ($deps | ConvertTo-Json -Depth 30)
+    }
     Assert-Rejected 'readme-version' 'README version mismatch' { param($zip) Set-TextEntry $zip 'README.txt' 'TalosDesk v0.0.0 placeholder' }
     $wrongChannel = if ($identity.Channel -eq 'Preview') { 'Stable' } else { 'Preview' }
     Assert-Rejected 'assembly-channel' 'release channel mismatch' $null @{ ExpectedChannel=$wrongChannel }

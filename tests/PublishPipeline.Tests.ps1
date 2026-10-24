@@ -9,6 +9,9 @@ New-Item -ItemType Directory -Path $testRoot | Out-Null
 $checks = 0
 $artifactLocks = [Collections.Generic.List[IO.FileStream]]::new()
 
+# Load the real archive command before defining the failure-injection wrapper.
+Import-Module Microsoft.PowerShell.Archive -ErrorAction Stop
+
 function Hold-TestFile([string]$Path) {
     $artifactLocks.Add([IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read))
 }

@@ -83,7 +83,9 @@ try {
     if ($frameworks.Count -ne 2 -or @($frameworks | Where-Object { $_.version -ne $ExpectedRuntimeVersion }).Count -or @($frameworks.name | Sort-Object -Unique).Count -ne 2 -or $frameworks.name -notcontains 'Microsoft.NETCore.App' -or $frameworks.name -notcontains 'Microsoft.WindowsDesktop.App') { throw 'Included runtime baseline mismatch.' }
     $deps = (Read-EntryText $archive.GetEntry('TalosDesk.App.deps.json')) | ConvertFrom-Json
     if (-not ([string]$deps.runtimeTarget.name).EndsWith('/win-x64', [StringComparison]::Ordinal)) { throw 'Package runtime target must be win-x64.' }
-    foreach ($library in @("TalosDesk.App/$ExpectedVersion", "TalosDesk.Core/$ExpectedVersion", "runtimepack.Microsoft.NETCore.App.Runtime.win-x64/$ExpectedRuntimeVersion", "runtimepack.Microsoft.WindowsDesktop.App.Runtime.win-x64/$ExpectedRuntimeVersion")) {
+    # Project-reference dependency keys omit build metadata; the app and PE identity keep it.
+    $coreDependencyVersion = ($ExpectedVersion -split '\+', 2)[0]
+    foreach ($library in @("TalosDesk.App/$ExpectedVersion", "TalosDesk.Core/$coreDependencyVersion", "runtimepack.Microsoft.NETCore.App.Runtime.win-x64/$ExpectedRuntimeVersion", "runtimepack.Microsoft.WindowsDesktop.App.Runtime.win-x64/$ExpectedRuntimeVersion")) {
         if ($null -eq $deps.libraries.PSObject.Properties[$library]) { throw "Dependency identity mismatch: $library" }
     }
     $readme = Read-EntryText $archive.GetEntry('README.txt')
@@ -111,7 +113,7 @@ try {
     $summary = [pscustomobject]@{
         CheckedAt=[DateTimeOffset]::UtcNow.ToString('o'); ArchiveName=[IO.Path]::GetFileName($archiveFullPath)
         Bytes=$archiveStream.Length; Sha256=$hash; EntryCount=$archive.Entries.Count
-        Version=$ExpectedVersion; Channel=$ExpectedChannel; RuntimeVersion=$ExpectedRuntimeVersion; Versions=@($versions)
+        Version=$ExpectedVersion; CoreDependencyVersion=$coreDependencyVersion; Channel=$ExpectedChannel; RuntimeVersion=$ExpectedRuntimeVersion; Versions=@($versions)
         Scope='Static ZIP/PE metadata and file-name checks only; no execution, dependency completeness, secret-content scan, signature trust or manual acceptance.'
     }
     if ($EvidenceDirectory) {
