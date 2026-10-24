@@ -7,6 +7,55 @@ namespace TalosDesk.Core.Tests;
 public sealed class CommandOutputPumpTests
 {
     [TestMethod]
+    [DataRow("stdout", 16_384, "\n")]
+    [DataRow("stderr", 16_384, "\n")]
+    [DataRow("stdout", 32_768, "\n")]
+    [DataRow("stdout", 16_383, "\r\n")]
+    [DataRow("stderr", 16_383, "\r\n")]
+    [DataRow("stderr", 16_384, "\r\n")]
+    [DataRow("stderr", 32_767, "\r\n")]
+    [DataRow("stdout", 1, "\n")]
+    [DataRow("stderr", 1, "\r\n")]
+    [DataRow("stdout", 16_382, "\r\n")]
+    public async Task LongLineTerminatorsDoNotAddEmptyRecordsButKeepRealBlankLines(string stream, int length, string terminator)
+    {
+        var output = new List<(string Text, string Stream)>();
+        var content = new string('x', length) + terminator + terminator + "tail" + terminator;
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(content));
+
+        await CommandRunSession.PumpAsync(new StreamReader(input), stream, [],
+            (text, channel) => output.Add((text, channel))).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.AreEqual(1, output.Count(line => line.Text.Length == 0), "只保留原始文本中的一个空行，分段行尾不能多记空行。");
+        Assert.AreEqual(("", stream), output[^2]);
+        Assert.AreEqual(("tail", stream), output[^1]);
+        var segments = output.Take(output.Count - 2).ToArray();
+        Assert.AreEqual(length, segments.Sum(line => line.Text.Length));
+        foreach (var segment in segments)
+        {
+            Assert.AreEqual(stream, segment.Stream);
+            Assert.IsLessThanOrEqualTo(16_384, segment.Text.Length);
+            Assert.IsTrue(segment.Text.All(character => character == 'x'), "CRLF中的回车不能残留在长行分段里。");
+        }
+    }
+
+    [TestMethod]
+    [DataRow("stdout")]
+    [DataRow("stderr")]
+    public async Task TrailingCarriageReturnWithoutLineFeedIsPreservedAtEnd(string stream)
+    {
+        var content = new string('x', 16_383) + '\r';
+        var output = new List<(string Text, string Stream)>();
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(content));
+
+        await CommandRunSession.PumpAsync(new StreamReader(input), stream, [],
+            (text, channel) => output.Add((text, channel))).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.AreEqual(content, string.Concat(output.Select(line => line.Text)), "单独的末尾回车不能当作CRLF丢弃。");
+        Assert.IsTrue(output.All(line => line.Stream == stream && line.Text.Length <= 16_384));
+    }
+
+    [TestMethod]
     [DataRow("stdout", 16_383, false)]
     [DataRow("stderr", 16_383, false)]
     [DataRow("stdout", 16_383, true)]

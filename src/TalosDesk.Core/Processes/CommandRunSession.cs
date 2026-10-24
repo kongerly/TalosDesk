@@ -196,6 +196,7 @@ public sealed class CommandRunSession : ICommandRunSession
         {
             var redactor = new StreamingOutputRedactor(sensitiveValues, redactionTimeout);
             var line = new StringBuilder();
+            var hasLineSegments = false;
             var buffer = new char[16_384];
             try
             {
@@ -204,11 +205,11 @@ public sealed class CommandRunSession : ICommandRunSession
                 {
                     var text = redactor.Append(new string(buffer, 0, length));
                     if (redactor.HasFailed && text.Length > 0) PublishOmission(line, stream, emit);
-                    else AppendSanitized(text, line, stream, emit);
+                    else AppendSanitized(text, line, stream, emit, ref hasLineSegments);
                 }
                 var remainder = redactor.Finish();
                 if (redactor.HasFailed && remainder.Length > 0) PublishOmission(line, stream, emit);
-                else AppendSanitized(remainder, line, stream, emit);
+                else AppendSanitized(remainder, line, stream, emit, ref hasLineSegments);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
@@ -229,23 +230,26 @@ public sealed class CommandRunSession : ICommandRunSession
         emit(StreamingOutputRedactor.OmittedMarker, stream);
     }
 
-    private static void AppendSanitized(string text, StringBuilder line, string stream, Action<string, string> emit)
+    private static void AppendSanitized(string text, StringBuilder line, string stream, Action<string, string> emit,
+        ref bool hasLineSegments)
     {
         foreach (var character in text)
         {
             if (character == '\n')
             {
                 var count = line.Length > 0 && line[^1] == '\r' ? line.Length - 1 : line.Length;
-                emit(line.ToString(0, count), stream);
+                if (count > 0 || !hasLineSegments) emit(line.ToString(0, count), stream);
                 line.Clear();
+                hasLineSegments = false;
                 continue;
             }
             line.Append(character);
             if (line.Length < 16_384) continue;
-            // 每条记录独立编码；将边界上的高代理项留到下一段，避免拆开补充字符。
-            var segmentLength = line.Length - (char.IsHighSurrogate(line[^1]) ? 1 : 0);
+            // 保留边界上的高代理项和回车，避免拆开补充字符或跨块CRLF。
+            var segmentLength = line.Length - (char.IsHighSurrogate(line[^1]) || line[^1] == '\r' ? 1 : 0);
             emit(line.ToString(0, segmentLength), stream);
             line.Remove(0, segmentLength);
+            hasLineSegments = true;
         }
     }
 
