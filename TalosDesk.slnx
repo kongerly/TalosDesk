@@ -7,5 +7,6 @@
     <Project Path="tests/TalosDesk.App.Tests/TalosDesk.App.Tests.csproj" />
     <Project Path="tests/TalosDesk.Core.Tests/TalosDesk.Core.Tests.csproj" />
     <Project Path="tests/TalosDesk.CrashTestHost/TalosDesk.CrashTestHost.csproj" />
+    <Project Path="tests/TalosDesk.CtrlCTestHost/TalosDesk.CtrlCTestHost.csproj" />
   </Folder>
 </Solution>

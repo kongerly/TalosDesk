@@ -79,24 +79,14 @@ public sealed class CmdProcessTests
     public async Task TimeoutForceStopsOnlyOwnedChildrenAndKeepsIndependentSentinelAlive()
     {
         using var sandbox = new Sandbox();
-        var pwsh = WindowsNative.FindPowerShellPath(Environment.GetEnvironmentVariable("PATH") ?? string.Empty, sandbox.Root);
         var progressPath = Path.Combine(sandbox.Root, "ignore-progress.txt");
-        await File.WriteAllTextAsync(Path.Combine(sandbox.Root, "ignore.ps1"), """
-            $progress = Join-Path $PSScriptRoot 'ignore-progress.txt'
-            [IO.File]::WriteAllText($progress, 'script-started')
-            Write-Output 'phase:ignore-script-started'
-            Add-Type -ErrorAction Stop 'using System; using System.Runtime.InteropServices; public static class IgnoreCtrl { [DllImport("kernel32.dll")] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); }'
-            [IO.File]::WriteAllText($progress, 'handler-compiled')
-            Write-Output 'phase:ignore-handler-compiled'
-            if(-not [IgnoreCtrl]::SetConsoleCtrlHandler([IntPtr]::Zero,$true)){throw 'Synthetic Ctrl+C handler registration failed.'}
-            [IO.File]::WriteAllText($progress, "handler-registered:$PID")
-            Write-Output 'phase:ignore-handler-registered'
-            Write-Output "child:$PID"
-            while($true){Start-Sleep -Milliseconds 100}
-            """);
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
+        var hostPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..",
+            "TalosDesk.CtrlCTestHost", "bin", configuration, "net10.0", "TalosDesk.CtrlCTestHost.exe"));
+        Assert.IsTrue(File.Exists(hostPath), $"未构建合成控制台宿主：{hostPath}");
         await using var sentinel = new CommandRunner().Start(Guid.NewGuid(), "Write-Output 'sentinel-ready'; while($true){Start-Sleep -Milliseconds 100}", sandbox.Root);
         await Until(sentinel, "独立哨兵", output => output.Any(line => line.Text == "sentinel-ready"));
-        await using var session = new CommandRunner().Start(Guid.NewGuid(), $"\"{pwsh}\" -NoProfile -File ignore.ps1", sandbox.Root, shell: CommandShell.Cmd);
+        await using var session = new CommandRunner().Start(Guid.NewGuid(), $"\"{hostPath}\" \"{progressPath}\"", sandbox.Root, shell: CommandShell.Cmd);
         try
         {
             await Until(session, "忽略 Ctrl+C 的 Cmd 子进程", output => output.Any(line => line.Text.StartsWith("child:", StringComparison.Ordinal)));

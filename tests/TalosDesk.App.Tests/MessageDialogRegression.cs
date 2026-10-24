@@ -461,16 +461,20 @@ internal static class MessageDialogRegression
     private static T Respond<T>(Func<T> action, params Action<AppMessageDialogWindow>[] responses)
     {
         var pending = new Queue<Action<AppMessageDialogWindow>>(responses);
+        var expected = pending.Count;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         Exception? failure = null;
         var timer = new DispatcherTimer(DispatcherPriority.ApplicationIdle) { Interval = TimeSpan.FromMilliseconds(30) };
-        var deadline = DateTime.UtcNow.AddSeconds(10);
         timer.Tick += (_, _) =>
         {
             var dialog = Application.Current.Windows.OfType<AppMessageDialogWindow>().FirstOrDefault(window => window.IsVisible && window.IsLoaded);
             if (dialog is null) return;
             try
             {
-                if (DateTime.UtcNow > deadline || pending.Count == 0) Assert.Fail($"出现未预期的提示：{dialog.Title}；阶段：{Stage}。");
+                var detail = $"Title={dialog.Title}; Heading={Find<TextBlock>(dialog, "HeadingText").Text}; " +
+                    $"Elapsed={clock.Elapsed.TotalSeconds:F3}s; Limit=10s; Handled={expected - pending.Count}; Remaining={pending.Count}; Stage={Stage}";
+                if (pending.Count == 0) Assert.Fail($"出现额外提示：{detail}");
+                if (clock.Elapsed > TimeSpan.FromSeconds(10)) Assert.Fail($"预期提示响应超时：{detail}");
                 pending.Dequeue()(dialog);
             }
             catch (Exception exception)
