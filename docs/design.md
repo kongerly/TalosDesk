@@ -16,6 +16,8 @@ TalosDesk 是单用户、Windows 本地的非交互命令运行工作台。核�
 
 根进程先以挂起状态创建，加入独立的 Windows Job 后再恢复执行。应用只管理本次启动且能确认归属的进程，不会按进程名批量结束。
 
+归属 Job 的进程列表以 128 项作为初始容量；遇到 `ERROR_MORE_DATA` 或返回数量少于所需数量时，扩大缓冲并重查同一 Job，取全后再用于退出判定。每次查询的非托管缓冲均释放，其他查询错误仍报告，不能把失败或截断列表当作空进程组。列表是当时的快照，遵循 [Windows Job 进程列表接口规则](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_process_id_list)。
+
 停止时先尝试 Ctrl+C；等待 5 秒仍未退出，就终止归属 Job 并确认结果。Ctrl+C 能否送达取决于控制台和目标处理器；宿主自身的信号处理不能把忽略标记传递给后续命令。
 
 进程存活、TCP 可达、正常完成、非零失败和用户停止是五种不同状态，分别显示。stderr 只是诊断通道，最终结果按退出状态判断。捕获输出前会先关闭 PowerShell 的 ANSI 样式。

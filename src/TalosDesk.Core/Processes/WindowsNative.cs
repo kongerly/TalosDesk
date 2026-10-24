@@ -271,30 +271,46 @@ internal static class WindowsNative
         return accounting.ActiveProcesses;
     }
 
-    public static IReadOnlyList<int> GetActiveProcessIds(SafeJobHandle job)
+    public static IReadOnlyList<int> GetActiveProcessIds(SafeJobHandle job, int initialCapacity = 128)
     {
-        const int capacity = 128;
-        var buffer = Marshal.AllocHGlobal(8 + IntPtr.Size * capacity);
-        try
+        ArgumentOutOfRangeException.ThrowIfLessThan(initialCapacity, 1);
+        var capacity = initialCapacity;
+        while (true)
         {
-            if (!QueryInformationJobObjectBuffer(job, 3, buffer, (uint)(8 + IntPtr.Size * capacity), out _))
+            var bufferLength = checked(8 + IntPtr.Size * capacity);
+            var buffer = Marshal.AllocHGlobal(bufferLength);
+            try
             {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not list the command process group.");
-            }
+                Marshal.WriteInt64(buffer, 0);
+                var success = QueryInformationJobObjectBuffer(job, 3, buffer, (uint)bufferLength, out _);
+                var error = success ? 0 : Marshal.GetLastWin32Error();
+                if (!success && error != 234)
+                    throw new Win32Exception(error, "Could not list the command process group.");
 
-            var count = Marshal.ReadInt32(buffer, 4);
-            var result = new List<int>(count);
-            for (var index = 0; index < count; index++)
+                var assigned = Marshal.ReadInt32(buffer);
+                var count = Marshal.ReadInt32(buffer, 4);
+                if (assigned < 0 || count < 0 || count > capacity)
+                    throw new InvalidDataException("The command process group returned an invalid process count.");
+                if (!success || count < assigned)
+                {
+                    // Job成员可能在两次查询之间增加；只扩容重查同一个归属Job，不返回截断列表。
+                    capacity = Math.Max(checked(capacity * 2), assigned);
+                    continue;
+                }
+
+                var result = new List<int>(count);
+                for (var index = 0; index < count; index++)
+                {
+                    var id = Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size).ToInt64();
+                    if (id <= int.MaxValue) result.Add((int)id);
+                }
+
+                return result;
+            }
+            finally
             {
-                var id = Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size).ToInt64();
-                if (id <= int.MaxValue) result.Add((int)id);
+                Marshal.FreeHGlobal(buffer);
             }
-
-            return result;
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
         }
     }
 
