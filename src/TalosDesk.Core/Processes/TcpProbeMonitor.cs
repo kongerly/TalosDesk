@@ -110,7 +110,11 @@ internal sealed class TcpProbeMonitor : IAsyncDisposable
                 {
                     if (!_active) return;
                     if (!_hasPassed && _time.GetElapsedTime(_started) >= TimeSpan.FromSeconds(_configuration.StartupTimeoutSeconds))
+                    {
                         Publish(_snapshot with { State = TcpProbeState.TimedOut });
+                        // 通知订阅者可同步停止探测，不能继续发布已经取消的连接结果。
+                        if (!_active) return;
+                    }
                     if (passed)
                     {
                         _hasPassed = true;

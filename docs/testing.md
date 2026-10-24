@@ -34,6 +34,7 @@ pwsh -NoProfile -File .\tests\PublishPipeline.Tests.ps1
 | `CommandRunnerTests`、`CommandRunEnvironmentTests` | 归属进程、停止/重启、环境注入及启动失败 |
 | `CmdProcessTests`、`ShellConfigurationTests`、`CmdConfigurationEditorImportAndMixedGroup` | Cmd 引用与 UTF-8、中文/空格/特殊字符路径、批处理与 EXE、环境与脱敏、Ctrl+C/强停及独立进程隔离、schema 1–6、编辑/复制/预览/冲突/导出与混合分组 |
 | `CommandRecoveryCoordinatorTests`、`CommandRecoveryProcessTests` | 预算、退避、取消、故障归属、真实 Job 与逐会话日志，以及 Core 公共入口的 Cmd 初次/重试会话 |
+| `TcpProbeTests` | 可控连接与时钟、启动期限和失败阈值、停止后的迟到结果、超时通知内同步停止，以及真实本机 IPv4/IPv6 监听的断开恢复 |
 | `CommandGroupExecutionTests` | 顺序预留、同时分组持续监视及确切会话清理 |
 | `RunLogStoreTests`、`StreamingOutputRedactorTests`、`CommandRunEnvironmentTests` | 历史尾部读取、损坏元数据容量、清理失败后容量重算、收尾重建缺失元数据及精确配额边界、日志流关闭故障后的双通道收尾/结果保留/迁移与清理、截断；含空白已知值、长重叠链及模式前缀交叠的跨块遮蔽、独立完整文本覆盖校验，以及真实双通道事件/内存/磁盘输出 |
 | `CommandOutputPumpTests` | 未结束流的双通道脱敏失败提示、正常半行缓冲、完整且不重复的异常提示；长行代理对的独立 UTF-8 编码和重开历史、LF/跨块 CRLF 不多记空行、保留真实空行及末尾单独回车 |

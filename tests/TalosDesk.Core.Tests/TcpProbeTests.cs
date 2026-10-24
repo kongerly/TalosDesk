@@ -14,6 +14,47 @@ public sealed class TcpProbeTests
     private static TcpProbeConfiguration Config() => new() { Port = 12345 };
 
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task StopFromDeadlineNotificationRejectsResultAlreadyBeingProcessed(bool fail)
+    {
+        var time = new ManualTime();
+        var connector = new ControlledConnector();
+        var configuration = Config();
+        configuration.ConnectTimeoutSeconds = 10;
+        configuration.StartupTimeoutSeconds = 10;
+        var probe = new TcpProbeMonitor(configuration, connector, time);
+        var attempt = connector.Attempts.Single();
+        var changes = new ConcurrentQueue<TcpProbeSnapshot>();
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        probe.Changed += (_, snapshot) =>
+        {
+            changes.Enqueue(snapshot);
+            if (snapshot.State != TcpProbeState.TimedOut) return;
+            probe.Stop();
+            stopped.TrySetResult();
+        };
+        try
+        {
+            // 定时器回调尚未投递，让连接结果路径先发现启动期限已过。
+            time.AdvanceWithoutFiringTimers(10);
+            if (fail) attempt.Result.SetException(new SocketException());
+            else attempt.Result.SetResult();
+            await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally { await probe.DisposeAsync(); }
+
+        Assert.AreEqual(TcpProbeState.Inactive, probe.Snapshot.State, "停止不能被同一结果处理栈重新覆盖。");
+        Assert.AreEqual(0, probe.Snapshot.ConsecutiveFailures, "主动取消不能计入连接失败。");
+        Assert.IsNull(probe.Snapshot.LastCheckedAt);
+        CollectionAssert.AreEqual(new[] { TcpProbeState.TimedOut, TcpProbeState.Inactive }, changes.Select(change => change.State).ToArray());
+        Assert.IsTrue(attempt.Token.IsCancellationRequested);
+        time.Advance(1000);
+        Assert.HasCount(1, connector.Attempts);
+        Assert.HasCount(2, changes);
+    }
+
+    [TestMethod]
     public async Task StartupDeadlineIsIndependentAndLateSuccessRecovers()
     {
         var time = new ManualTime();
@@ -278,6 +319,10 @@ public sealed class TcpProbeTests
                 foreach (var timer in due) timer.Due = long.MaxValue;
             }
             foreach (var timer in due) timer.Callback(timer.State);
+        }
+        internal void AdvanceWithoutFiringTimers(int seconds)
+        {
+            lock (_sync) _ticks += TimeSpan.FromSeconds(seconds).Ticks;
         }
         private sealed class Timer(ManualTime owner, TimerCallback callback, object? state) : ITimer
         {
