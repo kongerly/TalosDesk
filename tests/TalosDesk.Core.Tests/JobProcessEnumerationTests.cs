@@ -52,6 +52,50 @@ public sealed class JobProcessEnumerationTests
             "枚举和停止只能影响测试持有的目标Job，独立Job必须仍存活。");
     }
 
+    [TestMethod]
+    public async Task DefaultCapacityIncludesEveryChildBeyond128AndKeepsIndependentJobAlive()
+    {
+        using var sandbox = new Sandbox();
+        const string command = """
+            $ErrorActionPreference = 'Stop'
+            $children = [Collections.Generic.List[Diagnostics.Process]]::new()
+            for ($index = 0; $index -lt 129; $index++) {
+                $info = [Diagnostics.ProcessStartInfo]::new((Join-Path ([Environment]::SystemDirectory) 'cmd.exe'))
+                $info.UseShellExecute = $false
+                $info.CreateNoWindow = $true
+                $info.RedirectStandardInput = $true
+                $info.RedirectStandardOutput = $true
+                $info.RedirectStandardError = $true
+                $info.ArgumentList.Add('/d')
+                $info.ArgumentList.Add('/q')
+                $info.ArgumentList.Add('/c')
+                $info.ArgumentList.Add('set /p TALOSDESK_SYNTHETIC_WAIT=')
+                $children.Add([Diagnostics.Process]::Start($info))
+            }
+            [Console]::WriteLine(($children | ForEach-Object { $_.Id }) -join ',')
+            while ($true) { Start-Sleep -Milliseconds 100 }
+            """;
+        await using var owned = new OwnedCommand(command, sandbox.Path);
+        await using var independent = new OwnedCommand("while ($true) { Start-Sleep -Milliseconds 100 }", sandbox.Path);
+        var childLine = await owned.Stdout.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.IsNotNull(childLine);
+        var childIds = childLine.Split(',').Select(value => int.Parse(value, CultureInfo.InvariantCulture)).ToArray();
+        Assert.HasCount(129, childIds);
+        Assert.AreEqual(childIds.Length, childIds.Distinct().Count());
+
+        var ids = WindowsNative.GetActiveProcessIds(owned.Job);
+        TestContext.WriteLine($"ChildCount={childIds.Length}; JobProcessCount={ids.Count}; InitialCapacity=128");
+        Assert.IsGreaterThan(128, ids.Count);
+        Assert.Contains(owned.ProcessId, ids);
+        foreach (var childId in childIds) Assert.Contains(childId, ids);
+        Assert.DoesNotContain(independent.ProcessId, ids);
+        Assert.AreEqual(ids.Count, ids.Distinct().Count());
+        await owned.StopAsync();
+        Assert.HasCount(0, WindowsNative.GetActiveProcessIds(owned.Job));
+        Assert.IsFalse(await WindowsNative.WaitForProcessAsync(independent.Process, TimeSpan.Zero, CancellationToken.None),
+            "超过默认容量时，也只能停止目标Job，独立Job必须仍存活。");
+    }
+
     private sealed class OwnedCommand : IAsyncDisposable
     {
         internal SafeJobHandle Job { get; }

@@ -33,7 +33,7 @@ pwsh -NoProfile -File .\tests\PublishPipeline.Tests.ps1
 | `WorkspaceStoreTests`、`WorkspaceSecurityTests`、`RecoveryConfigurationTests` | schema 兼容、严格 JSON、全零 ID、外部修改、保存回滚及安全导出 |
 | `WorkspaceCommitRetryTests` | 保存替换错误 5/32 的有界重试、同一临时文件及字节摘要、重试前外部修改/首次创建冲突校验、取消、持续错误的重试上限与其他错误立即失败、临时文件清理和调用方对象保留 |
 | `CommandRunnerTests`、`CommandRunEnvironmentTests` | 归属进程、停止/重启、环境注入及启动失败 |
-| `JobProcessEnumerationTests` | 真实 Job 的小缓冲扩容枚举、父/子 PID 包含关系、独立 Job 隔离、停止后空列表及默认初始容量对照 |
+| `JobProcessEnumerationTests` | 真实 Job 的小缓冲扩容枚举、129 个轻量子进程超过默认容量后的完整名单、父/子 PID 包含关系、独立 Job 隔离及停止后空列表 |
 | `CmdProcessTests`、`ShellConfigurationTests`、`CmdConfigurationEditorImportAndMixedGroup` | Cmd 引用与 UTF-8、中文/空格/特殊字符路径、批处理与 EXE、环境与脱敏、Ctrl+C/强停及独立进程隔离、schema 1–6、编辑/复制/预览/冲突/导出与混合分组 |
 | `CommandRecoveryCoordinatorTests`、`CommandRecoveryProcessTests` | 预算、退避、取消、故障归属、真实 Job 与逐会话日志，以及 Core 公共入口的 Cmd 初次/重试会话 |
 | `TcpProbeTests` | 可控连接与时钟、启动期限和失败阈值、停止后的迟到结果、超时通知内同步停止，以及真实本机 IPv4/IPv6 监听的断开恢复 |
@@ -54,7 +54,7 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/Talo
 
 竞争条件使用可控时钟、预检/创建/完成屏障和确切的会话身份，避免靠随机等待来碰撞。关键断言包括：原文件未被改写、失败不会留下虚假批次、旧回调不覆盖新状态、旧分组不停止后来的会话，以及停止/退出后不恢复重试。
 
-Job 枚举回归用初始容量 1 和少量本次启动的父子进程，触发真实 Windows `ERROR_MORE_DATA`，验证扩容后取全、只停止目标 Job、独立哨兵仍存活及空组读取。无需在本机大量启动进程；该轻量回归不代表已经完成数百进程的资源和性能验收。
+Job 枚举回归分别覆盖初始容量 1 的少量父子进程，以及默认容量 128 下的 129 个轻量 Cmd 子进程，验证真实扩容后包含全部预期 PID、只停止目标 Job、独立哨兵仍存活及空组读取。容量边界用例让无窗口子进程等待各自的标准输入管道，不运行用户命令；就绪等待上限为 30 秒，失败也由测试持有的 Job 清理。运行前应为这些进程预留内存；单次边界回归不代表持续负载或资源、性能验收。
 
 Cmd 进程回归的就绪等待默认仍为 15 秒。失败信息区分独立哨兵、Ctrl+C 子进程和忽略 Ctrl+C 的子进程阶段，记录耗时、完成状态或退出结果、归属释放与停止标记，以及最近 8 条已脱敏输出（每条含省略标记最多 256 字符）。强停合成脚本报告进入脚本、完成编译、处理器注册成功三个进度点；编译或处理器注册失败会立即报错。进程提前结束但未报告就绪时立即失败；已结束且已有就绪标记时仍按标记判定。等待失败本身不停止会话，清理由测试持有的确切会话完成；强停、子进程退出与独立哨兵存活的断言仍须通过。
 
