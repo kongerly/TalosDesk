@@ -16,6 +16,7 @@ public sealed class WorkspaceStore
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly Action? _beforeCommit;
     private readonly Action? _afterCommit;
+    private readonly Action<string, string, bool> _moveFile;
 
     public WorkspaceStore(string? filePath = null)
         : this(filePath, null, null)
@@ -23,11 +24,13 @@ public sealed class WorkspaceStore
     }
 
     // 隔离回归可在提交边界安排外部修改，生产入口不注入回调。
-    internal WorkspaceStore(string? filePath, Action? beforeCommit, Action? afterCommit)
+    internal WorkspaceStore(string? filePath, Action? beforeCommit, Action? afterCommit,
+        Action<string, string, bool>? moveFile = null)
     {
         FilePath = Path.GetFullPath(filePath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TalosDesk", "workspace.json"));
         _beforeCommit = beforeCommit;
         _afterCommit = afterCommit;
+        _moveFile = moveFile ?? File.Move;
     }
 
     public string FilePath { get; }
@@ -138,7 +141,8 @@ public sealed class WorkspaceStore
         {
             var snapshot = DeepClone(configuration);
             PrepareForWrite(snapshot);
-            var revision = await WriteAtomicallyAsync(FilePath, snapshot, cancellationToken, expectedRevision, _beforeCommit).ConfigureAwait(false);
+            var revision = await WriteAtomicallyAsync(FilePath, snapshot, cancellationToken, expectedRevision, _beforeCommit,
+                _moveFile, retryMove: true).ConfigureAwait(false);
             _afterCommit?.Invoke();
             return revision;
         }
@@ -175,7 +179,8 @@ public sealed class WorkspaceStore
     }
 
     private static async Task<WorkspaceRevision> WriteAtomicallyAsync(string filePath, WorkspaceConfiguration configuration,
-        CancellationToken cancellationToken, WorkspaceRevision? expectedRevision = null, Action? beforeCommit = null)
+        CancellationToken cancellationToken, WorkspaceRevision? expectedRevision = null, Action? beforeCommit = null,
+        Action<string, string, bool>? moveFile = null, bool retryMove = false)
     {
         // 写入与返回摘要共用同一份字节，不能在替换后把外部版本误认为自己的保存结果。
         var bytes = JsonSerializer.SerializeToUtf8Bytes(configuration, JsonOptions);
@@ -193,22 +198,33 @@ public sealed class WorkspaceStore
             }
 
             beforeCommit?.Invoke();
-            cancellationToken.ThrowIfCancellationRequested();
-            // 完成临时文件后才校验；校验与替换之间不再异步等待或调度界面回调。
-            if (expectedRevision is { } expected && ReadRevisionForCommit(fullPath) != expected)
-                throw new WorkspaceChangedException();
+            int[] retryDelays = retryMove ? [20, 40, 80, 160, 200] : [];
+            for (var attempt = 0; ; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // 每次替换（含重试）前重新校验；校验与替换之间不异步等待。
+                if (expectedRevision is { } expected && ReadRevisionForCommit(fullPath) != expected)
+                    throw new WorkspaceChangedException();
 
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                // 首次保存不覆盖刚由外部创建的文件，即使它出现于最后一次校验之后。
-                File.Move(temporaryPath, fullPath, overwrite: expectedRevision?.Exists != false);
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    // 首次保存不覆盖刚由外部创建的文件，即使它出现于最后一次校验之后。
+                    (moveFile ?? File.Move)(temporaryPath, fullPath, expectedRevision?.Exists != false);
+                    return revision;
+                }
+                catch (IOException) when (expectedRevision?.Exists == false && File.Exists(fullPath))
+                {
+                    throw new WorkspaceChangedException();
+                }
+                catch (Exception exception) when (attempt < retryDelays.Length &&
+                    (exception is IOException or UnauthorizedAccessException) &&
+                    (exception.HResult & 0xffff) is 5 or 32 && File.Exists(temporaryPath))
+                {
+                    // Windows 文件替换可能短暂拒绝访问；只重试同一份已写好的临时文件。
+                    await Task.Delay(retryDelays[attempt], cancellationToken).ConfigureAwait(false);
+                }
             }
-            catch (IOException) when (expectedRevision?.Exists == false && File.Exists(fullPath))
-            {
-                throw new WorkspaceChangedException();
-            }
-            return revision;
         }
         finally
         {
