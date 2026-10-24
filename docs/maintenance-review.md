@@ -1,0 +1,40 @@
+# schema 4 维护线审阅说明
+
+本分支从已发布的 v0.3.0 源码整合维护修复，供自动化与交付审阅。构建标识暂保留 `0.3.0+security.20261022 / Stable`，不是新的正式版本、标签或发布；不会上传 ZIP 到 Releases。
+
+## 范围
+
+- 使用仓库锁定的 SDK 10.0.402、自包含 .NET / Windows Desktop 10.0.13，ProtectedData 包更新为 10.0.13。
+- 保持 schema 4 与 v0.3.0 功能范围，可以读取 schema 1–3；不读取 schema 5/6，不引入自动重启、日志搜索或 Windows Cmd。
+- 纳入日志迁移短暂拒绝的有界重试，跨块输出脱敏与长行边界修复，日志清理计数和完成记录恢复，双通道关闭故障收尾，以及桌面日志警告保留与新运行清除。
+- 纳入 TCP 超时通知内停止后的状态保护，工作区保存替换错误 5/32 的有界重试及外部版本校验，Job 进程列表动态扩容和超过默认容量的隔离清理回归。
+- 使用真实临时文件占用验证日志完成失败时的桌面警告和真实退出结果；工作区外部替换测试复用独立保存器，提示回归区分额外对话框与响应超时。
+
+以上修复仅保护新捕获的输出与当前操作，不恢复旧日志已丢失的数据。文件系统持续故障仍可能使保存、迁移、清理失败。TCP 通过不证明业务健康或监听者归属。
+
+## 自动化与打包
+
+先安装仓库锁定的 SDK，然后按同一源码执行：
+
+```powershell
+pwsh -NoProfile -File .\scripts\Install-Sdk.ps1
+pwsh -NoProfile -File .\scripts\Test-Environment.ps1
+pwsh -NoProfile -File .\tests\PublishPipeline.Tests.ps1
+pwsh -NoProfile -File .\scripts\Publish.ps1
+$archive = Get-ChildItem -LiteralPath artifacts -Filter 'TalosDesk-v*-win-x64.zip' -File
+if (@($archive).Count -ne 1) { throw '请显式选择本次新生成的唯一 ZIP，勿混用历史产物。' }
+pwsh -NoProfile -File .\scripts\Test-Package.ps1 -ArchivePath $archive.FullName -EvidenceDirectory artifacts/package-evidence
+pwsh -NoProfile -File .\tests\PackageInspection.Tests.ps1 -ArchivePath $archive.FullName
+```
+
+Publish 统一还原、Release 构建、Core/App 全量测试和自包含发布。TRX 位于 `artifacts/tests/`；流水线失败时仍尝试保存测试结果。打包先在独立暂存目录完成，失败保留已有包，成功后才提交本次产物。
+
+本分支 Windows CI 在推送后执行这些步骤，只上传 TRX、静态包清单与核验输出。CI 结果必须对应当前提交，主线或旧维护源码的通过记录不能替代。包核验读取 ZIP、文件名和 PE 元数据，不启动应用，不证明依赖完整、签名可信、内容无秘密或实际运行/停止正确。
+
+依赖清单中应用自身保留完整构建标识，Core 项目引用键使用去掉 `+` 构建元数据的版本；README 与应用/Core 的 PE 版本仍必须匹配完整标识。核验报告分别记录这两种身份，错误的 Core 依赖版本仍须被拒绝。
+
+## 交付边界
+
+正式分发前仍需针对最终 ZIP 完成 EXE 运行、停止/强停、分组、日志故障及迁移、导入预览、退出和重开不自动运行等人工链，并独立检查干净 Windows 11、跨账户 DPAPI、多屏/DPI、托盘与资源管理器重建等支持范围。未经实际验收的组合不扩大兼容承诺。
+
+本分支未签名。构建元数据不会让更新检查将 `0.3.0+security.20261022` 视为高于 `0.3.0`；正式发布需要另行批准有序版本、渠道、标签与最终附件。本次审阅不改变这些发布事项。

@@ -50,6 +50,7 @@ public sealed class RunLogStore
     private readonly string _defaultRootPath;
     private readonly string _locationFilePath;
     private readonly Func<string, Stream> _openRead;
+    private readonly Action<string, string> _moveDirectory;
     private long _storedBytes;
 
     public RunLogStore(string workspacePath)
@@ -58,9 +59,10 @@ public sealed class RunLogStore
     {
     }
 
-    internal RunLogStore(string workspacePath, Func<string, Stream> openRead)
+    internal RunLogStore(string workspacePath, Func<string, Stream> openRead, Action<string, string>? moveDirectory = null)
     {
         _openRead = openRead;
+        _moveDirectory = moveDirectory ?? System.IO.Directory.Move;
         _workspacePath = Path.GetFullPath(workspacePath);
         _defaultRootPath = _workspacePath + ".logs";
         _locationFilePath = _workspacePath + ".log-location.json";
@@ -124,7 +126,7 @@ public sealed class RunLogStore
             {
                 if (System.IO.Directory.Exists(source)) CopyDirectory(source, staging);
                 else System.IO.Directory.CreateDirectory(staging);
-                System.IO.Directory.Move(staging, target);
+                MoveStagingDirectory(staging, target);
                 targetCreated = true;
                 if (parentDirectory is null) File.Delete(_locationFilePath);
                 else WriteJsonAtomically(_locationFilePath, new LogLocation(Path.GetFullPath(parentDirectory)));
@@ -140,6 +142,22 @@ public sealed class RunLogStore
             if (!System.IO.Directory.Exists(source)) return null;
             try { System.IO.Directory.Delete(source, true); return null; }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return source; }
+        }
+    }
+
+    private void MoveStagingDirectory(string staging, string target)
+    {
+        // Windows 可能在刚复制完嵌套目录后短暂拒绝重命名；只重试同一暂存目录，绝不覆盖目标。
+        int[] delays = [20, 40, 80, 160, 200];
+        for (var attempt = 0; ; attempt++)
+        {
+            try { _moveDirectory(staging, target); return; }
+            catch (IOException exception) when (attempt < delays.Length &&
+                (exception.HResult & 0xffff) is 5 or 32 &&
+                !System.IO.Directory.Exists(target) && !File.Exists(target))
+            {
+                Thread.Sleep(delays[attempt]);
+            }
         }
     }
 
@@ -256,8 +274,12 @@ public sealed class RunLogStore
         {
             if (writer.Closed) return;
             writer.Closed = true;
-            writer.Stdout.Dispose();
-            writer.Stderr.Dispose();
+            foreach (var stream in new[] { writer.Stdout, writer.Stderr })
+            {
+                try { stream.Dispose(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                { writer.Info.WriteFailed = true; }
+            }
             _active.Remove(writer.Info.RunId);
             writer.Info.EndedAt = DateTimeOffset.Now;
             writer.Info.State = result?.State.ToString() ?? "Interrupted";
@@ -265,7 +287,14 @@ public sealed class RunLogStore
             try
             {
                 var metadataPath = Path.Combine(writer.Directory, MetadataFile);
-                var priorBytes = new FileInfo(metadataPath).Length;
+                long priorBytes;
+                try { priorBytes = new FileInfo(metadataPath).Length; }
+                catch (FileNotFoundException)
+                {
+                    // 本次仍持有批次状态；元数据丢失时先校准容量，再重建完成记录。
+                    _storedBytes = CalculateStoredBytes();
+                    priorBytes = 0;
+                }
                 SaveInfo(writer.Directory, writer.Info);
                 _storedBytes += new FileInfo(metadataPath).Length - priorBytes;
                 Prune(DateTimeOffset.Now);
@@ -385,7 +414,7 @@ public sealed class RunLogStore
         {
             foreach (var (runId, directory) in EnumerateRunDirectories())
             {
-                if (!_active.Contains(runId)) System.IO.Directory.Delete(directory, true);
+                if (!_active.Contains(runId)) DeleteHistoryDirectory(directory);
             }
             _storedBytes = CalculateStoredBytes();
         }
@@ -402,9 +431,21 @@ public sealed class RunLogStore
             if (startedAt < now.AddDays(-Settings.RetentionDays) || _storedBytes + requiredBytes > Settings.MaxBytes)
             {
                 var deletedBytes = GetDirectoryBytes(directory);
-                System.IO.Directory.Delete(directory, true);
+                DeleteHistoryDirectory(directory);
                 _storedBytes -= deletedBytes;
             }
+        }
+    }
+
+    private void DeleteHistoryDirectory(string directory)
+    {
+        try { System.IO.Directory.Delete(directory, true); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // 删除可能只完成一部分；重算受阻时保留原计数，仍向调用方报告原清理错误。
+            try { _storedBytes = CalculateStoredBytes(); }
+            catch (Exception recountException) when (recountException is IOException or UnauthorizedAccessException) { }
+            throw;
         }
     }
 

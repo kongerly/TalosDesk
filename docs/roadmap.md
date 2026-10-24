@@ -1,16 +1,16 @@
 # TalosDesk 开发与发布路线图
 
-更新日期：2026-10-08。
+更新日期：2026-10-25。当前是维护线审阅分支；主线新功能规划另行推进，不在本分支加入恢复、搜索或 Cmd。
 
 ## 当前状态
 
 | 项目 | 结论 |
 | --- | --- |
 | 已发布稳定版 | `v0.3.0`（tag `v0.3.0`，Stable 渠道）。服务 TCP 探测、项目汇总及源码维护改进；验收与限制见 [v0.3.0 发布说明](release-v0.3.0.md)。 |
-| 当前源码版本 | `v0.3.0`（`Directory.Build.props`，Stable 渠道），工作区 schema 4。 |
-| 发布状态 | 用户已授权正式发布，并确认按本机审查和隔离回归范围交付，公开披露未执行项；ZIP 与 SHA-256 随 [v0.3.0](https://github.com/kongerly/TalosDesk/releases/tag/v0.3.0) 发布。 |
-| 做到哪一步 | 本机代码审查、Core/App 回归、Release 和发布包检查；逐项证据与未执行项见 [v0.3.0 验收清单](acceptance-v0.3.0.md)。 |
-| 下一步 | 补充客户端及实机验收与发布反馈，之后再评估 v0.3.x 自动重启候选和 v0.4.x 多 Shell。 |
+| 当前源码版本 | `0.3.0+security.20261022 / Stable`（审阅标识，未正式定版），工作区 schema 4。 |
+| 发布状态 | 历史 [v0.3.0](https://github.com/kongerly/TalosDesk/releases/tag/v0.3.0) 已发布；当前维护构建尚未发布，不沿用历史发布授权或验收。 |
+| 做到哪一步 | 运行时、依赖与维护修复已整合；当前范围及验证边界见[维护线审阅说明](maintenance-review.md)。 |
+| 下一步 | 对维护源码完成完整自动化、Release、Publish、静态包核验和最终 EXE 人工验收，再单独确认正式版本与发布。 |
 | 未做的事 | 未执行本版干净 Win11 客户端、系统级丢包下的挂起连接、多屏/DPI、真实托盘鼠标与资源管理器重建验收；未签名、未使用包管理器分发、未做 Windows 10 验收。 |
 
 最近一次自动化的通过数量、候选 ZIP 大小与校验值不在本文记录，请查[该提交的 CI 运行记录](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)与[发布 tag](https://github.com/kongerly/TalosDesk/releases)。逐批实施记录见[变更记录归档](changelog/README.md)。

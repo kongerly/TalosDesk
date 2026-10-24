@@ -2,7 +2,9 @@
 
 TalosDesk 是面向 Windows 的本地项目运行工作台：保存常用命令，一键运行，并集中查看状态和输出。
 
-当前版本为 `v0.3.0` 稳定版。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包，新增服务 TCP 探测与项目汇总，并包含可关闭的更新检查和按工作区隔离的本地崩溃诊断。实际验证与未执行项见 [v0.3.0 验收清单](docs/acceptance-v0.3.0.md)。
+> **维护线审阅构建，尚未发布**：本分支在 v0.3.0 功能范围内更新运行时和依赖，并合入日志、脱敏、探测、配置保存和 Job 枚举修复。构建标识保留 `0.3.0+security.20261022 / Stable`，工作区保持 schema 4。当前范围、验证方式与限制见[维护线审阅说明](docs/maintenance-review.md)；历史包及验收记录不能作为本分支的交付证据。
+
+已发布的稳定版是 `v0.3.0`。支持 Windows 11 x64，提供包含 .NET 10 运行时的便携包，新增服务 TCP 探测与项目汇总，并包含可关闭的更新检查和按工作区隔离的本地崩溃诊断。历史 v0.3.0 的实际验证与未执行项见 [v0.3.0 验收清单](docs/acceptance-v0.3.0.md)。v0.1.0–v0.3.0 历史自包含包嵌入 10.0.12；更新系统运行时不会替换包内组件，请停止继续分发这些旧包。
 
 `v0.3.0` 同时包含最小化到系统托盘、窗口恢复、窄窗口适配及工作区保存保护改进。
 
@@ -119,7 +121,7 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test TalosDesk.slnx --configuration
 pwsh -NoProfile -File .\scripts\Publish.ps1
 ```
 
-脚本会执行还原、Release 构建和自动化测试，再按 `Directory.Build.props` 中的当前版本生成 `artifacts/TalosDesk-v0.3.0-win-x64.zip` 及对应 SHA-256 文件。
+脚本会执行还原、Release 构建和完整自动化测试，TRX 写入 `artifacts/tests/`，再按 `Directory.Build.props` 中的当前版本生成 ZIP 及对应 SHA-256 文件。本分支当前构建标识不是正式发布版本，不应分发同名验证包。
 
 构建按警告即错误处理：`.editorconfig` 登记编码、换行、缩进、命名和分析器严重级别，`Directory.Build.props` 声明 `TreatWarningsAsErrors`。新增警告会使构建失败；需要例外时在 `.editorconfig` 中写明理由，不做静默忽略。
 

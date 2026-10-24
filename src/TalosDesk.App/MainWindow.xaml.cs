@@ -2391,6 +2391,7 @@ public partial class MainWindow : Window
                         {
                             Dispatcher.BeginInvoke(new Action(() =>
                             {
+                                if (_runVersions.GetValueOrDefault(command.Id) != nextVersion) return;
                                 _logWarnings[command.Id] = logWriter.Info.Truncated ? "日志达到容量上限，本批次后续输出未保存。" : "日志写入失败，本批次输出不完整。";
                                 if (_selectedCommand?.Id == command.Id) LogStatusText.Text = _logWarnings[command.Id];
                             }));
@@ -2399,7 +2400,11 @@ public partial class MainWindow : Window
                     QueueOutput(command.Id, nextVersion, output);
                 }, runEnvironment, command.TcpProbe);
             _runVersions[command.Id] = nextVersion;
-            if (logWriter is not null) _runLogWriters[command.Id] = logWriter;
+            if (logWriter is not null)
+            {
+                _runLogWriters[command.Id] = logWriter;
+                _logWarnings.Remove(command.Id);
+            }
             _lastResults.Remove(command.Id);
             _runStartedAt[command.Id] = DateTimeOffset.Now;
             GetLogs(command.Id).Clear();
@@ -2449,20 +2454,26 @@ public partial class MainWindow : Window
         };
     }
 
+    private void CompleteRunLog(Guid commandId, long version, RunLogWriter? logWriter, CommandRunResult? result)
+    {
+        if (logWriter is null) return;
+        var failed = false;
+        try
+        {
+            _runLogStore.Complete(logWriter, result);
+            failed = logWriter.Info.WriteFailed;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { failed = true; }
+        if (failed && _runVersions.GetValueOrDefault(commandId) == version)
+            _logWarnings.TryAdd(commandId, "日志完成写入失败。");
+    }
+
     private async Task CompleteRunAsync(Guid commandId, long version, CommandRunSession session, RunLogWriter? logWriter)
     {
         try
         {
             var result = await session.Completion;
-            if (logWriter is not null)
-            {
-                try { _runLogStore.Complete(logWriter, result); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    if (_runVersions.GetValueOrDefault(commandId) == version)
-                        _logWarnings[commandId] = $"日志完成写入失败：{exception.Message}";
-                }
-            }
+            CompleteRunLog(commandId, version, logWriter, result);
             await Dispatcher.InvokeAsync(() =>
             {
                 if (_runVersions.GetValueOrDefault(commandId) != version) return;
@@ -2476,15 +2487,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            if (logWriter is not null)
-            {
-                try { _runLogStore.Complete(logWriter, null); }
-                catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
-                {
-                    if (_runVersions.GetValueOrDefault(commandId) == version)
-                        _logWarnings[commandId] = $"日志完成写入失败：{failure.Message}";
-                }
-            }
+            CompleteRunLog(commandId, version, logWriter, null);
             await Dispatcher.InvokeAsync(() =>
             {
                 if (_runVersions.GetValueOrDefault(commandId) != version) return;

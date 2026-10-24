@@ -12,8 +12,11 @@ internal sealed class StreamingOutputRedactor
     private readonly string[] _secrets;
     private readonly TimeSpan _timeout;
     private string _pending = string.Empty;
+    private int _knownMaskRemaining;
+    private int _tokenPrefixRemaining;
     private bool _suppressToken;
     private bool _failed;
+    internal bool HasFailed => _failed;
 
     internal StreamingOutputRedactor(IEnumerable<string> secrets, TimeSpan? timeout = null)
     {
@@ -73,14 +76,6 @@ internal sealed class StreamingOutputRedactor
                 return OmittedMarker;
             }
 
-            if (_suppressToken)
-            {
-                while (offset < input.Length && !char.IsWhiteSpace(input[offset])) offset++;
-                if (offset == input.Length) break;
-                _suppressToken = false;
-                continue;
-            }
-
             var remaining = input.AsSpan(offset);
             string? fullSecret = null;
             var partialSecret = false;
@@ -92,12 +87,6 @@ internal sealed class StreamingOutputRedactor
                 else partialSecret = true;
             }
             if (partialSecret && !final) break;
-            if (fullSecret is not null)
-            {
-                result.Append(HiddenMarker);
-                offset += fullSecret.Length;
-                continue;
-            }
 
             string? fullPrefix = null;
             var partialPrefix = false;
@@ -110,14 +99,30 @@ internal sealed class StreamingOutputRedactor
             }
             if (partialPrefix && !final) break;
             if (fullPrefix is not null && !char.IsWhiteSpace(remaining[fullPrefix.Length]))
+                _tokenPrefixRemaining = fullPrefix.Length;
+
+            if (fullSecret is not null)
             {
-                result.Append(remaining[..fullPrefix.Length]).Append(HiddenMarker);
-                offset += fullPrefix.Length;
-                _suppressToken = true;
-                continue;
+                if (_knownMaskRemaining == 0 && !_suppressToken) result.Append(HiddenMarker);
+                _knownMaskRemaining = Math.Max(_knownMaskRemaining, fullSecret.Length);
+            }
+            if (char.IsWhiteSpace(input[offset])) _suppressToken = false;
+            if (_knownMaskRemaining > 0)
+            {
+                // 已遮蔽的区域也逐字符匹配，覆盖从其内部开始、延伸到末尾之外的已知值。
+                _knownMaskRemaining--;
+            }
+            else if (!_suppressToken)
+            {
+                result.Append(input[offset]);
             }
 
-            result.Append(input[offset]);
+            if (_tokenPrefixRemaining > 0 && --_tokenPrefixRemaining == 0)
+            {
+                // 前缀本身也可能与已知值交叠；到前缀末尾才启用令牌省略，不跳过任何字符。
+                if (!_suppressToken && _knownMaskRemaining == 0) result.Append(HiddenMarker);
+                _suppressToken = true;
+            }
             offset++;
         }
 

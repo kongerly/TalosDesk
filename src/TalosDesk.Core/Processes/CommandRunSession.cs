@@ -131,8 +131,8 @@ public sealed class CommandRunSession : IAsyncDisposable
     {
         try
         {
-            var stdoutTask = PumpAsync(stdout, "stdout");
-            var stderrTask = PumpAsync(stderr, "stderr");
+            var stdoutTask = PumpAsync(stdout, "stdout", _sensitiveValues, Emit);
+            var stderrTask = PumpAsync(stderr, "stderr", _sensitiveValues, Emit);
             await WindowsNative.WaitForProcessAsync(_process, Timeout.InfiniteTimeSpan, CancellationToken.None).ConfigureAwait(false);
             await WindowsNative.WaitForCommandGroupExitAsync(_job, Timeout.InfiniteTimeSpan, CancellationToken.None).ConfigureAwait(false);
             _probe?.Stop();
@@ -160,45 +160,67 @@ public sealed class CommandRunSession : IAsyncDisposable
         }
     }
 
-    private async Task PumpAsync(StreamReader reader, string stream)
+    internal static async Task PumpAsync(StreamReader reader, string stream, IReadOnlyList<string> sensitiveValues,
+        Action<string, string> emit, TimeSpan? redactionTimeout = null)
     {
         using (reader)
         {
-            var redactor = new StreamingOutputRedactor(_sensitiveValues);
+            var redactor = new StreamingOutputRedactor(sensitiveValues, redactionTimeout);
             var line = new StringBuilder();
+            var hasLineSegments = false;
             var buffer = new char[16_384];
             try
             {
                 int length;
                 while ((length = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false)) != 0)
                 {
-                    AppendSanitized(redactor.Append(new string(buffer, 0, length)), line, stream);
+                    var text = redactor.Append(new string(buffer, 0, length));
+                    if (redactor.HasFailed && text.Length > 0) PublishOmission(line, stream, emit);
+                    else AppendSanitized(text, line, stream, emit, ref hasLineSegments);
                 }
-                AppendSanitized(redactor.Finish(), line, stream);
+                var remainder = redactor.Finish();
+                if (redactor.HasFailed && remainder.Length > 0) PublishOmission(line, stream, emit);
+                else AppendSanitized(remainder, line, stream, emit, ref hasLineSegments);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                AppendSanitized(StreamingOutputRedactor.OmittedMarker, line, stream);
+                if (!redactor.HasFailed) PublishOmission(line, stream, emit);
             }
-            if (line.Length > 0) Emit(line.ToString(), stream);
+            if (line.Length > 0) emit(line.ToString(), stream);
         }
     }
 
-    private void AppendSanitized(string text, StringBuilder line, string stream)
+    private static void PublishOmission(StringBuilder line, string stream, Action<string, string> emit)
+    {
+        // 长驻命令不能等EOF才显示失败；独立发布提示，避免被16 KiB半行拆开。
+        if (line.Length > 0)
+        {
+            emit(line.ToString(), stream);
+            line.Clear();
+        }
+        emit(StreamingOutputRedactor.OmittedMarker, stream);
+    }
+
+    private static void AppendSanitized(string text, StringBuilder line, string stream, Action<string, string> emit,
+        ref bool hasLineSegments)
     {
         foreach (var character in text)
         {
             if (character == '\n')
             {
                 var count = line.Length > 0 && line[^1] == '\r' ? line.Length - 1 : line.Length;
-                Emit(line.ToString(0, count), stream);
+                if (count > 0 || !hasLineSegments) emit(line.ToString(0, count), stream);
                 line.Clear();
+                hasLineSegments = false;
                 continue;
             }
             line.Append(character);
             if (line.Length < 16_384) continue;
-            Emit(line.ToString(), stream);
-            line.Clear();
+            // 保留边界上的高代理项和回车，避免拆开补充字符或跨块CRLF。
+            var segmentLength = line.Length - (char.IsHighSurrogate(line[^1]) || line[^1] == '\r' ? 1 : 0);
+            emit(line.ToString(0, segmentLength), stream);
+            line.Remove(0, segmentLength);
+            hasLineSegments = true;
         }
     }
 
