@@ -118,7 +118,8 @@ internal static class WorkspaceSaveRegression
         var path = Path.Combine(root, "workspace.json");
         var externalPath = Path.Combine(root, "external.json");
         new WorkspaceStore(path).SaveAsync(Configuration("原始版本")).GetAwaiter().GetResult();
-        new WorkspaceStore(externalPath).SaveAsync(Configuration("外部版本")).GetAwaiter().GetResult();
+        var externalConfiguration = Configuration("外部版本");
+        new WorkspaceStore(externalPath).SaveAsync(externalConfiguration).GetAwaiter().GetResult();
         var externalBytes = File.ReadAllBytes(externalPath);
         var armed = 0;
         var replacementCount = 0;
@@ -126,9 +127,20 @@ internal static class WorkspaceSaveRegression
         Action replace = () =>
         {
             if (Interlocked.Exchange(ref armed, 0) == 0) return;
-            if (afterCommit) committedBytes = File.ReadAllBytes(path);
-            File.Move(externalPath, path, overwrite: true);
-            Interlocked.Increment(ref replacementCount);
+            var boundary = afterCommit ? "提交后" : "提交前";
+            try
+            {
+                if (afterCommit) committedBytes = File.ReadAllBytes(path);
+                // 仍真实替换同一个工作区；复用保存入口的有界重试，避免裸Move使外部修改未发生。
+                new WorkspaceStore(path).SaveAsync(externalConfiguration).GetAwaiter().GetResult();
+                Interlocked.Increment(ref replacementCount);
+                Stage += $"；{boundary}合成外部替换已完成";
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Stage += $"；{boundary}合成外部替换失败：{exception.GetType().Name}，错误码={exception.HResult & 0xffff}";
+                throw;
+            }
         };
         var store = new WorkspaceStore(path, afterCommit ? null : replace, afterCommit ? replace : null);
         var icon = new TestTrayIcon();
