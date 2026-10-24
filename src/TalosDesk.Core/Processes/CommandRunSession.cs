@@ -39,6 +39,7 @@ public sealed class CommandRunSession : ICommandRunSession
     private readonly TcpProbeMonitor? _probe;
     private int _stopInProgress;
     private int _ownershipReleased;
+    private int _groupExitConfirmed;
     private readonly ICommandObservationOperations _observation;
     private Task _outputDrain = Task.CompletedTask;
 
@@ -142,7 +143,13 @@ public sealed class CommandRunSession : ICommandRunSession
 
     private async Task ReleaseFaultedOwnershipAsync()
     {
+        Interlocked.Exchange(ref _groupExitConfirmed, 1);
         if (!_completion.IsCompleted) return; // 正常观察仍需读取退出码和排空输出。
+        await ReleaseConfirmedOwnershipAsync().ConfigureAwait(false);
+    }
+
+    private async Task ReleaseConfirmedOwnershipAsync()
+    {
         try { await _outputDrain.ConfigureAwait(false); }
         catch { /* 输出观察失败不撤销已经确认的归属退出。 */ }
         Interlocked.Exchange(ref _ownershipReleased, 1);
@@ -175,7 +182,10 @@ public sealed class CommandRunSession : ICommandRunSession
             await _stopLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                // 观察失败时保留控制资源，允许重试停止；不能把 faulted Completion 当作退出。
+                // 观察故障可能先于停止锁释放；已确认退出时仍须排空输出并释放归属。
+                if (!IsOwnershipReleased && Volatile.Read(ref _groupExitConfirmed) != 0)
+                    await ReleaseConfirmedOwnershipAsync().ConfigureAwait(false);
+                // 尚未确认退出的观察故障仍保留控制资源，允许重试停止。
                 if (IsOwnershipReleased)
                 {
                     _process.Dispose();

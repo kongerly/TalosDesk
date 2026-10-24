@@ -228,6 +228,74 @@ public sealed class CommandRecoveryProcessTests
         Assert.AreEqual(CommandStopResult.AlreadyExited, await ownership.StopAsync());
     }
 
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task ObservationFailureDuringConfirmedStopReleasesOwnershipWithoutASecondStop(bool forceStop)
+    {
+        using var sandbox = new Sandbox();
+        var observation = new StopRaceObservation();
+        var stops = new ObservationFailureDuringStopOperations(observation, forceStop);
+        var runner = new CommandRunner(stops, observation);
+        var id = Guid.NewGuid();
+        var session = runner.Start(id, "Write-Output 'stop-race-ready'; while ($true) { Start-Sleep -Milliseconds 50 }", sandbox.Path);
+        try
+        {
+            await using var independent = new CommandRunner().Start(Guid.NewGuid(), "while ($true) { Start-Sleep -Milliseconds 50 }", sandbox.Path);
+            await TcpProbeTests.Until(() => session.GetRecentOutput().Any(line => line.Text == "stop-race-ready"));
+            var result = await session.StopAsync().WaitAsync(TimeSpan.FromSeconds(12));
+            Assert.AreEqual(forceStop ? CommandStopResult.ForceTerminated : CommandStopResult.StoppedAfterCtrlC, result);
+            await Assert.ThrowsExactlyAsync<IOException>(() => session.Completion.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.IsTrue(session.IsOwnershipReleased, "已确认Job退出，观察故障不能要求再次停止才能释放归属。");
+            Assert.IsFalse(runner.IsRunning(id));
+            Assert.IsFalse(independent.Completion.IsCompleted);
+            Assert.AreEqual(1, stops.ConfirmedExits);
+            observation.Enabled = false;
+            await using var replacement = runner.Start(id, "exit 0", sandbox.Path);
+            Assert.AreEqual(CommandRunState.Succeeded, (await replacement.Completion.WaitAsync(TimeSpan.FromSeconds(10))).State);
+        }
+        finally
+        {
+            observation.Failure.TrySetException(new IOException("synthetic stop observation"));
+            await session.StopAsync();
+            await Assert.ThrowsExactlyAsync<IOException>(() => session.DisposeAsync().AsTask());
+        }
+    }
+
+    private sealed class StopRaceObservation : ICommandObservationOperations
+    {
+        // 同步传播故障，让观察的finally在停止锁释放前进入等待，不靠延时碰撞。
+        internal TaskCompletionSource Failure { get; } = new();
+        internal bool Enabled = true;
+        public Task WaitForProcessAsync(SafeProcessHandle process) => Enabled
+            ? Failure.Task : WindowsCommandObservationOperations.Instance.WaitForProcessAsync(process);
+        public Task WaitForGroupAsync(SafeJobHandle job) => WindowsCommandObservationOperations.Instance.WaitForGroupAsync(job);
+        public int GetExitCode(SafeProcessHandle process) => WindowsNative.GetExitCode(process);
+    }
+
+    private sealed class ObservationFailureDuringStopOperations(StopRaceObservation observation, bool forceStop) : ICommandStopOperations
+    {
+        private int _waits;
+        internal int ConfirmedExits { get; private set; }
+        public bool TrySendCtrlC(int processId) => false;
+        public void TerminateJob(SafeJobHandle job) => WindowsNative.TerminateJob(job);
+        public async Task<bool> WaitForCommandGroupExitAsync(SafeJobHandle job, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _waits) == 1)
+            {
+                if (forceStop) return false;
+                WindowsNative.TerminateJob(job);
+            }
+            var exited = await WindowsNative.WaitForCommandGroupExitAsync(job, timeout, cancellationToken).ConfigureAwait(false);
+            if (exited)
+            {
+                ConfirmedExits++;
+                observation.Failure.TrySetException(new IOException("synthetic stop observation"));
+            }
+            return exited;
+        }
+    }
+
     private sealed class FailingObservation : ICommandObservationOperations
     {
         internal TaskCompletionSource Fail { get; } = CommandRecoveryCoordinatorTests.Signal();

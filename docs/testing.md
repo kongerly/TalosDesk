@@ -35,7 +35,7 @@ pwsh -NoProfile -File .\tests\PublishPipeline.Tests.ps1
 | `CommandRunnerTests`、`CommandRunEnvironmentTests` | 归属进程、停止/重启、环境注入及启动失败 |
 | `JobProcessEnumerationTests` | 真实 Job 的小缓冲扩容枚举、129 个轻量子进程超过默认容量后的完整名单、父/子 PID 包含关系、独立 Job 隔离及停止后空列表 |
 | `CmdProcessTests`、`ShellConfigurationTests`、`CmdConfigurationEditorImportAndMixedGroup` | Cmd 引用与 UTF-8、中文/空格/特殊字符路径、批处理与 EXE、环境与脱敏、Ctrl+C/强停及独立进程隔离、schema 1–6、编辑/复制/预览/冲突/导出与混合分组 |
-| `CommandRecoveryCoordinatorTests`、`CommandRecoveryProcessTests` | 预算、退避、取消、故障归属、真实 Job 与逐会话日志，以及 Core 公共入口的 Cmd 初次/重试会话 |
+| `CommandRecoveryCoordinatorTests`、`CommandRecoveryProcessTests` | 预算、退避、取消、故障归属、观察在停止确认期间失败后的归属释放、真实 Job 与逐会话日志，以及 Core 公共入口的 Cmd 初次/重试会话 |
 | `TcpProbeTests` | 可控连接与时钟、启动期限和失败阈值、停止后的迟到结果、超时通知内同步停止，以及真实本机 IPv4/IPv6 监听的断开恢复 |
 | `CommandGroupExecutionTests` | 顺序预留、同时分组持续监视及确切会话清理 |
 | `RunLogStoreTests`、`StreamingOutputRedactorTests`、`CommandRunEnvironmentTests` | 历史尾部读取、损坏元数据容量、清理失败后容量重算、收尾重建缺失元数据及精确配额边界、日志流关闭故障后的双通道收尾/结果保留/迁移与清理、截断；含空白已知值、长重叠链及模式前缀交叠的跨块遮蔽、独立完整文本覆盖校验，以及真实双通道事件/内存/磁盘输出 |
@@ -53,6 +53,8 @@ pwsh -NoProfile -File .\scripts\With-Sdk.ps1 test tests/TalosDesk.App.Tests/Talo
 ```
 
 竞争条件使用可控时钟、预检/创建/完成屏障和确切的会话身份，避免靠随机等待来碰撞。关键断言包括：原文件未被改写、失败不会留下虚假批次、旧回调不覆盖新状态、旧分组不停止后来的会话，以及停止/退出后不恢复重试。
+
+观察与停止竞争回归在测试持有的真实 Job 已退出、停止锁尚未释放时同步注入观察异常，分别覆盖第一次等待确认退出和强停后的确认路径。断言原异常仍报告、输出收尾后释放占用、同一命令可重新启动且独立哨兵仍存活；不靠重复停止消除故障，也不把注入的确认路径当作 Ctrl+C 信号投递验收。未确认退出时保留占用的独立回归仍须通过。
 
 Job 枚举回归分别覆盖初始容量 1 的少量父子进程，以及默认容量 128 下的 129 个轻量 Cmd 子进程，验证真实扩容后包含全部预期 PID、只停止目标 Job、独立哨兵仍存活及空组读取。容量边界用例让无窗口子进程等待各自的标准输入管道，不运行用户命令；就绪等待上限为 30 秒，失败也由测试持有的 Job 清理。运行前应为这些进程预留内存；单次边界回归不代表持续负载或资源、性能验收。
 
