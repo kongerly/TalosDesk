@@ -718,6 +718,67 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    [DataRow(true, false, CommandRunState.Succeeded, 0, false)]
+    [DataRow(false, true, CommandRunState.Failed, 7, true)]
+    [DataRow(true, true, CommandRunState.Stopped, -1, false)]
+    [DataRow(true, true, null, null, true)]
+    public void ClosingOutputFailureStillFinalizesBothStreamsAndReleasesBatch(bool failStdout, bool failStderr,
+        CommandRunState? state, int? exitCode, bool accessDenied)
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        var original = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(original, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic-close-output"));
+        store.Append(original, new CommandOutput(DateTimeOffset.Now, "stderr", "synthetic-close-diagnostic"));
+        original.Stdout.Dispose();
+        original.Stderr.Dispose();
+        var stdout = new FailingCloseStream(Path.Combine(original.Directory, "stdout.log"), failStdout, accessDenied);
+        var stderr = new FailingCloseStream(Path.Combine(original.Directory, "stderr.log"), failStderr, accessDenied);
+        var writer = new RunLogWriter(original.Info, original.Directory, stdout, stderr);
+        try
+        {
+            Exception? closeError = null;
+            try { store.Complete(writer, state is { } completed ? new CommandRunResult(completed, exitCode!.Value, false) : null); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { closeError = exception; }
+
+            // 与桌面一样，即使捕获了收尾IO错误，也不能留下永远阻止迁移的活动批次。
+            Assert.IsNull(store.ChangeLocation(Path.Combine(sandbox.Path, "relocated")));
+            Assert.IsNull(closeError, "预期的流关闭错误应通过完整性标记报告，继续执行其余收尾。");
+            Assert.AreEqual(1, stdout.CloseAttempts);
+            Assert.AreEqual(1, stderr.CloseAttempts);
+            Assert.IsFalse(stdout.CanWrite);
+            Assert.IsFalse(stderr.CanWrite);
+            foreach (var current in new[] { store, new RunLogStore(workspace) })
+            {
+                if (!ReferenceEquals(current, store)) current.Initialize();
+                var saved = current.GetRuns(writer.Info.ProjectId, writer.Info.CommandId).Single();
+                Assert.AreEqual(state?.ToString() ?? "Interrupted", saved.State);
+                Assert.AreEqual(exitCode, saved.ExitCode);
+                Assert.IsNotNull(saved.EndedAt);
+                Assert.IsTrue(saved.WriteFailed);
+                CollectionAssert.AreEqual(new[] { "synthetic-close-output" }, current.ReadTail(saved, "stdout").ToArray());
+                CollectionAssert.AreEqual(new[] { "synthetic-close-diagnostic" }, current.ReadTail(saved, "stderr").ToArray());
+            }
+            store.Complete(writer, new CommandRunResult(CommandRunState.Failed, 99, false));
+            Assert.AreEqual(1, stdout.CloseAttempts, "重复收尾不能再次关闭或覆盖原结果。");
+            Assert.AreEqual(1, stderr.CloseAttempts);
+            Assert.AreEqual(state?.ToString() ?? "Interrupted", writer.Info.State);
+            Assert.AreEqual(exitCode, writer.Info.ExitCode);
+            store.ClearHistory();
+            Assert.HasCount(0, store.GetRuns(writer.Info.ProjectId, writer.Info.CommandId));
+        }
+        finally
+        {
+            stdout.FailOnClose = false;
+            stderr.FailOnClose = false;
+            stdout.Dispose();
+            stderr.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void RecreatedMetadataDoesNotDoubleCountMissingBytesWhenOtherOutputExactlyFitsQuota()
     {
         using var sandbox = new Sandbox();
@@ -854,6 +915,22 @@ public sealed class RunLogStoreTests
         Directory.EnumerateFiles(store.RootPath, "*", SearchOption.AllDirectories)
             .Where(path => Path.GetFileName(path) != "settings.json")
             .Sum(path => new FileInfo(path).Length);
+
+    private sealed class FailingCloseStream(string path, bool failOnClose, bool accessDenied)
+        : FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read)
+    {
+        internal bool FailOnClose { get; set; } = failOnClose;
+        internal int CloseAttempts { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) CloseAttempts++;
+            base.Dispose(disposing);
+            if (!disposing || !FailOnClose) return;
+            if (accessDenied) throw new UnauthorizedAccessException("synthetic-close-failure");
+            throw new IOException("synthetic-close-failure");
+        }
+    }
 
     private sealed class Sandbox : IDisposable
     {

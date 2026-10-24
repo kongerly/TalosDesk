@@ -274,8 +274,12 @@ public sealed class RunLogStore
         {
             if (writer.Closed) return;
             writer.Closed = true;
-            writer.Stdout.Dispose();
-            writer.Stderr.Dispose();
+            foreach (var stream in new[] { writer.Stdout, writer.Stderr })
+            {
+                try { stream.Dispose(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                { writer.Info.WriteFailed = true; }
+            }
             _active.Remove(writer.Info.RunId);
             writer.Info.EndedAt = DateTimeOffset.Now;
             writer.Info.State = result?.State.ToString() ?? "Interrupted";
