@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using TalosDesk.Core.Configuration;
 
 namespace TalosDesk.Core.Processes;
 
@@ -110,10 +111,13 @@ public sealed class RunLogStore
         {
             if (_active.Count != 0) throw new InvalidOperationException("有运行中的日志批次，不能更改保存位置。");
             var target = parentDirectory is null ? _defaultRootPath : GetCustomRootPath(parentDirectory);
-            if (Path.TrimEndingDirectorySeparator(target).Equals(Path.TrimEndingDirectorySeparator(RootPath), StringComparison.OrdinalIgnoreCase))
-                return null;
             var source = RootPath;
-            if (IsWithin(target, source) || IsWithin(source, target))
+            // 先展开既有父目录链接，防止以另一种路径文本把暂存副本建入源目录。
+            var resolvedSource = WorkspaceFileIdentity.ResolveRealPath(source);
+            var resolvedTarget = WorkspaceFileIdentity.ResolveRealPath(target);
+            if (Path.TrimEndingDirectorySeparator(resolvedTarget).Equals(Path.TrimEndingDirectorySeparator(resolvedSource), StringComparison.OrdinalIgnoreCase))
+                return null;
+            if (IsWithin(resolvedTarget, resolvedSource) || IsWithin(resolvedSource, resolvedTarget))
                 throw new IOException("新旧日志目录不能互相包含。请选择其他文件夹。");
             if (System.IO.Directory.Exists(target) || File.Exists(target))
                 throw new IOException("目标日志目录已存在。请选择其他文件夹，避免覆盖已有日志。");
