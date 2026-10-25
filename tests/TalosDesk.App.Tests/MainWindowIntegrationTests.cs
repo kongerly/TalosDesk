@@ -123,6 +123,17 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(RecoveryRealProcessRetriesUseNewProbeAndRedactedLogBatches), () => RecoveryRegression.RealProcessRetriesUseNewProbeAndRedactedLogBatches(shell), () => RecoveryRegression.Stage);
 
     [TestMethod]
+    [DataRow(CommandShell.PowerShell, 0, "StopButton")]
+    [DataRow(CommandShell.PowerShell, 1, "OutputStopButton")]
+    [DataRow(CommandShell.PowerShell, 2, "StopButton")]
+    [DataRow(CommandShell.Cmd, 0, "StopButton")]
+    [DataRow(CommandShell.Cmd, 1, "OutputStopButton")]
+    [DataRow(CommandShell.Cmd, 2, "StopButton")]
+    public void RecoveryRealProcessWaitingStopPreservesFailureAndAllowsFreshRound(CommandShell shell, int waitingAttempt, string stopButton) =>
+        _host.Run(nameof(RecoveryRealProcessWaitingStopPreservesFailureAndAllowsFreshRound),
+            () => RecoveryRegression.RealProcessWaitingStopPreservesFailureAndAllowsFreshRound(shell, waitingAttempt, stopButton), () => RecoveryRegression.Stage);
+
+    [TestMethod]
     public void RecoveryOwnSavePausesAndKeepsOriginalBudget() =>
         _host.Run(nameof(RecoveryOwnSavePausesAndKeepsOriginalBudget), RecoveryRegression.OwnSavePausesAndKeepsOriginalBudget, () => RecoveryRegression.Stage);
 

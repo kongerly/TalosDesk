@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -512,6 +513,87 @@ internal static class RecoveryRegression
             Assert.DoesNotContain("synthetic-app-secret", text);
             Assert.DoesNotContain("自动重启", text);
         }
+    }
+
+    internal static void RealProcessWaitingStopPreservesFailureAndAllowsFreshRound(CommandShell shell, int waitingAttempt, string stopButton)
+    {
+        using var f = new Fixture(real: true, shell: shell);
+        var marker = Path.Combine(f.WorkingDirectory, "fail.marker");
+        var logs = Field<RunLogStore>(f.Window, "_runLogStore");
+        f.Start();
+        var oldRound = f.Snapshot.RoundId;
+        Assert.IsNotNull(oldRound);
+        for (var attempt = 0; attempt <= waitingAttempt; attempt++)
+        {
+            Stage = $"{shell} 第 {attempt + 1} 批真实进程退出并进入等待";
+            Wait(() => f.Snapshot.Session is CommandRunSession running && running.GetRecentOutput().Any(line => line.Text.StartsWith("pid:", StringComparison.Ordinal)));
+            var session = (CommandRunSession)f.Snapshot.Session!;
+            var pid = int.Parse(session.GetRecentOutput().Single(line => line.Text.StartsWith("pid:", StringComparison.Ordinal)).Text.AsSpan(4),
+                System.Globalization.CultureInfo.InvariantCulture);
+            using var process = Process.GetProcessById(pid);
+            _ = process.Handle; // 在放行退出前持有确切句柄，避免退出后按 PID 重新查询。
+            File.WriteAllText(marker, "synthetic");
+            Wait(() => f.Snapshot.State == CommandRecoveryState.Waiting);
+            Assert.IsTrue(process.HasExited);
+            Assert.IsTrue(session.IsOwnershipReleased);
+            Assert.IsFalse(session.IsStopRequested);
+            Assert.AreEqual(CommandRunState.Failed, session.Completion.Result.State);
+            Assert.AreEqual(19, session.Completion.Result.ExitCode);
+            Assert.AreEqual(attempt, f.Snapshot.Attempts);
+            Assert.AreEqual(TimeSpan.FromSeconds(2 << attempt), f.Snapshot.RemainingDelay);
+            File.Delete(marker);
+            if (attempt < waitingAttempt)
+            {
+                f.Clock.Advance(2 << attempt);
+                Wait(() => f.Snapshot.State == CommandRecoveryState.Running);
+            }
+        }
+
+        Stage = $"{shell} 等待 {2 << waitingAttempt} 秒期间点击 {stopButton}";
+        if (stopButton == "OutputStopButton")
+            f.Button("OutputPageButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var beforeStop = Directory.GetFiles(f.Root, "run.json", SearchOption.AllDirectories)
+            .ToDictionary(path => path, File.ReadAllBytes);
+        Assert.HasCount(waitingAttempt + 1, beforeStop);
+        Assert.IsTrue(f.Button(stopButton).IsEnabled);
+        f.Button(stopButton).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Wait(() => !f.Coordinator.IsBusy(f.CommandId));
+        Wait(() => f.Text("RunStateText").Contains("已取消", StringComparison.Ordinal));
+        Assert.AreEqual(CommandRecoveryState.Cancelled, f.Snapshot.State);
+        Assert.AreEqual(waitingAttempt, f.Snapshot.Attempts);
+        Assert.AreEqual(CommandRunState.Failed, f.Snapshot.LastResult!.State);
+        Assert.AreEqual(19, f.Snapshot.LastResult.ExitCode);
+        Assert.IsTrue(f.Button("RunButton").IsEnabled);
+        Assert.IsFalse(f.Button("StopButton").IsEnabled);
+        Assert.IsFalse(f.Button("OutputStopButton").IsEnabled);
+        Assert.AreEqual(0, f.Clock.Pending);
+        StringAssert.Contains(f.Text("OverviewProbeCountText"), "0 个待重试");
+
+        // 覆盖全部旧截止时间；取消不能伪造停止结果、改写旧批次或留下延迟启动。
+        f.Clock.Advance(1000); Pump();
+        Assert.AreEqual(CommandRecoveryState.Cancelled, f.Snapshot.State);
+        Assert.IsNull(f.Snapshot.Session);
+        CollectionAssert.AreEquivalent(beforeStop.Keys.ToArray(), Directory.GetFiles(f.Root, "run.json", SearchOption.AllDirectories));
+        foreach (var (path, bytes) in beforeStop) CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+        var completedRuns = logs.GetRuns(f.Window.Projects[0].Id, f.CommandId);
+        Assert.HasCount(waitingAttempt + 1, completedRuns);
+        Assert.IsTrue(completedRuns.All(run => run.State == "Failed" && run.ExitCode == 19));
+
+        Stage = $"{shell} 取消后手动运行取得新轮次与零重试预算";
+        f.Start();
+        Assert.IsNotNull(f.Snapshot.RoundId);
+        Assert.AreNotEqual(oldRound, f.Snapshot.RoundId);
+        Assert.AreEqual(0, f.Snapshot.Attempts);
+        var fresh = (CommandRunSession)f.Snapshot.Session!;
+        Wait(() => fresh.GetRecentOutput().Any(line => line.Text.StartsWith("pid:", StringComparison.Ordinal)));
+        Assert.HasCount(waitingAttempt + 2, Directory.GetFiles(f.Root, "run.json", SearchOption.AllDirectories));
+        f.Button(stopButton).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Wait(() => !f.Coordinator.IsBusy(f.CommandId));
+        Assert.IsTrue(fresh.IsOwnershipReleased);
+        Assert.AreEqual(CommandRunState.Stopped, fresh.Completion.Result.State);
+        f.Clock.Advance(1000); Pump();
+        Assert.AreEqual(0, f.Clock.Pending);
+        Assert.HasCount(waitingAttempt + 2, Directory.GetFiles(f.Root, "run.json", SearchOption.AllDirectories));
     }
 
     private sealed class Fixture : IDisposable
