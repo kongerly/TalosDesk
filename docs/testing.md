@@ -47,6 +47,8 @@ pwsh -NoProfile -File .\tests\PublishPipeline.Tests.ps1
 | `DesktopTestHostTests`、`WpfTestHostTests` | STA 宿主、超时及清理失败边界 |
 | 更新与诊断相关测试 | 固定网络响应、可控时间、渠道/缓存/限流、记录投影及独立崩溃宿主 |
 
+`WorkspaceSecurityTests.HardLinkExportReplacesOnlyAliasAndPreservesProtectedWorkspace` 在独立 NTFS 临时目录创建真实硬链接，验证导出替换别名后原工作区及合成 DPAPI 密文不变、导出只含待填写状态，后续修改导出文件不影响原文件；导出目标上拒绝删除共享的真实句柄还须阻止替换、保留两份原字节且清理临时文件，解除占用后可以再次导出。该回归约束导出继续采用临时文件替换，不能改成原地截断写入；不模拟并发更换目录、网络盘或其他文件系统。
+
 可以按方法或主题筛选，并输出 TRX：
 
 ```powershell
