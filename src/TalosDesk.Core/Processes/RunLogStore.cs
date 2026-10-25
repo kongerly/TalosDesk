@@ -231,10 +231,9 @@ public sealed class RunLogStore
             }
             catch
             {
-                _active.Remove(info.RunId);
-                stdout?.Dispose();
-                stderr?.Dispose();
-                if (System.IO.Directory.Exists(directory)) System.IO.Directory.Delete(directory, true);
+                try { RemoveBatch(info, directory, stdout, stderr); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                { /* 清理已尽力关闭双通道并校准容量，继续报告原始创建失败。 */ }
                 throw;
             }
         }
@@ -314,33 +313,39 @@ public sealed class RunLogStore
         {
             if (writer.Closed) return;
             writer.Closed = true;
-            Exception? failure = null;
-            foreach (var stream in new[] { writer.Stdout, writer.Stderr })
-            {
-                try { stream.Dispose(); }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    writer.Info.WriteFailed = true;
-                    failure ??= exception;
-                }
-            }
-            _active.Remove(writer.Info.RunId);
-            try { System.IO.Directory.Delete(writer.Directory, true); }
-            catch (DirectoryNotFoundException) { /* 批次已被外部删除，无需重建。 */ }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                writer.Info.WriteFailed = true;
-                failure ??= exception;
-            }
-            // 删除失败可能留下部分文件，不能提前扣除整批容量；重算失败则保留原有保守计数。
-            try { _storedBytes = CalculateStoredBytes(); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                writer.Info.WriteFailed = true;
-                failure ??= exception;
-            }
-            if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            RemoveBatch(writer.Info, writer.Directory, writer.Stdout, writer.Stderr);
         }
+    }
+
+    // 调用方持有 _sync；创建回滚和显式丢弃必须使用相同的关闭、活动释放和容量校准规则。
+    private void RemoveBatch(RunLogInfo info, string directory, FileStream? stdout, FileStream? stderr)
+    {
+        Exception? failure = null;
+        foreach (var stream in new[] { stdout, stderr })
+        {
+            try { stream?.Dispose(); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                info.WriteFailed = true;
+                failure ??= exception;
+            }
+        }
+        _active.Remove(info.RunId);
+        try { System.IO.Directory.Delete(directory, true); }
+        catch (DirectoryNotFoundException) { /* 批次已被外部删除，无需重建。 */ }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            info.WriteFailed = true;
+            failure ??= exception;
+        }
+        // 删除失败可能留下部分文件，不能提前扣除整批容量；重算失败则保留原有保守计数。
+        try { _storedBytes = CalculateStoredBytes(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            info.WriteFailed = true;
+            failure ??= exception;
+        }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     public IReadOnlyList<RunLogInfo> GetRuns(Guid projectId, Guid commandId)
