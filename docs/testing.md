@@ -15,6 +15,10 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 本文只写不随时间变化的内容：测试分层、回归覆盖范围、长期已知限制和未执行项。各次检查的通过数量与逐日实施记录已移入[变更记录归档](changelog/README.md)，发布包大小与校验值见[发布 tag](https://github.com/kongerly/TalosDesk/releases)；需要核对某个提交实际通过了多少用例时，请查该提交的 [CI 运行记录](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)。
 
+## 导出硬链接回归
+
+`WorkspaceSecurityTests.HardLinkExportReplacesOnlyAliasAndPreservesProtectedWorkspace` 在独立 NTFS 临时目录创建真实硬链接，验证导出替换别名后原工作区及合成 DPAPI 密文不变、导出只含待填写状态，后续修改导出文件不影响原文件；导出目标上拒绝删除共享的真实句柄还须阻止替换、保留两份原字节且清理临时文件，解除占用后可以再次导出。该回归约束导出继续采用临时文件替换，不能改成原地截断写入；不模拟并发更换目录、网络盘或其他文件系统。
+
 ## 工程规范护栏：警告即错误
 
 仓库根 `.editorconfig` 统一缩进、换行、UTF-8 和命名约定（私有字段 `_camelCase`，其余成员 `PascalCase`），并逐条登记分析器严重级别；`Directory.Build.props` 只声明一次 `TreatWarningsAsErrors` 与 `EnforceCodeStyleInBuild`。`.editorconfig` 在展开阶段最后生效，可以逐条覆盖严重级别，因此例外必须连同理由写在文件内，不做隐式忽略。

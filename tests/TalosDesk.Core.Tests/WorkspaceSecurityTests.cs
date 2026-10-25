@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using TalosDesk.Core.Configuration;
 
 namespace TalosDesk.Core.Tests;
@@ -163,6 +164,60 @@ public sealed class WorkspaceSecurityTests
         Assert.AreEqual("original export", await File.ReadAllTextAsync(path));
         Assert.HasCount(0, Directory.GetFiles(sandbox.Path, "export.json.*.tmp"));
     }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task HardLinkExportReplacesOnlyAliasAndPreservesProtectedWorkspace(bool denyReplacement)
+    {
+        using var sandbox = new TemporaryDirectory();
+        var workspacePath = Path.Combine(sandbox.Path, "本机工作区.json");
+        var aliasPath = Path.Combine(sandbox.Path, "分享 别名.json");
+        const string secret = "synthetic-hardlink-export-secret";
+        var protectedValue = SensitiveValueProtector.Protect(secret);
+        var configuration = CreateWorkspace(sandbox.Path,
+            [new CommandEnvironmentVariable { Name = "API_TOKEN", IsSensitive = true, ValueState = "Protected", ProtectedValue = protectedValue }]);
+        var store = new WorkspaceStore(workspacePath);
+        await store.SaveAsync(configuration);
+        var original = await File.ReadAllBytesAsync(workspacePath);
+        Assert.IsTrue(CreateHardLink(aliasPath, workspacePath, IntPtr.Zero), $"创建合成硬链接失败：{Marshal.GetLastWin32Error()}");
+        CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(aliasPath));
+
+        if (denyReplacement)
+        {
+            using (var locked = new FileStream(aliasPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                Exception? failure = null;
+                try { await store.WriteExportFileAsync(aliasPath, configuration); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { failure = exception; }
+                Assert.IsNotNull(failure, "导出目标上的拒绝删除共享句柄必须阻止替换。");
+            }
+            CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(workspacePath));
+            CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(aliasPath));
+            Assert.IsEmpty(Directory.GetFiles(sandbox.Path, "*.tmp"));
+        }
+
+        await store.WriteExportFileAsync(aliasPath, configuration);
+        CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(workspacePath));
+        var exported = await WorkspaceStore.ReadFileAsync(aliasPath);
+        var exportedVariable = exported.Projects[0].Commands[0].EnvironmentVariables[0];
+        Assert.AreEqual("Required", exportedVariable.ValueState);
+        Assert.IsNull(exportedVariable.ProtectedValue);
+        var exportedText = await File.ReadAllTextAsync(aliasPath);
+        Assert.DoesNotContain(secret, exportedText);
+        Assert.DoesNotContain(protectedValue, exportedText);
+        Assert.AreEqual(protectedValue, configuration.Projects[0].Commands[0].EnvironmentVariables[0].ProtectedValue);
+        Assert.AreEqual(protectedValue, (await store.LoadAsync()).Projects[0].Commands[0].EnvironmentVariables[0].ProtectedValue);
+
+        // 成功替换后别名已与原文件分离；后续改写导出文件也不能丢失本机密文。
+        await File.AppendAllTextAsync(aliasPath, " ");
+        CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(workspacePath));
+        Assert.IsEmpty(Directory.GetFiles(sandbox.Path, "*.tmp"));
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(string newFileName, string existingFileName, IntPtr securityAttributes);
 
     [TestMethod]
     public async Task FailedProtectedSaveKeepsOldCiphertextAndRejectsSensitivePlaintext()
