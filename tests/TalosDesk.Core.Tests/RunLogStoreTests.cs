@@ -208,6 +208,56 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    public void SettingsCleanupFailureReportsCommittedValuesAndKeepsOriginalCause()
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(2 * 1024 * 1024, 30));
+        var history = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now.AddDays(-2));
+        store.Append(history, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic expired output"));
+        store.Complete(history, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var requested = new RunLogSettings(1024 * 1024, 1);
+        using (var locked = new FileStream(Path.Combine(history.Directory, "run.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var failure = Assert.ThrowsExactly<RunLogSettingsCleanupException>(() => store.UpdateSettings(requested));
+            Assert.IsTrue(failure.InnerException is IOException or UnauthorizedAccessException);
+            Assert.AreEqual(requested, store.Settings);
+            Assert.AreEqual(requested, System.Text.Json.JsonSerializer.Deserialize<RunLogSettings>(File.ReadAllText(Path.Combine(store.RootPath, "settings.json"))));
+            Assert.IsFalse(File.Exists(Path.Combine(store.RootPath, "settings.json.tmp")));
+        }
+        store.ClearHistory();
+        var reopened = new RunLogStore(workspace);
+        reopened.Initialize();
+        Assert.AreEqual(requested, reopened.Settings);
+        Assert.IsEmpty(reopened.GetRuns(history.Info.ProjectId, history.Info.CommandId));
+    }
+
+    [TestMethod]
+    public void SettingsWriteFailurePreservesPreviousValuesAndDoesNotReportCommittedCleanupFailure()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var originalSettings = new RunLogSettings(2 * 1024 * 1024, 30);
+        store.UpdateSettings(originalSettings);
+        var settingsPath = Path.Combine(store.RootPath, "settings.json");
+        var original = File.ReadAllBytes(settingsPath);
+        using (var locked = new FileStream(settingsPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Exception? failure = null;
+            try { store.UpdateSettings(new RunLogSettings(1024 * 1024, 1)); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { failure = exception; }
+            Assert.IsNotNull(failure);
+            Assert.IsFalse(failure is RunLogSettingsCleanupException);
+        }
+        Assert.AreEqual(originalSettings, store.Settings);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(settingsPath));
+        Assert.IsFalse(File.Exists(settingsPath + ".tmp"));
+    }
+
+    [TestMethod]
     public void ChangingLocationMovesHistoryAndSettingsAcrossRestartAndCanRestoreDefault()
     {
         using var sandbox = new Sandbox();
@@ -613,7 +663,8 @@ public sealed class RunLogStoreTests
                 "retention" => () => store.UpdateSettings(new RunLogSettings(1024 * 1024, 1)),
                 _ => () => store.Begin(projectId, commandId, DateTimeOffset.Now.AddDays(40))
             };
-            Assert.ThrowsExactly<IOException>(cleanupAction);
+            if (cleanup == "retention") Assert.ThrowsExactly<RunLogSettingsCleanupException>(cleanupAction);
+            else Assert.ThrowsExactly<IOException>(cleanupAction);
             Assert.IsFalse(Directory.Exists(history[0]), "清理失败前应已经删除了一个历史批次。");
             Assert.IsTrue(File.Exists(Path.Combine(history[1], "run.json")), "文件锁必须保留失败的清理对象。");
             var output = new string('c', 800_000);

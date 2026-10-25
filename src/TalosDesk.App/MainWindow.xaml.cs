@@ -2545,18 +2545,32 @@ public partial class MainWindow : Window
             AppMessageDialog.Show(this, "日志容量请输入 1–102400 MB，保留时间请输入 1–3650 天。", "日志设置无效", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
+        var settingsSaved = false;
+        var postSaveStep = "日志初始化";
         try
         {
             _runLogStore.UpdateSettings(new RunLogSettings(mb * 1024 * 1024, days));
+            settingsSaved = true;
             if (!_logStoreAvailable) _runLogStore.Initialize();
             _logStoreAvailable = true;
             _logInitError = null;
+            postSaveStep = "历史列表刷新";
             RefreshRunHistory(selectCurrent: false);
             LogStatusText.Text = "日志设置已保存。";
         }
+        catch (RunLogSettingsCleanupException exception)
+        {
+            LogStatusText.Text = exception.Message;
+            AppMessageDialog.Show(this, $"{exception.Message}\n\n请稍后重试保存或清理历史日志。", "日志设置已保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentOutOfRangeException or InvalidDataException or System.Text.Json.JsonException)
         {
-            AppMessageDialog.Show(this, $"无法保存日志设置。\n\n{exception.Message}", "日志设置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (settingsSaved)
+            {
+                LogStatusText.Text = $"日志设置已保存，但{postSaveStep}未完成。";
+                AppMessageDialog.Show(this, $"{LogStatusText.Text}\n\n{exception.Message}", "日志设置已保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            else AppMessageDialog.Show(this, $"无法保存日志设置。\n\n{exception.Message}", "日志设置未保存", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
