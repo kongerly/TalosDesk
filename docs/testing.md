@@ -15,6 +15,10 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 本文只写不随时间变化的内容：测试分层、回归覆盖范围、长期已知限制和未执行项。各次检查的通过数量与逐日实施记录已移入[变更记录归档](changelog/README.md)，发布包大小与校验值见[发布 tag](https://github.com/kongerly/TalosDesk/releases)；需要核对某个提交实际通过了多少用例时，请查该提交的 [CI 运行记录](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)。
 
+## 日志丢弃失败回归
+
+`RunLogStoreTests` 对 stdout/stderr 分别及同时注入真实文件流关闭故障，验证丢弃预建批次仍尝试关闭双通道、释放活动保护、删除批次并允许迁移，最后报告首个 IO/权限错误并标记写入失败，重复丢弃不再次关闭。另用真实只读共享句柄阻止删除，验证剩余字节仍参与容量限制、解除占用后可清理迁移；已消失的批次不重建且重新校准容量。关闭故障注入不能证明未刷新的输出可恢复，持续文件系统错误仍会使清理或容量重算失败。
+
 ## 导出硬链接回归
 
 `WorkspaceSecurityTests.HardLinkExportReplacesOnlyAliasAndPreservesProtectedWorkspace` 在独立 NTFS 临时目录创建真实硬链接，验证导出替换别名后原工作区及合成 DPAPI 密文不变、导出只含待填写状态，后续修改导出文件不影响原文件；导出目标上拒绝删除共享的真实句柄还须阻止替换、保留两份原字节且清理临时文件，解除占用后可以再次导出。该回归约束导出继续采用临时文件替换，不能改成原地截断写入；不模拟并发更换目录、网络盘或其他文件系统。
