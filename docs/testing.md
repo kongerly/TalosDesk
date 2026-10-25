@@ -15,6 +15,10 @@ $workspace = Join-Path $testRoot "workspace.json"
 
 本文只写不随时间变化的内容：测试分层、回归覆盖范围、长期已知限制和未执行项。各次检查的通过数量与逐日实施记录已移入[变更记录归档](changelog/README.md)，发布包大小与校验值见[发布 tag](https://github.com/kongerly/TalosDesk/releases)；需要核对某个提交实际通过了多少用例时，请查该提交的 [CI 运行记录](https://github.com/kongerly/TalosDesk/actions/workflows/windows-ci.yml)。
 
+## 日志设置失败阶段回归
+
+`RunLogStoreTests` 分别锁住 `settings.json` 和过期批次的 `run.json`，核对写入失败保留旧设置，提交后清理失败保留新值并报告明确阶段及原始内部异常。WPF 的 `LogSettingsFailureMessagesFollowPersistedState` 另覆盖损坏位置记录导致的初始化失败，检查提示标题、正文、状态、实际磁盘设置、解除占用/修复后重试及命令未被自动运行。仅做后台验证时编译桌面回归，执行交给远端 CI；设置保存成功不代表历史清理或初始化也成功。
+
 ## 日志迁移目录别名回归
 
 `RunLogStoreTests` 使用独立临时目录中的真实 Windows 目录联接，覆盖目标位于源内、源位于目标内，以及实际相同目录的两种路径拼写；拒绝时不得产生暂存目录或改写位置记录，同目录时保留原历史且重开可读。指向源内部的用例额外持有源文件的拒读句柄：若包含检查回归，复制会在递归目录前失败，避免测试本身反复复制。该夹具不修改全局链接权限、不运行界面，联接在临时目录递归清理前单独删除；不代表网络盘或并发链接替换已经验收。

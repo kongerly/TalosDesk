@@ -56,6 +56,77 @@ internal static class MessageDialogRegression
         });
     }
 
+    internal static void LogSettingsFailureMessagesFollowPersistedState(bool cleanupFailure, bool initializationFailure)
+    {
+        Stage = initializationFailure ? "设置保存后初始化失败" : cleanupFailure ? "设置保存后清理受阻" : "设置文件替换受阻";
+        var root = Path.Combine(Path.GetTempPath(), "TalosDesk.SettingsDialogTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var store = new WorkspaceStore(Path.Combine(root, "workspace.json"));
+        var command = new CommandDefinition { Name = "合成日志设置任务", WorkingDirectory = root,
+            Command = "Set-Content -LiteralPath './unexpected-settings-run.txt' -Value 'synthetic'" };
+        store.SaveAsync(new() { Projects = [new() { Name = "隔离日志设置", Directory = root, Commands = [command] }] }).GetAwaiter().GetResult();
+        if (initializationFailure) File.WriteAllText(store.FilePath + ".log-location.json", "{");
+        var window = new MainWindow(store, "隔离日志设置验收", null, null, null, trayIcon: new TestTrayIcon());
+        DesktopTestHost.RunWithCleanup(() =>
+        {
+            window.Show();
+            Wait(() => Find<Button>(window, "ManualUpdateCheckButton").IsEnabled);
+            Click(window, "OutputPageButton");
+            Find<Expander>(window, "LogSettingsExpander").IsExpanded = true;
+            var logs = (RunLogStore)typeof(MainWindow).GetField("_runLogStore", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+            var previous = new RunLogSettings(2 * 1024 * 1024, 30);
+            logs.UpdateSettings(previous);
+            var settingsPath = Path.Combine(logs.RootPath, "settings.json");
+            var original = File.ReadAllBytes(settingsPath);
+            var lockedPath = initializationFailure ? store.FilePath + ".log-location.json" : settingsPath;
+            if (cleanupFailure)
+            {
+                var history = logs.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now.AddDays(-2));
+                logs.Append(history, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic expired output"));
+                logs.Complete(history, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+                lockedPath = Path.Combine(logs.RootPath, history.Info.ProjectId.ToString("N"), history.Info.CommandId.ToString("N"), history.Info.RunId.ToString("N"), "run.json");
+            }
+            Find<TextBox>(window, "LogLimitMbTextBox").Text = "1";
+            Find<TextBox>(window, "LogRetentionDaysTextBox").Text = "1";
+            var requested = new RunLogSettings(1024 * 1024, 1);
+            using (var locked = new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                Respond(() => { Click(window, "SaveLogSettingsButton"); return true; }, dialog =>
+                {
+                    Assert.AreEqual(cleanupFailure || initializationFailure ? "日志设置已保存" : "日志设置未保存", Find<TextBlock>(dialog, "HeadingText").Text);
+                    StringAssert.Contains(Find<TextBox>(dialog, "MessageBox").Text,
+                        cleanupFailure ? "历史日志清理未完成" : initializationFailure ? "日志初始化未完成" : "无法保存日志设置");
+                    Click(dialog, "PrimaryActionButton");
+                });
+                Assert.AreEqual(cleanupFailure || initializationFailure ? requested : previous, logs.Settings);
+                if (cleanupFailure || initializationFailure)
+                {
+                    Assert.AreEqual(cleanupFailure ? "日志设置已保存，但历史日志清理未完成。" : "日志设置已保存，但日志初始化未完成。",
+                        Find<TextBlock>(window, "LogStatusText").Text);
+                    Assert.AreEqual(requested, System.Text.Json.JsonSerializer.Deserialize<RunLogSettings>(File.ReadAllText(settingsPath)));
+                }
+                else CollectionAssert.AreEqual(original, File.ReadAllBytes(settingsPath));
+                Assert.IsFalse(File.Exists(settingsPath + ".tmp"));
+                Assert.AreEqual(!initializationFailure, (bool)typeof(MainWindow).GetField("_logStoreAvailable", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!);
+            }
+            Stage = "解除占用后再次保存与清理";
+            if (initializationFailure) File.Delete(store.FilePath + ".log-location.json");
+            Respond(() => { Click(window, "SaveLogSettingsButton"); return true; });
+            Assert.AreEqual("日志设置已保存。", Find<TextBlock>(window, "LogStatusText").Text);
+            Assert.IsTrue((bool)typeof(MainWindow).GetField("_logStoreAvailable", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!);
+            var reopened = new RunLogStore(store.FilePath);
+            reopened.Initialize();
+            Assert.AreEqual(requested, reopened.Settings);
+            Assert.IsEmpty(Sessions(window), "日志设置操作不能启动命令。");
+            Assert.IsFalse(File.Exists(Path.Combine(root, "unexpected-settings-run.txt")));
+        }, () =>
+        {
+            window.Close();
+            Pump();
+            Directory.Delete(root, true);
+        });
+    }
+
     private static void CheckResultsAndKeyboard(Window owner)
     {
         Stage = "模态所有者、按钮结果与键盘";

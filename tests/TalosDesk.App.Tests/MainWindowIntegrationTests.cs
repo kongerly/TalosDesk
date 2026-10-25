@@ -28,6 +28,14 @@ public sealed class MainWindowIntegrationTests
         _host.Run(nameof(MessageDialogsPreserveInteractionAndLayout), MessageDialogRegression.Run, () => MessageDialogRegression.Stage);
 
     [TestMethod]
+    [DataRow(false, false)]
+    [DataRow(true, false)]
+    [DataRow(false, true)]
+    public void LogSettingsFailureMessagesFollowPersistedState(bool cleanupFailure, bool initializationFailure) =>
+        _host.Run(nameof(LogSettingsFailureMessagesFollowPersistedState),
+            () => MessageDialogRegression.LogSettingsFailureMessagesFollowPersistedState(cleanupFailure, initializationFailure), () => MessageDialogRegression.Stage);
+
+    [TestMethod]
     public void TrayControllerPreservesWindowAndIconLifecycle() =>
         _host.Run(nameof(TrayControllerPreservesWindowAndIconLifecycle), TrayIconControllerTests.Run, () => TrayIconControllerTests.Stage);
 

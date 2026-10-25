@@ -7,6 +7,10 @@ namespace TalosDesk.Core.Processes;
 
 public sealed record RunLogSettings(long MaxBytes = 500L * 1024 * 1024, int RetentionDays = 30);
 
+/// <summary>设置已提交，后续历史清理失败；原始文件系统错误保留在 InnerException。</summary>
+public sealed class RunLogSettingsCleanupException(Exception innerException)
+    : IOException("日志设置已保存，但历史日志清理未完成。", innerException);
+
 public sealed class RunLogInfo
 {
     public Guid ProjectId { get; set; }
@@ -201,7 +205,9 @@ public sealed class RunLogStore
             System.IO.Directory.CreateDirectory(RootPath);
             WriteJsonAtomically(Path.Combine(RootPath, "settings.json"), settings);
             Settings = settings;
-            Prune(DateTimeOffset.Now);
+            try { Prune(DateTimeOffset.Now); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            { throw new RunLogSettingsCleanupException(exception); }
         }
     }
 
