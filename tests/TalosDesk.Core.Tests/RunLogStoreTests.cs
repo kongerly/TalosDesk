@@ -931,6 +931,46 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    public void FailedBeginRecountsRolledBackBatchBeforeOtherOutputExactlyFitsQuota()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var project = Guid.NewGuid();
+        var command = Guid.NewGuid();
+        var history = store.Begin(project, Guid.NewGuid(), DateTimeOffset.Now.AddMinutes(-1));
+        store.Append(history, new CommandOutput(DateTimeOffset.Now, "stdout", new string('x', 400_000)));
+        store.Complete(history, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        var active = store.Begin(project, command, DateTimeOffset.Now);
+        try
+        {
+            var newlineBytes = Encoding.UTF8.GetByteCount(Environment.NewLine);
+            var initialSpace = checked((int)(store.Settings.MaxBytes - GetBatchBytes(store))) - newlineBytes;
+            store.Append(active, new CommandOutput(DateTimeOffset.Now, "stdout", new string('a', initialSpace)));
+            Assert.AreEqual(store.Settings.MaxBytes, GetBatchBytes(store));
+            using (var locked = new FileStream(Path.Combine(history.Directory, "run.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                // 首次 Prune 无需清理；创建新元数据后才触及锁住的历史，触发实际创建回滚。
+                Assert.ThrowsExactly<IOException>(() => store.Begin(project, command, DateTimeOffset.Now));
+                Assert.HasCount(1, store.GetRuns(project, command), "失败创建不能留下虚假批次或活动保护。");
+                Assert.HasCount(1, Directory.GetDirectories(Path.GetDirectoryName(active.Directory)!));
+                var available = checked((int)(store.Settings.MaxBytes - GetBatchBytes(store))) - newlineBytes;
+                Assert.IsGreaterThan(100_000, available, "已删除的历史输出应腾出真实空间。");
+
+                store.Append(active, new CommandOutput(DateTimeOffset.Now, "stdout", new string('b', available)));
+
+                Assert.IsFalse(active.Info.WriteFailed, "已经回滚并删除的新批次不能继续计入容量，触发对锁定历史的错误清理。");
+                Assert.IsFalse(active.Info.Truncated);
+                Assert.AreEqual(store.Settings.MaxBytes, GetBatchBytes(store));
+                Assert.AreEqual(available, store.ReadTail(active.Info, "stdout", 1).Single().Length);
+            }
+        }
+        finally { store.Complete(active, new CommandRunResult(CommandRunState.Succeeded, 0, false)); }
+        Assert.IsNull(store.ChangeLocation(Path.Combine(sandbox.Path, "relocated")));
+    }
+
+    [TestMethod]
     public void FailedDiscardKeepsRemainingBytesInQuotaAndLeavesBatchCleanable()
     {
         using var sandbox = new Sandbox();
