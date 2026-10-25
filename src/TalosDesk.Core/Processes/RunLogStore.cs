@@ -310,11 +310,32 @@ public sealed class RunLogStore
         {
             if (writer.Closed) return;
             writer.Closed = true;
-            writer.Stdout.Dispose();
-            writer.Stderr.Dispose();
+            Exception? failure = null;
+            foreach (var stream in new[] { writer.Stdout, writer.Stderr })
+            {
+                try { stream.Dispose(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    writer.Info.WriteFailed = true;
+                    failure ??= exception;
+                }
+            }
             _active.Remove(writer.Info.RunId);
-            _storedBytes -= GetDirectoryBytes(writer.Directory);
-            System.IO.Directory.Delete(writer.Directory, true);
+            try { System.IO.Directory.Delete(writer.Directory, true); }
+            catch (DirectoryNotFoundException) { /* 批次已被外部删除，无需重建。 */ }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                writer.Info.WriteFailed = true;
+                failure ??= exception;
+            }
+            // 删除失败可能留下部分文件，不能提前扣除整批容量；重算失败则保留原有保守计数。
+            try { _storedBytes = CalculateStoredBytes(); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                writer.Info.WriteFailed = true;
+                failure ??= exception;
+            }
+            if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
     }
 

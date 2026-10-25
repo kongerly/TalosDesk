@@ -779,6 +779,105 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    [DataRow(true, false, false)]
+    [DataRow(false, true, true)]
+    [DataRow(true, true, false)]
+    public void DiscardCloseFailureStillClosesBothStreamsDeletesBatchAndReleasesMigration(bool failStdout, bool failStderr, bool accessDenied)
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var original = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        original.Stdout.Dispose();
+        original.Stderr.Dispose();
+        var stdout = new FailingCloseStream(Path.Combine(original.Directory, "stdout.log"), failStdout, accessDenied);
+        var stderr = new FailingCloseStream(Path.Combine(original.Directory, "stderr.log"), failStderr, accessDenied);
+        var writer = new RunLogWriter(original.Info, original.Directory, stdout, stderr);
+        try
+        {
+            var failure = accessDenied
+                ? (Exception)Assert.ThrowsExactly<UnauthorizedAccessException>(() => store.Discard(writer))
+                : Assert.ThrowsExactly<IOException>(() => store.Discard(writer));
+            Assert.AreEqual("synthetic-close-failure", failure.Message);
+            Assert.AreSame(failStdout ? stdout.LastCloseError : stderr.LastCloseError, failure, "继续清理后仍须报告首个原始错误。");
+            Assert.AreEqual(1, stdout.CloseAttempts);
+            Assert.AreEqual(1, stderr.CloseAttempts);
+            Assert.IsFalse(stdout.CanWrite);
+            Assert.IsFalse(stderr.CanWrite);
+            Assert.IsTrue(writer.Info.WriteFailed);
+            Assert.IsFalse(Directory.Exists(writer.Directory));
+            Assert.IsEmpty(store.GetRuns(writer.Info.ProjectId, writer.Info.CommandId));
+            Assert.IsNull(store.ChangeLocation(Path.Combine(sandbox.Path, "relocated")));
+            store.Discard(writer);
+            store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+            Assert.AreEqual(1, stdout.CloseAttempts);
+            Assert.AreEqual(1, stderr.CloseAttempts);
+            Assert.AreEqual(0L, GetBatchBytes(store));
+        }
+        finally
+        {
+            stdout.FailOnClose = false;
+            stderr.FailOnClose = false;
+            stdout.Dispose();
+            stderr.Dispose();
+        }
+    }
+
+    [TestMethod]
+    public void FailedDiscardKeepsRemainingBytesInQuotaAndLeavesBatchCleanable()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var discarded = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(discarded, new CommandOutput(DateTimeOffset.Now, "stdout", new string('x', 900_000)));
+        using (var locked = new FileStream(Path.Combine(discarded.Directory, "stdout.log"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.ThrowsExactly<IOException>(() => store.Discard(discarded));
+            Assert.IsFalse(discarded.Stdout.CanWrite);
+            Assert.IsFalse(discarded.Stderr.CanWrite);
+            var next = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+            try
+            {
+                store.Append(next, new CommandOutput(DateTimeOffset.Now, "stdout", new string('y', 500_000)));
+                Assert.IsTrue(next.Info.WriteFailed || next.Info.Truncated, "不能把未能删除的批次字节提前从容量中扣除。");
+                Assert.IsLessThanOrEqualTo(store.Settings.MaxBytes, GetBatchBytes(store));
+                Assert.IsTrue(discarded.Info.WriteFailed);
+            }
+            finally { store.Complete(next, new CommandRunResult(CommandRunState.Succeeded, 0, false)); }
+        }
+        store.ClearHistory();
+        Assert.AreEqual(0L, GetBatchBytes(store));
+        Assert.IsNull(store.ChangeLocation(Path.Combine(sandbox.Path, "relocated")));
+    }
+
+    [TestMethod]
+    public void DiscardMissingBatchRecountsQuotaAndAllowsNextRun()
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(1024 * 1024, 30));
+        var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", new string('x', 900_000)));
+        writer.Stdout.Dispose();
+        writer.Stderr.Dispose();
+        Directory.Delete(writer.Directory, true);
+
+        store.Discard(writer);
+
+        Assert.IsFalse(writer.Info.WriteFailed);
+        var next = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+        store.Append(next, new CommandOutput(DateTimeOffset.Now, "stdout", new string('y', 500_000)));
+        store.Complete(next, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        Assert.IsFalse(next.Info.WriteFailed);
+        Assert.IsFalse(next.Info.Truncated);
+        Assert.AreEqual(500_000, store.ReadTail(next.Info, "stdout").Single().Length);
+        Assert.IsNull(store.ChangeLocation(Path.Combine(sandbox.Path, "relocated")));
+    }
+
+    [TestMethod]
     public void RecreatedMetadataDoesNotDoubleCountMissingBytesWhenOtherOutputExactlyFitsQuota()
     {
         using var sandbox = new Sandbox();
@@ -921,14 +1020,15 @@ public sealed class RunLogStoreTests
     {
         internal bool FailOnClose { get; set; } = failOnClose;
         internal int CloseAttempts { get; private set; }
+        internal Exception? LastCloseError { get; private set; }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing) CloseAttempts++;
             base.Dispose(disposing);
             if (!disposing || !FailOnClose) return;
-            if (accessDenied) throw new UnauthorizedAccessException("synthetic-close-failure");
-            throw new IOException("synthetic-close-failure");
+            LastCloseError = accessDenied ? new UnauthorizedAccessException("synthetic-close-failure") : new IOException("synthetic-close-failure");
+            throw LastCloseError;
         }
     }
 
