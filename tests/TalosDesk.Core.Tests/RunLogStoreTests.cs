@@ -359,6 +359,113 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void ChangingLocationRejectsAliasedDestinationInsideSourceBeforeCopy(bool nestedParent)
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        var source = store.RootPath;
+        var parent = nestedParent ? Directory.CreateDirectory(Path.Combine(source, "nested")).FullName : source;
+        var alias = Path.Combine(sandbox.Path, "alias with spaces");
+        CreateJunction(alias, parent);
+        try
+        {
+            var blocker = Path.Combine(source, "copy-safety-blocker.txt");
+            File.WriteAllText(blocker, "synthetic source must remain unchanged");
+            // 若包含检查回归，拒读句柄会在目录递归前中止复制，避免测试自身重复复制源目录。
+            using (var locked = new FileStream(blocker, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var failure = Assert.ThrowsExactly<IOException>(() => store.ChangeLocation(alias));
+                StringAssert.Contains(failure.Message, "不能互相包含");
+            }
+            Assert.AreEqual(source, store.RootPath);
+            Assert.AreEqual("synthetic source must remain unchanged", File.ReadAllText(blocker));
+            Assert.IsFalse(File.Exists(workspace + ".log-location.json"));
+            Assert.IsEmpty(Directory.GetDirectories(source, "*.moving-*", SearchOption.AllDirectories));
+            Assert.HasCount(nestedParent ? 1 : 0, Directory.GetDirectories(source));
+        }
+        finally { Directory.Delete(alias); }
+    }
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void ChangingLocationToSamePhysicalRootThroughJunctionIsNoOp(bool sourceUsesAlias)
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var parent = Directory.CreateDirectory(Path.Combine(sandbox.Path, "selected")).FullName;
+        var alias = Path.Combine(sandbox.Path, "alias with spaces");
+        CreateJunction(alias, parent);
+        try
+        {
+            var store = new RunLogStore(workspace);
+            store.Initialize();
+            var writer = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now);
+            store.Append(writer, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic preserved history"));
+            store.Complete(writer, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+            store.ChangeLocation(sourceUsesAlias ? alias : parent);
+            var originalRoot = store.RootPath;
+            var location = File.ReadAllBytes(workspace + ".log-location.json");
+
+            Assert.IsNull(store.ChangeLocation(sourceUsesAlias ? parent : alias));
+
+            Assert.AreEqual(originalRoot, store.RootPath);
+            CollectionAssert.AreEqual(location, File.ReadAllBytes(workspace + ".log-location.json"));
+            var reopened = new RunLogStore(workspace);
+            reopened.Initialize();
+            Assert.AreEqual(originalRoot, reopened.RootPath);
+            Assert.HasCount(1, reopened.GetRuns(writer.Info.ProjectId, writer.Info.CommandId));
+            CollectionAssert.AreEqual(new[] { "synthetic preserved history" }, reopened.ReadTail(writer.Info, "stdout").ToArray());
+            Assert.IsEmpty(Directory.GetDirectories(parent, "*.moving-*"));
+        }
+        finally { Directory.Delete(alias); }
+    }
+
+    [TestMethod]
+    public void ChangingLocationRejectsAliasedDestinationContainingSource()
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        store.ChangeLocation(Path.Combine(sandbox.Path, "seed"));
+        var parent = Path.Combine(sandbox.Path, "selected");
+        var ancestor = Path.Combine(parent, Path.GetFileName(store.RootPath));
+        store.ChangeLocation(Path.Combine(ancestor, "nested"));
+        var source = store.RootPath;
+        var location = File.ReadAllBytes(workspace + ".log-location.json");
+        var alias = Path.Combine(sandbox.Path, "alias with spaces");
+        CreateJunction(alias, parent);
+        try
+        {
+            var failure = Assert.ThrowsExactly<IOException>(() => store.ChangeLocation(alias));
+            StringAssert.Contains(failure.Message, "不能互相包含");
+            Assert.AreEqual(source, store.RootPath);
+            CollectionAssert.AreEqual(location, File.ReadAllBytes(workspace + ".log-location.json"));
+            Assert.IsTrue(Directory.Exists(source));
+            Assert.IsEmpty(Directory.GetDirectories(parent, "*.moving-*", SearchOption.AllDirectories));
+        }
+        finally { Directory.Delete(alias); }
+    }
+
+    private static void CreateJunction(string link, string target)
+    {
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        using var process = Process.Start(new ProcessStartInfo(cmd, $"/d /c mklink /J \"{link}\" \"{target}\"")
+        {
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        })!;
+        process.WaitForExit();
+        Assert.AreEqual(0, process.ExitCode, process.StandardError.ReadToEnd());
+    }
+
+    [TestMethod]
     public void TwoWorkspacesUsingOneSelectedFolderKeepSeparateLogs()
     {
         using var sandbox = new Sandbox();
