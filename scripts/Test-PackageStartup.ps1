@@ -36,7 +36,9 @@ try {
     }) }) }
     $configuration | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $workspace -Encoding utf8
     $before = (Get-FileHash -LiteralPath $workspace).Hash
-    $profile = 'Package startup ' + [guid]::NewGuid().ToString('N')
+    # 启动参数最多允许 40 字符；保留完整随机标识并使用短前缀。
+    $profile = 'CI ' + [guid]::NewGuid().ToString('N')
+    $report.ExpectedWindowTitle = "TalosDesk · $profile"
     $start = [Diagnostics.ProcessStartInfo]::new((Join-Path $package 'TalosDesk.App.exe'))
     $start.UseShellExecute = $false
     $start.WorkingDirectory = $root
@@ -52,10 +54,12 @@ try {
     do {
         if ($process.HasExited) { throw "Packaged EXE exited before its window appeared: $($process.ExitCode)" }
         $process.Refresh()
-        if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.MainWindowTitle -eq "TalosDesk · $profile") { break }
+        $report.ObservedWindowHandle = $process.MainWindowHandle.ToInt64()
+        $report.ObservedWindowTitle = $process.MainWindowTitle
+        if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.MainWindowTitle -eq $report.ExpectedWindowTitle) { break }
         Start-Sleep -Milliseconds 100
     } while ($clock.Elapsed -lt [TimeSpan]::FromSeconds(30))
-    if ($process.MainWindowHandle -eq [IntPtr]::Zero -or $process.MainWindowTitle -ne "TalosDesk · $profile") { throw 'Packaged window was not observed within 30 seconds.' }
+    if ($process.MainWindowHandle -eq [IntPtr]::Zero -or $process.MainWindowTitle -ne $report.ExpectedWindowTitle) { throw 'Packaged window was not observed within 30 seconds.' }
     $report.WindowObserved = $true
     $report.SdkPathExcluded = $true
     # 仅观察空闲启动，不把此等待视作已验收命令执行或全部界面功能。
@@ -73,6 +77,9 @@ try {
     $report.NoCommandRunObserved = $true
     $report.WindowStateSaved = $true
     $report.Status = 'Passed'
+} catch {
+    $report.Failure = $_.Exception.Message
+    throw
 } finally {
     if ($process) {
         if (-not $process.HasExited) {
