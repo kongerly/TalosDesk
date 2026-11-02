@@ -76,6 +76,14 @@ jobs:
           if ($archives.Count -ne 1) { throw 'Expected exactly one final package.' }
           .\scripts\Test-PackageStartup.ps1 -ArchivePath $archives[0].FullName -EvidenceDirectory artifacts/package-commands -AllowDesktop -ExerciseCommands | Format-List
 
+      - name: Verify packaged group execution and cleanup
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem -LiteralPath artifacts -Filter 'TalosDesk-v*-win-x64.zip' -File)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one final package.' }
+          .\scripts\Test-PackageStartup.ps1 -ArchivePath $archives[0].FullName -EvidenceDirectory artifacts/package-groups -AllowDesktop -ExerciseGroups | Format-List
+
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@v7
@@ -94,4 +102,5 @@ jobs:
             artifacts/package-inspection-tests.log
             artifacts/package-startup/*.json
             artifacts/package-commands/*.json
+            artifacts/package-groups/*.json
           if-no-files-found: ignore

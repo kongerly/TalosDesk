@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][string]$RootDirectory,
     [Parameter(Mandatory)][object[]]$Commands,
     [Parameter(Mandatory)][string]$PowerShellPath,
+    [object[]]$Groups = @(),
     [switch]$AllowDesktop
 )
 
@@ -36,15 +37,116 @@ function Invoke-PackageButton([string]$Id) {
     $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
-function Read-PackageRun([guid]$CommandId) {
+function Read-PackageRun([guid]$CommandId, [switch]$IncludeRunning) {
     foreach ($file in Get-ChildItem -LiteralPath $RootDirectory -Filter run.json -File -Recurse) {
         # 元数据以原子替换写入；读取时仍可能恰好与替换竞争，下一轮重新检查。
         try { $info = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json }
         catch [IO.IOException] { continue }
-        if ($info.CommandId -eq $CommandId.ToString() -and $info.EndedAt) {
+        if ($info.CommandId -eq $CommandId.ToString() -and ($IncludeRunning -or $info.EndedAt)) {
             return @{ Info=$info; Directory=$file.DirectoryName }
         }
     }
+}
+
+function Find-PackageGroupItem([string]$Name) {
+    $list = Find-PackageControl 'GroupList'
+    if (-not $list) { return }
+    foreach ($item in $list.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
+        $text = $item.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Name))
+        if ($text) { return $item }
+    }
+}
+
+function Get-PackageGroupRunButton($Item) {
+    return $Item.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, '运行分组'),
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))
+}
+
+function Wait-PackageGroupResult([string]$Name, [string]$Status) {
+    Invoke-PackageButton 'GroupsPageButton'
+    Wait-ForPackage {
+        $item=Find-PackageGroupItem $Name
+        if ($item) {
+            $button=Get-PackageGroupRunButton $item
+            $text=$item.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Status))
+            $button -and $button.Current.IsEnabled -and $text
+        }
+    } "$Name final group status" | Out-Null
+}
+
+function Assert-PackageGroupRun([string]$Name, [string]$State, [int]$ExitCode) {
+    $command=@($Commands | Where-Object Name -eq $Name)
+    if ($command.Count -ne 1) { throw 'Expected one synthetic group command.' }
+    $run=Wait-ForPackage { Read-PackageRun $command[0].Id } "$Name completed group log"
+    if ($run.Info.State -ne $State -or $run.Info.ExitCode -ne $ExitCode -or $run.Info.WriteFailed -or $run.Info.Truncated) { throw "Unexpected group command result: $Name." }
+    return $run
+}
+
+if ($Groups.Count) {
+    $checks=@()
+    foreach ($group in $Groups) {
+        Invoke-PackageButton 'GroupsPageButton'
+        $item=Wait-ForPackage { Find-PackageGroupItem $group.Name } "$($group.Name) list item"
+        $scrollItem=$null
+        if ($item.TryGetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern,[ref]$scrollItem)) { $scrollItem.ScrollIntoView() }
+        $button=Wait-ForPackage { $candidate=Get-PackageGroupRunButton (Find-PackageGroupItem $group.Name); if ($candidate.Current.IsEnabled -and -not $candidate.Current.IsOffscreen) { $candidate } } "$($group.Name) run button"
+        $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        switch ($group.Name) {
+            'Package sequential success' {
+                $first=Assert-PackageGroupRun 'Sequence first' 'Succeeded' 0
+                $second=Assert-PackageGroupRun 'Sequence second' 'Succeeded' 0
+                Wait-PackageGroupResult $group.Name '已完成 · 2 条任务成功'
+                if ((Get-Content -LiteralPath (Join-Path $RootDirectory 'sequence.txt') -Raw).Trim() -ne 'second') { throw 'Sequential group ran out of order.' }
+                $checks += [ordered]@{ Name=$group.Name; State='Succeeded'; CompletedCount=2; OrderVerified=$true }
+            }
+            'Package sequential failure' {
+                $null=Assert-PackageGroupRun 'Sequence failure' 'Failed' 9
+                Wait-PackageGroupResult $group.Name '已终止 · Sequence failure 执行失败'
+                $skipped=@($Commands | Where-Object Name -eq 'Sequence skipped')[0]
+                if ((Read-PackageRun $skipped.Id -IncludeRunning) -or (Test-Path -LiteralPath (Join-Path $RootDirectory 'unexpected-tail.txt'))) { throw 'Sequential group ran a command after failure.' }
+                $checks += [ordered]@{ Name=$group.Name; State='Failed'; ExitCode=9; FollowingCommandSkipped=$true }
+            }
+            'Package parallel stop' {
+                $services=@()
+                try {
+                    foreach ($suffix in @('first','second')) {
+                        $command=@($Commands | Where-Object Name -eq ('Parallel '+$suffix))[0]
+                        Wait-ForPackage {
+                            $run=Read-PackageRun $command.Id -IncludeRunning
+                            if ($run) {
+                                $stdout=Get-Content -LiteralPath (Join-Path $run.Directory 'stdout.log') -Raw
+                                $stdout -and $stdout.Contains(('PARALLEL_'+$suffix.ToUpperInvariant()+'_READY'), [StringComparison]::Ordinal)
+                            }
+                        } "parallel $suffix ready" | Out-Null
+                        $serviceId=[int](Get-Content -LiteralPath (Join-Path $RootDirectory ('parallel-'+$suffix+'.pid')) -Raw)
+                        $service=[Diagnostics.Process]::GetProcessById($serviceId)
+                        $services+=$service
+                        $null=$service.Handle
+                        if ($service.StartTime -lt $ApplicationProcess.StartTime -or $service.MainModule.FileName -ne $PowerShellPath) { throw 'Parallel service identity did not match.' }
+                    }
+                    # 同时组默认选择首个启动成员；从该成员的输出页停止，观察组内收尾。
+                    Invoke-PackageButton 'OutputStopButton'
+                    foreach ($service in $services) { if (-not $service.WaitForExit(15000)) { throw 'A parallel group service remained alive.' } }
+                    foreach ($name in @('Parallel first','Parallel second')) {
+                        $command=@($Commands | Where-Object Name -eq $name)[0]
+                        $run=Wait-ForPackage { Read-PackageRun $command.Id } "$name stopped log"
+                        if ($run.Info.State -ne 'Stopped' -or $run.Info.WriteFailed -or $run.Info.Truncated) { throw 'Parallel group stop did not complete.' }
+                    }
+                    Wait-PackageGroupResult $group.Name '已取消 · Parallel first 已停止'
+                    $checks += [ordered]@{ Name=$group.Name; State='Stopped'; ProcessExitCount=2; GroupCleanupVerified=$true }
+                } finally {
+                    foreach ($service in $services) { $service.Dispose() }
+                }
+            }
+            default { throw 'Unexpected synthetic group.' }
+        }
+    }
+    $checks
+    return
 }
 
 $checks = @()
