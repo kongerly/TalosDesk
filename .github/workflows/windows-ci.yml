@@ -60,6 +60,14 @@ jobs:
           .\scripts\Test-Package.ps1 -ArchivePath $archives[0].FullName -EvidenceDirectory artifacts/package-evidence | Format-List
           .\tests\PackageInspection.Tests.ps1 -ArchivePath $archives[0].FullName | Tee-Object -FilePath artifacts/package-inspection-tests.log
 
+      - name: Verify packaged EXE startup and idle exit
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem -LiteralPath artifacts -Filter 'TalosDesk-v*-win-x64.zip' -File)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one final package.' }
+          .\scripts\Test-PackageStartup.ps1 -ArchivePath $archives[0].FullName -EvidenceDirectory artifacts/package-startup -AllowDesktop | Format-List
+
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@v7
@@ -76,4 +84,5 @@ jobs:
           path: |
             artifacts/package-evidence/*.json
             artifacts/package-inspection-tests.log
+            artifacts/package-startup/*.json
           if-no-files-found: ignore
