@@ -127,6 +127,66 @@ internal static class MessageDialogRegression
         });
     }
 
+    internal static void LogLocationFailureMessagesFollowCommittedState(bool initializationFailure)
+    {
+        Stage = initializationFailure ? "日志位置提交后初始化失败" : "日志迁移目标已存在";
+        var root = Path.Combine(Path.GetTempPath(), "TalosDesk.LocationDialogTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var store = new WorkspaceStore(Path.Combine(root, "workspace.json"));
+        store.SaveAsync(new()).GetAwaiter().GetResult();
+        var defaultRoot = store.FilePath + ".logs";
+        if (initializationFailure)
+        {
+            Directory.CreateDirectory(defaultRoot);
+            File.WriteAllText(Path.Combine(defaultRoot, "settings.json"), "{");
+        }
+        var window = new MainWindow(store, "隔离日志位置验收", null, null, null, trayIcon: new TestTrayIcon());
+        DesktopTestHost.RunWithCleanup(() =>
+        {
+            window.Show();
+            Wait(() => Find<Button>(window, "ManualUpdateCheckButton").IsEnabled);
+            var logs = (RunLogStore)typeof(MainWindow).GetField("_runLogStore", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+            var parent = Path.Combine(root, "selected");
+            string? occupied = null;
+            if (!initializationFailure)
+            {
+                logs.ChangeLocation(parent);
+                occupied = logs.RootPath;
+                logs.ChangeLocation(null);
+                Directory.CreateDirectory(occupied);
+                File.WriteAllText(Path.Combine(occupied, "keep.txt"), "synthetic unrelated target");
+            }
+            Respond(() => { Invoke(window, "ApplyLogLocation", parent); return true; }, dialog =>
+            {
+                Assert.AreEqual(initializationFailure ? "日志位置已更新" : "日志位置未更改", Find<TextBlock>(dialog, "HeadingText").Text);
+                StringAssert.Contains(Find<TextBox>(dialog, "MessageBox").Text, initializationFailure ? "日志初始化未完成" : "无法更改日志位置");
+                Click(dialog, "PrimaryActionButton");
+            });
+            Assert.AreEqual(initializationFailure, File.Exists(store.FilePath + ".log-location.json"));
+            Assert.AreEqual(!initializationFailure, (bool)typeof(MainWindow).GetField("_logStoreAvailable", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!);
+            StringAssert.Contains(Find<TextBlock>(window, "LogPathText").Text, logs.RootPath);
+            if (initializationFailure)
+            {
+                Assert.AreNotEqual(defaultRoot, logs.RootPath);
+                Assert.IsFalse(Directory.Exists(defaultRoot));
+                Assert.AreEqual("日志位置已更新，但日志初始化未完成。", Find<TextBlock>(window, "LogStatusText").Text);
+                File.Delete(Path.Combine(logs.RootPath, "settings.json"));
+            }
+            else
+            {
+                Assert.AreEqual(defaultRoot, logs.RootPath);
+                Assert.AreEqual("synthetic unrelated target", File.ReadAllText(Path.Combine(occupied!, "keep.txt")));
+                parent = Path.Combine(root, "retry");
+            }
+            Respond(() => { Invoke(window, "ApplyLogLocation", parent); return true; });
+            Assert.IsTrue((bool)typeof(MainWindow).GetField("_logStoreAvailable", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!);
+            var reopened = new RunLogStore(store.FilePath);
+            reopened.Initialize();
+            Assert.AreEqual(logs.RootPath, reopened.RootPath);
+            Assert.IsEmpty(Sessions(window));
+        }, () => { window.Close(); Pump(); Directory.Delete(root, true); });
+    }
+
     private static void CheckResultsAndKeyboard(Window owner)
     {
         Stage = "模态所有者、按钮结果与键盘";
