@@ -31,16 +31,19 @@ function Invoke-ImportDialogButton($Window, [string]$Name) {
 function Open-ImportPreview([string]$Path) {
     Invoke-PackageButton 'ImportButton'
     $picker=Wait-ForPackage { Find-OwnedImportWindow '导入 TalosDesk 工作区' } 'owned import file picker'
-    $fileName=$picker.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'1148'))
-    if (-not $fileName) { throw 'Native import filename control 1148 was not found.' }
-    $value=$null
-    if (-not $fileName.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$value)) {
-        $fileName=$fileName.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Edit))
-        if (-not $fileName) { throw 'Native import filename editor was not found.' }
-        $value=$fileName.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-    }
+    $value=Wait-ForPackage {
+        $fields=$picker.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.OrCondition]::new(
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'1148'),
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'File name:')))
+        foreach ($field in $fields) {
+            $candidates=@($field)+@($field.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))
+            foreach ($candidate in $candidates) {
+                $pattern=$null
+                if ($candidate.Current.IsEnabled -and $candidate.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$pattern) -and -not $pattern.Current.IsReadOnly) { return $pattern }
+            }
+        }
+    } 'editable native import filename'
     $value.SetValue($Path)
     if ($value.Current.Value -ne $Path) { throw 'Native import filename did not match the isolated source.' }
     $open=$picker.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
@@ -116,7 +119,16 @@ try {
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Window))
     $windows=[System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)
     $summary=@($windows | ForEach-Object { "$($_.Current.ClassName): $($_.Current.Name)" }) -join '; '
-    throw [InvalidOperationException]::new(($_.Exception.Message + '; Owned windows: ' + $summary),$_.Exception)
+    $picker=Find-OwnedImportWindow '导入 TalosDesk 工作区'
+    $editSummary=''
+    if ($picker) {
+        $fields=$picker.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.OrCondition]::new(
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Edit),
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::ComboBox)))
+        $editSummary=@($fields | ForEach-Object { "$($_.Current.AutomationId)/$($_.Current.ClassName)/$($_.Current.ControlType.ProgrammaticName): $(@($_.GetSupportedPatterns().ProgrammaticName) -join ',')" }) -join '; '
+    }
+    throw [InvalidOperationException]::new(($_.Exception.Message + '; Owned windows: ' + $summary + '; Edit controls: ' + $editSummary),$_.Exception)
 } finally {
     $listener.Stop()
 }
