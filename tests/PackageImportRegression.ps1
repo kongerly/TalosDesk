@@ -10,6 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $AllowDesktop) { throw 'Package import checks require an available test desktop and -AllowDesktop.' }
 . (Join-Path $PSScriptRoot 'PackageUiAutomation.ps1') -ApplicationProcess $ApplicationProcess -AllowDesktop
+Add-Type -Path (Join-Path $PSScriptRoot 'PackageImportNativeControls.cs')
 
 function Find-OwnedImportWindow([string]$Title) {
     $condition=[System.Windows.Automation.AndCondition]::new(
@@ -31,27 +32,10 @@ function Invoke-ImportDialogButton($Window, [string]$Name) {
 function Open-ImportPreview([string]$Path) {
     Invoke-PackageButton 'ImportButton'
     $picker=Wait-ForPackage { Find-OwnedImportWindow '导入 TalosDesk 工作区' } 'owned import file picker'
-    $value=Wait-ForPackage {
-        $fields=$picker.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-            [System.Windows.Automation.OrCondition]::new(
-                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'1148'),
-                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,'File name:')))
-        foreach ($field in $fields) {
-            $candidates=@($field)+@($field.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))
-            foreach ($candidate in $candidates) {
-                $pattern=$null
-                if ($candidate.Current.IsEnabled -and $candidate.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$pattern) -and -not $pattern.Current.IsReadOnly) { return $pattern }
-            }
-        }
-    } 'editable native import filename'
-    $value.SetValue($Path)
-    if ($value.Current.Value -ne $Path) { throw 'Native import filename did not match the isolated source.' }
-    $open=$picker.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
-        [System.Windows.Automation.AndCondition]::new(
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'1'),
-            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button)))
-    if (-not $open) { throw 'Native import open button was not found.' }
-    $open.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $dialog=[IntPtr]$picker.Current.NativeWindowHandle
+    [PackageImportNativeControls]::SetFileName($dialog,$ApplicationProcess.Id,$Path)
+    Wait-ForPackage { [PackageImportNativeControls]::CanOpen($dialog,$ApplicationProcess.Id) } 'enabled native import open button' | Out-Null
+    [PackageImportNativeControls]::Open($dialog,$ApplicationProcess.Id)
     return Wait-ForPackage { Find-OwnedImportWindow '确认导入工作区' } 'import preview window'
 }
 
@@ -111,7 +95,7 @@ try {
         $incoming[0].Commands[0].Command -ne $command.Command -or $incoming[0].Commands[0].TcpProbe.Port -ne $listener.LocalEndpoint.Port -or
         $incoming[0].Groups.Count -ne 1 -or $incoming[0].Groups[0].CommandIds.Count -ne 1 -or $incoming[0].Groups[0].CommandIds[0] -ne $command.Id.ToString()) { throw 'Saved import did not match the previewed project, command and group.' }
     if ((Get-FileHash -LiteralPath $source).Hash -ne $sourceHash) { throw 'Import modified its source file.' }
-    [ordered]@{NativeFilePickerUsed=$true; PreviewObserved=$true; PreviewCancellationPreservedWorkspace=$true; ConfirmationSavedExpectedWorkspace=$true;
+    [ordered]@{NativeFilePickerUsed=$true; NativeFilenameReadbackVerified=$true; PreviewObserved=$true; PreviewCancellationPreservedWorkspace=$true; ConfirmationSavedExpectedWorkspace=$true;
         OriginalProjectPreserved=$true; ImportedSourceUnchanged=$true; NoAutomaticCommandRunObserved=$true; NoProbeConnectionObserved=$true; ProjectCount=$saved.Projects.Count; SchemaVersion=$saved.SchemaVersion}
 } catch {
     $condition=[System.Windows.Automation.AndCondition]::new(
