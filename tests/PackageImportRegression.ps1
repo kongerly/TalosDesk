@@ -15,7 +15,8 @@ function Find-OwnedImportWindow([string]$Title) {
     $condition=[System.Windows.Automation.AndCondition]::new(
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty,$ApplicationProcess.Id),
         [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,$Title))
-    return [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children,$condition)
+    # 原生/模态窗口可能挂在主窗口的自动化子树中，而非桌面直系子项。
+    return [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
 }
 
 function Invoke-ImportDialogButton($Window, [string]$Name) {
@@ -109,6 +110,13 @@ try {
     if ((Get-FileHash -LiteralPath $source).Hash -ne $sourceHash) { throw 'Import modified its source file.' }
     [ordered]@{NativeFilePickerUsed=$true; PreviewObserved=$true; PreviewCancellationPreservedWorkspace=$true; ConfirmationSavedExpectedWorkspace=$true;
         OriginalProjectPreserved=$true; ImportedSourceUnchanged=$true; NoAutomaticCommandRunObserved=$true; NoProbeConnectionObserved=$true; ProjectCount=$saved.Projects.Count; SchemaVersion=$saved.SchemaVersion}
+} catch {
+    $condition=[System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty,$ApplicationProcess.Id),
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Window))
+    $windows=[System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)
+    $summary=@($windows | ForEach-Object { "$($_.Current.ClassName): $($_.Current.Name)" }) -join '; '
+    throw [InvalidOperationException]::new(($_.Exception.Message + '; Owned windows: ' + $summary),$_.Exception)
 } finally {
     $listener.Stop()
 }
