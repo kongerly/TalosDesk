@@ -80,7 +80,8 @@ try {
     if ($process.HasExited) { throw 'Packaged EXE exited during idle observation.' }
     if (Test-Path -LiteralPath $marker) { throw 'A saved command ran during startup.' }
     if (@(Get-ChildItem -LiteralPath $root -Filter run.json -File -Recurse).Count) { throw 'Startup created a command run.' }
-    $report.NoCommandRunObserved = $true
+    $report.NoStartupCommandRunObserved = $true
+    if (-not $ExerciseCommands) { $report.NoCommandRunObserved = $true }
     if ($ExerciseCommands) {
         $report.CommandChecks = & (Join-Path $PSScriptRoot '../tests/PackageCommandRegression.ps1') -ApplicationProcess $process -RootDirectory $root -Commands $configuration.Projects[0].Commands -PowerShellPath $pwshPath -AllowDesktop
     }
@@ -91,10 +92,11 @@ try {
     if (-not (Test-Path -LiteralPath ($workspace + '.window-settings.json'))) { throw 'Normal window-state persistence was not observed.' }
     if ((Get-FileHash -LiteralPath $workspace).Hash -ne $before) { throw 'Startup or idle exit rewrote the workspace.' }
     if (Test-Path -LiteralPath $marker) { throw 'The unselected command ran.' }
+    $report.UnselectedCommandRemainedIdle = $true
     $expectedRuns = if ($ExerciseCommands) { 3 } else { 0 }
-    if (@(Get-ChildItem -LiteralPath $root -Filter run.json -File -Recurse).Count -ne $expectedRuns) { throw 'Unexpected command run count.' }
+    $report.CommandRunCount = @(Get-ChildItem -LiteralPath $root -Filter run.json -File -Recurse).Count
+    if ($report.CommandRunCount -ne $expectedRuns) { throw 'Unexpected command run count.' }
     $report.WorkspaceUnchanged = $true
-    $report.NoCommandRunObserved = $true
     $report.WindowStateSaved = $true
     $report.Status = 'Passed'
 } catch {
