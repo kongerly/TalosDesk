@@ -36,6 +36,13 @@ public sealed class MainWindowIntegrationTests
             () => MessageDialogRegression.LogSettingsFailureMessagesFollowPersistedState(cleanupFailure, initializationFailure), () => MessageDialogRegression.Stage);
 
     [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public void LogLocationFailureMessagesFollowCommittedState(bool initializationFailure) =>
+        _host.Run(nameof(LogLocationFailureMessagesFollowCommittedState),
+            () => MessageDialogRegression.LogLocationFailureMessagesFollowCommittedState(initializationFailure), () => MessageDialogRegression.Stage);
+
+    [TestMethod]
     public void TrayControllerPreservesWindowAndIconLifecycle() =>
         _host.Run(nameof(TrayControllerPreservesWindowAndIconLifecycle), TrayIconControllerTests.Run, () => TrayIconControllerTests.Stage);
 

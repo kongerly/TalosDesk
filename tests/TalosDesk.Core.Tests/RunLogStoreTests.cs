@@ -343,6 +343,29 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    public void CommittedLocationSurvivesSubsequentInitializationFailure()
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        var original = store.RootPath;
+        File.WriteAllText(Path.Combine(original, "settings.json"), "{");
+        store.ChangeLocation(Path.Combine(sandbox.Path, "selected"));
+        var committed = store.RootPath;
+        var location = File.ReadAllBytes(workspace + ".log-location.json");
+        Assert.ThrowsExactly<System.Text.Json.JsonException>(store.Initialize);
+        Assert.AreEqual(committed, store.RootPath);
+        Assert.IsFalse(Directory.Exists(original));
+        CollectionAssert.AreEqual(location, File.ReadAllBytes(workspace + ".log-location.json"));
+        Assert.AreEqual("{", File.ReadAllText(Path.Combine(committed, "settings.json")));
+        File.Delete(Path.Combine(committed, "settings.json"));
+        var reopened = new RunLogStore(workspace);
+        reopened.Initialize();
+        Assert.AreEqual(committed, reopened.RootPath);
+    }
+
+    [TestMethod]
     [DataRow(5)]
     [DataRow(32)]
     public void ChangingLocationRetriesTransientRenameWithoutRecopying(int error)

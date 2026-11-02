@@ -2749,13 +2749,18 @@ public partial class MainWindow : Window
 
     private void ApplyLogLocation(string? parentDirectory)
     {
+        var locationApplied = false;
+        var postChangeStep = "日志初始化";
+        string? oldFolder = null;
         try
         {
-            var oldFolder = _runLogStore.ChangeLocation(parentDirectory);
+            oldFolder = _runLogStore.ChangeLocation(parentDirectory);
+            locationApplied = true;
             UpdateLogPathDisplay();
             if (!_logStoreAvailable) _runLogStore.Initialize();
             _logStoreAvailable = true;
             _logInitError = null;
+            postChangeStep = "历史列表刷新";
             RefreshRunHistory(selectCurrent: false);
             LogStatusText.Text = oldFolder is null ? "日志位置已更新，历史日志已迁移。" :
                 $"日志位置已更新，但旧目录未能删除，请手工清理：{oldFolder}";
@@ -2764,7 +2769,13 @@ public partial class MainWindow : Window
             InvalidDataException or ArgumentException or NotSupportedException or System.Text.Json.JsonException)
         {
             UpdateLogPathDisplay();
-            AppMessageDialog.Show(this, $"无法更改日志位置。\n\n{exception.Message}", "日志位置未更改", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (locationApplied)
+            {
+                LogStatusText.Text = $"日志位置已更新，但{postChangeStep}未完成。";
+                if (oldFolder is not null) LogStatusText.Text += $"旧目录未能删除，请手工清理：{oldFolder}";
+                AppMessageDialog.Show(this, $"{LogStatusText.Text}\n\n{exception.Message}", "日志位置已更新", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            else AppMessageDialog.Show(this, $"无法更改日志位置。\n\n{exception.Message}", "日志位置未更改", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
