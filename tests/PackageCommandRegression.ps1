@@ -43,15 +43,23 @@ function Get-PackageGroupRunButton($Item) {
 
 function Wait-PackageGroupResult([string]$Name, [string]$Status) {
     Invoke-PackageButton 'GroupsPageButton'
-    Wait-ForPackage {
+    $observations=[Collections.Generic.HashSet[string]]::new()
+    try { Wait-ForPackage {
         $item=Find-PackageGroupItem $Name
         if ($item) {
+            $scrollItem=$null
+            if ($item.TryGetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern,[ref]$scrollItem)) { $scrollItem.ScrollIntoView() }
             $button=Get-PackageGroupRunButton $item
+            $texts=$item.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Text))
+            $null=$observations.Add((@($texts | ForEach-Object { $_.Current.Name }) -join ' / ') + "; CanRun=$($button.Current.IsEnabled)")
             $text=$item.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
                 [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Status))
             $button -and $button.Current.IsEnabled -and $text
-        }
-    } "$Name final group status" | Out-Null
+        } else { $null=$observations.Add('Group item not realized.') }
+    } "$Name final group status" | Out-Null } catch {
+        throw [InvalidOperationException]::new(($_.Exception.Message + '; Observed group rows: ' + ($observations -join ' | ')),$_.Exception)
+    }
 }
 
 function Assert-PackageGroupRun([string]$Name, [string]$State, [int]$ExitCode) {
