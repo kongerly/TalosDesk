@@ -90,12 +90,14 @@ public sealed class RunLogStore
             }
             System.IO.Directory.CreateDirectory(RootPath);
             var settingsPath = Path.Combine(RootPath, "settings.json");
+            var settings = new RunLogSettings();
             if (File.Exists(settingsPath))
             {
-                Settings = JsonSerializer.Deserialize<RunLogSettings>(File.ReadAllText(settingsPath))
+                settings = JsonSerializer.Deserialize<RunLogSettings>(File.ReadAllText(settingsPath))
                     ?? throw new InvalidDataException("日志设置文件为空。");
-                ValidateSettings(Settings);
             }
+            ValidateSettings(settings);
+            Settings = settings;
             foreach (var (info, directory) in EnumerateRuns())
             {
                 if (info.State != "Running") continue;
