@@ -5,14 +5,15 @@ param(
     [Parameter(Mandatory)][string]$EvidenceDirectory,
     [switch]$AllowDesktop,
     [switch]$ExerciseCommands,
-    [switch]$ExerciseGroups
+    [switch]$ExerciseGroups,
+    [switch]$ExerciseImport
 )
 
 $ErrorActionPreference = 'Stop'
 if (-not $AllowDesktop) { throw 'This check opens an application window. Supply -AllowDesktop only on an available test desktop.' }
 if (-not $IsWindows) { throw 'A Windows test desktop is required.' }
-if ($ExerciseCommands -and $ExerciseGroups) { throw 'Choose either command or group checks for each isolated workspace.' }
-$requiresPowerShell = $ExerciseCommands -or $ExerciseGroups
+if (($ExerciseCommands -and $ExerciseGroups) -or ($ExerciseImport -and ($ExerciseCommands -or $ExerciseGroups))) { throw 'Choose one exercise mode for each isolated workspace.' }
+$requiresPowerShell = $ExerciseCommands -or $ExerciseGroups -or $ExerciseImport
 $evidence = [IO.Path]::GetFullPath($EvidenceDirectory)
 if (Test-Path -LiteralPath $evidence) { throw 'Evidence directory must not already exist.' }
 $inspection = & (Join-Path $PSScriptRoot 'Test-Package.ps1') -ArchivePath $ArchivePath
@@ -23,6 +24,7 @@ $process = $null
 $report = [ordered]@{ Status='Failed'; SourceCommit=$env:GITHUB_SHA; ArchiveName=[IO.Path]::GetFileName($zipPath); Scope='Packaged EXE startup and idle exit only; not command execution or manual acceptance.'; ForcedCleanup=$false }
 if ($ExerciseCommands) { $report.Scope = 'Packaged EXE task success, failure and service stop; not complete manual acceptance.' }
 if ($ExerciseGroups) { $report.Scope = 'Packaged EXE sequential group success, failure boundary and parallel member stop; not complete manual acceptance.' }
+if ($ExerciseImport) { $report.Scope = 'Packaged EXE native import picker, preview cancel and confirmation without automatic execution; not complete manual acceptance.' }
 try {
     $report.Sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($zipStream)).ToLowerInvariant()
     if ($report.Sha256 -ne $inspection.Sha256) { throw 'Archive changed after static inspection.' }
@@ -72,6 +74,7 @@ try {
     }
     $configuration | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $workspace -Encoding utf8
     $before = (Get-FileHash -LiteralPath $workspace).Hash
+    $exitBaseline = $before
     # 启动参数最多允许 40 字符；保留完整随机标识并使用短前缀。
     $profile = 'CI ' + [guid]::NewGuid().ToString('N')
     $report.ExpectedWindowTitle = "TalosDesk · $profile"
@@ -112,18 +115,24 @@ try {
     if ($ExerciseGroups) {
         $report.GroupChecks = & (Join-Path $PSScriptRoot '../tests/PackageCommandRegression.ps1') -ApplicationProcess $process -RootDirectory $root -Commands $configuration.Projects[0].Commands -PowerShellPath $pwshPath -Groups $configuration.Projects[0].Groups -AllowDesktop
     }
+    if ($ExerciseImport) {
+        $report.ImportChecks = & (Join-Path $PSScriptRoot '../tests/PackageImportRegression.ps1') -ApplicationProcess $process -RootDirectory $root -WorkspacePath $workspace -AllowDesktop
+        $exitBaseline = (Get-FileHash -LiteralPath $workspace).Hash
+    }
     if (-not $process.CloseMainWindow()) { throw 'The packaged main window refused an idle close request.' }
     if (-not $process.WaitForExit(15000)) { throw 'Packaged EXE did not exit within 15 seconds.' }
     $report.ExitCode = $process.ExitCode
     if ($process.ExitCode -ne 0) { throw 'Packaged EXE did not exit normally.' }
     if (-not (Test-Path -LiteralPath ($workspace + '.window-settings.json'))) { throw 'Normal window-state persistence was not observed.' }
-    if ((Get-FileHash -LiteralPath $workspace).Hash -ne $before) { throw 'Startup or idle exit rewrote the workspace.' }
+    $after = (Get-FileHash -LiteralPath $workspace).Hash
+    if ($after -ne $exitBaseline) { throw 'Idle exit rewrote the workspace.' }
+    $report.ExitPreservedWorkspace = $true
     if (Test-Path -LiteralPath $marker) { throw 'The unselected command ran.' }
     $report.UnselectedCommandRemainedIdle = $true
     $expectedRuns = if ($ExerciseGroups) { 5 } elseif ($ExerciseCommands) { 3 } else { 0 }
     $report.CommandRunCount = @(Get-ChildItem -LiteralPath $root -Filter run.json -File -Recurse).Count
     if ($report.CommandRunCount -ne $expectedRuns) { throw 'Unexpected command run count.' }
-    $report.WorkspaceUnchanged = $true
+    $report.WorkspaceUnchanged = $after -eq $before
     $report.WindowStateSaved = $true
     $report.Status = 'Passed'
 } catch {
@@ -139,7 +148,7 @@ try {
         $process.Dispose()
     }
     $zipStream.Dispose()
-    $reportName = if ($ExerciseGroups) { 'groups.json' } elseif ($ExerciseCommands) { 'commands.json' } else { 'startup.json' }
+    $reportName = if ($ExerciseImport) { 'import.json' } elseif ($ExerciseGroups) { 'groups.json' } elseif ($ExerciseCommands) { 'commands.json' } else { 'startup.json' }
     if (Test-Path -LiteralPath $evidence) { $report | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence $reportName) -Encoding utf8 }
     if ($report.Status -eq 'Passed') {
         $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
