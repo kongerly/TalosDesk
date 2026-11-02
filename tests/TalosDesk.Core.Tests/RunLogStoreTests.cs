@@ -208,6 +208,54 @@ public sealed class RunLogStoreTests
     }
 
     [TestMethod]
+    [DataRow(0L, 30)]
+    [DataRow(1048576L, 0)]
+    [DataRow(1048576L, int.MaxValue)]
+    public void InvalidSettingsInitializationKeepsLastValidatedValuesAndCanRetryWithoutFile(long maxBytes, int retentionDays)
+    {
+        using var sandbox = new Sandbox();
+        var store = new RunLogStore(Path.Combine(sandbox.Path, "workspace.json"));
+        store.Initialize();
+        var previous = new RunLogSettings(2 * 1024 * 1024, 7);
+        store.UpdateSettings(previous);
+        var path = Path.Combine(store.RootPath, "settings.json");
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new RunLogSettings(maxBytes, retentionDays)));
+        var invalidBytes = File.ReadAllBytes(path);
+
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(store.Initialize);
+
+        Assert.AreEqual(previous, store.Settings, "校验失败不能把无效值发布到当前实例。");
+        CollectionAssert.AreEqual(invalidBytes, File.ReadAllBytes(path));
+        File.Delete(path);
+        store.Initialize();
+        Assert.AreEqual(new RunLogSettings(), store.Settings);
+        Assert.IsFalse(File.Exists(path), "读取默认值不能擅自创建设置文件。");
+    }
+
+    [TestMethod]
+    public void ReinitializationWithoutSettingsUsesSameDefaultsAsFreshStoreAndPreservesHistory()
+    {
+        using var sandbox = new Sandbox();
+        var workspace = Path.Combine(sandbox.Path, "workspace.json");
+        var store = new RunLogStore(workspace);
+        store.Initialize();
+        store.UpdateSettings(new RunLogSettings(2 * 1024 * 1024, 7));
+        var history = store.Begin(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.Now.AddDays(-2));
+        store.Append(history, new CommandOutput(DateTimeOffset.Now, "stdout", "synthetic preserved history"));
+        store.Complete(history, new CommandRunResult(CommandRunState.Succeeded, 0, false));
+        File.Delete(Path.Combine(store.RootPath, "settings.json"));
+
+        store.Initialize();
+        var reopened = new RunLogStore(workspace);
+        reopened.Initialize();
+
+        Assert.AreEqual(reopened.Settings, store.Settings);
+        Assert.AreEqual(new RunLogSettings(), store.Settings);
+        Assert.HasCount(1, store.GetRuns(history.Info.ProjectId, history.Info.CommandId));
+        CollectionAssert.AreEqual(new[] { "synthetic preserved history" }, store.ReadTail(history.Info, "stdout").ToArray());
+    }
+
+    [TestMethod]
     public void SettingsCleanupFailureReportsCommittedValuesAndKeepsOriginalCause()
     {
         using var sandbox = new Sandbox();
